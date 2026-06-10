@@ -1,0 +1,234 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; connect-src https://* http://*; media-src 'self' mediastream: blob:;">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <!-- Custom title bar hidden — using native frame for debugging -->
+  <div class="titlebar" style="display:none">
+    <span class="titlebar-title">Call Recorder</span>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn minimize" id="btnMinimize" title="Minimize">&#x2212;</button>
+      <button class="titlebar-btn close" id="btnClose" title="Close">&#x2715;</button>
+    </div>
+  </div>
+
+  <!-- First-launch setup screen -->
+  <div id="setupScreen" style="display:none" class="content">
+    <div class="header">
+      <div class="header-left">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </div>
+        <span class="title">Call Recorder</span>
+      </div>
+      <span class="version">v3.0</span>
+    </div>
+
+    <div class="setup-title">Connect to Server</div>
+    <div class="setup-subtitle">Enter the server URL and credentials to start recording calls.</div>
+
+    <div class="settings-field">
+      <label>Server URL</label>
+      <input type="url" id="setupServerUrl" placeholder="https://analytics.example.com">
+    </div>
+    <div class="settings-field">
+      <label>Username</label>
+      <input type="text" id="setupUsername" placeholder="username">
+    </div>
+    <div class="settings-field">
+      <label>Password</label>
+      <input type="password" id="setupPassword" placeholder="password">
+    </div>
+    <button class="btn btn-test-connection" id="btnTestConnection">Test Connection</button>
+    <div id="testConnectionResult" style="display:none" class="test-result"></div>
+    <button class="btn btn-record" id="btnSaveSetup" style="display:none; margin-top:8px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+      Save & Start
+    </button>
+  </div>
+
+  <!-- Broker login / activation screen -->
+  <div id="loginScreen" style="display:none" class="content">
+    <div class="header">
+      <div class="header-left">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </div>
+        <span class="title">Call Recorder</span>
+      </div>
+      <span class="version">v3.0</span>
+    </div>
+
+    <div class="login-tabs">
+      <button class="login-tab active" id="tabLogin" data-tab="login">Войти</button>
+      <button class="login-tab" id="tabClaim" data-tab="claim">Активировать</button>
+    </div>
+
+    <!-- Login tab -->
+    <div id="loginTabPane" class="login-pane">
+      <div class="setup-subtitle">Введите email и пароль брокера.</div>
+      <div class="settings-field">
+        <label>Email</label>
+        <input type="email" id="loginEmail" placeholder="broker@example.com" autocomplete="email">
+      </div>
+      <div class="settings-field">
+        <label>Пароль</label>
+        <input type="password" id="loginPassword" placeholder="пароль" autocomplete="current-password">
+      </div>
+      <button class="btn btn-record" id="btnLogin">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+        Войти
+      </button>
+      <div id="loginError" style="display:none" class="test-result error"></div>
+    </div>
+
+    <!-- Claim tab -->
+    <div id="claimTabPane" class="login-pane" style="display:none">
+      <!-- Phase 1: lookup -->
+      <div id="claimPhase1">
+        <div class="setup-subtitle">Введите email, который указан у вас в AmoCRM.</div>
+        <div class="settings-field">
+          <label>Email</label>
+          <input type="email" id="claimEmail" placeholder="broker@example.com" autocomplete="email">
+        </div>
+        <button class="btn btn-record" id="btnClaimStart">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>
+          Проверить
+        </button>
+        <div id="claimStartError" style="display:none" class="test-result error"></div>
+      </div>
+
+      <!-- Phase 2: confirm + set password -->
+      <div id="claimPhase2" style="display:none">
+        <div class="setup-subtitle">Это вы?</div>
+        <div class="claim-confirm">
+          <div class="claim-confirm-name" id="claimName"></div>
+          <div class="claim-confirm-email" id="claimMaskedEmail"></div>
+        </div>
+        <div class="settings-field">
+          <label>Придумайте пароль (мин. 6 символов)</label>
+          <input type="password" id="claimPassword" placeholder="новый пароль" autocomplete="new-password">
+        </div>
+        <div class="settings-field">
+          <label>Повторите пароль</label>
+          <input type="password" id="claimPasswordConfirm" placeholder="ещё раз" autocomplete="new-password">
+        </div>
+        <button class="btn btn-record" id="btnClaimComplete">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+          Активировать
+        </button>
+        <button class="btn btn-reset" id="btnClaimBack">Назад</button>
+        <div id="claimCompleteError" style="display:none" class="test-result error"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Main recorder screen -->
+  <div id="recorderScreen" style="display:none" class="content">
+    <div class="header">
+      <div class="header-left">
+        <div class="logo">
+          <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+            <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+            <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+            <line x1="12" y1="19" x2="12" y2="23"/>
+            <line x1="8" y1="23" x2="16" y2="23"/>
+          </svg>
+        </div>
+        <span class="title">Call Recorder</span>
+      </div>
+      <span class="version">v3.0</span>
+    </div>
+
+    <div class="broker-info" id="brokerInfo" style="display:none"></div>
+
+    <div class="status-badge status-idle" id="statusBadge">
+      <span class="dot"></span>
+      <span id="statusLabel">Ready</span>
+    </div>
+
+    <!-- Timer — hidden by default -->
+    <div id="timerBlock" style="display:none">
+      <div class="timer" id="timerText">00:00</div>
+      <div class="chunks-info"><span id="chunksText">0</span> chunks uploaded</div>
+    </div>
+
+    <!-- START button -->
+    <button class="btn btn-record" id="btnStart">
+      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="8"/></svg>
+      Start Recording
+    </button>
+
+    <!-- Headphone hint -->
+    <div class="headphone-hint" id="headphoneHint">Use headphones for best audio quality</div>
+
+    <!-- STOP button — hidden by default -->
+    <button class="btn btn-stop" id="btnStop" style="display:none">
+      <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+      Stop Recording
+    </button>
+
+    <!-- Reset button -->
+    <button class="btn btn-reset" id="btnReset" style="display:none">Reset</button>
+
+    <!-- Session info -->
+    <div id="infoPanel" style="display:none" class="info-panel">
+      <div class="info-row" id="sessionRow">
+        <span class="info-label">Session</span>
+        <span class="info-value"><a id="sessionLink" href="#" target="_blank">-</a></span>
+      </div>
+      <div class="info-row" id="resultRow" style="display:none">
+        <span class="info-label">Result</span>
+        <span class="info-value"><a id="resultLink" href="#" target="_blank">Open dashboard</a></span>
+      </div>
+      <div id="processingEta" style="display:none" class="processing-eta"></div>
+    </div>
+
+    <div id="errorText" style="display:none" class="error-text"></div>
+
+    <!-- Settings toggle -->
+    <button class="settings-toggle" id="settingsToggle">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/>
+      </svg>
+      Settings
+    </button>
+
+    <!-- Settings panel (hidden by default) -->
+    <div id="settingsPanel" style="display:none" class="settings-panel">
+      <div class="settings-title">Server Settings</div>
+      <div class="settings-field">
+        <label>Server URL</label>
+        <input type="url" id="inputServerUrl" placeholder="https://analytics.example.com">
+      </div>
+      <div class="settings-field">
+        <label>Username</label>
+        <input type="text" id="inputUsername" placeholder="username">
+      </div>
+      <div class="settings-field">
+        <label>Password</label>
+        <input type="password" id="inputPassword" placeholder="password">
+      </div>
+      <button class="btn-save-settings" id="btnSaveSettings">Save</button>
+      <div class="settings-saved" id="settingsSaved">Settings saved</div>
+      <a href="#" class="logout-link" id="btnLogout">Выйти из аккаунта брокера</a>
+    </div>
+  </div>
+
+  <script src="recorder.js"></script>
+  <script src="renderer.js"></script>
+</body>
+</html>

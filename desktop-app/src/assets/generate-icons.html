@@ -1,0 +1,96 @@
+<!DOCTYPE html>
+<html>
+<head><title>Icon Generator</title></head>
+<body>
+<p>Open this file in a browser, right-click each canvas, and "Save Image As" to get the PNG icons.</p>
+
+<h3>App Icon (icon.png — 512x512)</h3>
+<canvas id="icon" width="512" height="512"></canvas>
+
+<h3>Tray Idle (tray-idle.png — 32x32)</h3>
+<canvas id="trayIdle" width="32" height="32"></canvas>
+
+<h3>Tray Recording (tray-recording.png — 32x32)</h3>
+<canvas id="trayRec" width="32" height="32"></canvas>
+
+<script>
+// App icon — green rounded rect with white mic
+const icon = document.getElementById('icon').getContext('2d');
+icon.fillStyle = '#059669';
+roundRect(icon, 0, 0, 512, 512, 90);
+icon.fill();
+// Mic body
+icon.strokeStyle = '#fff';
+icon.lineWidth = 30;
+icon.lineCap = 'round';
+icon.beginPath();
+icon.ellipse(256, 200, 45, 100, 0, 0, Math.PI * 2);
+icon.stroke();
+// Mic arc
+icon.beginPath();
+icon.arc(256, 200, 110, 0.2 * Math.PI, 0.8 * Math.PI);
+icon.stroke();
+// Mic stand
+icon.beginPath();
+icon.moveTo(256, 310);
+icon.lineTo(256, 380);
+icon.stroke();
+icon.beginPath();
+icon.moveTo(200, 380);
+icon.lineTo(312, 380);
+icon.stroke();
+
+// Tray idle — green circle
+const idle = document.getElementById('trayIdle').getContext('2d');
+idle.fillStyle = '#059669';
+idle.beginPath();
+idle.arc(16, 16, 14, 0, Math.PI * 2);
+idle.fill();
+idle.strokeStyle = '#fff';
+idle.lineWidth = 2;
+idle.beginPath();
+idle.ellipse(16, 13, 3, 6, 0, 0, Math.PI * 2);
+idle.stroke();
+idle.beginPath();
+idle.arc(16, 13, 7, 0.2 * Math.PI, 0.8 * Math.PI);
+idle.stroke();
+idle.beginPath();
+idle.moveTo(16, 20);
+idle.lineTo(16, 24);
+idle.stroke();
+
+// Tray recording — red circle
+const rec = document.getElementById('trayRec').getContext('2d');
+rec.fillStyle = '#ef4444';
+rec.beginPath();
+rec.arc(16, 16, 14, 0, Math.PI * 2);
+rec.fill();
+rec.strokeStyle = '#fff';
+rec.lineWidth = 2;
+rec.beginPath();
+rec.ellipse(16, 13, 3, 6, 0, 0, Math.PI * 2);
+rec.stroke();
+rec.beginPath();
+rec.arc(16, 13, 7, 0.2 * Math.PI, 0.8 * Math.PI);
+rec.stroke();
+rec.beginPath();
+rec.moveTo(16, 20);
+rec.lineTo(16, 24);
+rec.stroke();
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+</script>
+</body>
+</html>

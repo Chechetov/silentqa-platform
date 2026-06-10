@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      width: 340px;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #111827;
+      color: #e5e7eb;
+      padding: 20px;
+    }
+
+    .header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .logo {
+      width: 32px; height: 32px;
+      background: #059669;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+    .logo svg { width: 18px; height: 18px; }
+    .title { font-size: 15px; font-weight: 700; color: #fff; }
+    .version {
+      font-size: 10px; color: #6b7280;
+      padding: 2px 6px; background: #1f2937; border-radius: 4px;
+    }
+
+    .status-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 4px 10px; border-radius: 12px;
+      font-size: 11px; font-weight: 600; margin-bottom: 16px;
+    }
+    .status-badge .dot { width: 7px; height: 7px; border-radius: 50%; }
+    .status-idle { background: #1f2937; color: #9ca3af; }
+    .status-idle .dot { background: #6b7280; }
+    .status-recording { background: rgba(239,68,68,0.15); color: #f87171; }
+    .status-recording .dot { background: #ef4444; animation: pulse 1.2s ease infinite; }
+    .status-processing { background: rgba(245,158,11,0.15); color: #fbbf24; }
+    .status-processing .dot { background: #f59e0b; animation: pulse 1.5s ease infinite; }
+    .status-done { background: rgba(16,185,129,0.15); color: #34d399; }
+    .status-done .dot { background: #10b981; }
+    .status-error { background: rgba(239,68,68,0.1); color: #f87171; }
+    .status-error .dot { background: #ef4444; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    .timer {
+      text-align: center; font-size: 32px; font-weight: 700;
+      color: #fff; font-variant-numeric: tabular-nums;
+      letter-spacing: 2px; margin: 12px 0 4px;
+    }
+    .chunks-info {
+      text-align: center; font-size: 11px;
+      color: #6b7280; margin-bottom: 16px;
+    }
+
+    .btn {
+      width: 100%; padding: 12px; border: none; border-radius: 8px;
+      font-size: 14px; font-weight: 700; cursor: pointer;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .btn svg { width: 16px; height: 16px; }
+    .btn-record { background: #059669; color: #fff; }
+    .btn-record:hover { background: #047857; }
+    .btn-stop { background: #dc2626; color: #fff; }
+    .btn-stop:hover { background: #b91c1c; }
+    .btn-reset { background: #374151; color: #9ca3af; font-size: 12px; padding: 8px; }
+    .btn-reset:hover { background: #4b5563; color: #e5e7eb; }
+    .btn:disabled { background: #374151; color: #6b7280; cursor: not-allowed; }
+
+    .mic-block {
+      margin-bottom: 12px; padding: 8px 10px;
+      border-radius: 6px; font-size: 11px; text-align: center;
+    }
+    .mic-ok {
+      background: rgba(16,185,129,0.1); color: #34d399;
+    }
+    .mic-denied {
+      background: rgba(245,158,11,0.1); color: #fbbf24;
+    }
+    .mic-btn {
+      display: inline-block; margin-top: 6px;
+      padding: 4px 12px; border: 1px solid #fbbf24; border-radius: 4px;
+      background: transparent; color: #fbbf24; font-size: 11px; font-weight: 600;
+      cursor: pointer;
+    }
+    .mic-btn:hover { background: rgba(245,158,11,0.15); }
+
+    .info-panel {
+      margin-top: 6px; padding: 10px 12px;
+      background: #1f2937; border-radius: 8px; border: 1px solid #374151;
+    }
+    .info-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 4px 0; font-size: 12px;
+    }
+    .info-label { color: #6b7280; }
+    .info-value { color: #e5e7eb; font-weight: 500; }
+    .info-value a { color: #60a5fa; text-decoration: none; }
+    .info-value a:hover { text-decoration: underline; }
+    .processing-eta {
+      font-size: 10px; color: #6b7280; text-align: center;
+      margin-top: 4px;
+    }
+    .error-text {
+      color: #f87171; font-size: 12px; margin-top: 8px;
+      padding: 8px; background: rgba(239,68,68,0.1);
+      border-radius: 6px; word-break: break-word;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="logo">
+        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2.5" stroke-linecap="round">
+          <path d="M12 1a3 3 0 00-3 3v8a3 3 0 006 0V4a3 3 0 00-3-3z"/>
+          <path d="M19 10v2a7 7 0 01-14 0v-2"/>
+          <line x1="12" y1="19" x2="12" y2="23"/>
+          <line x1="8" y1="23" x2="16" y2="23"/>
+        </svg>
+      </div>
+      <span class="title">Rogov Recorder</span>
+    </div>
+    <span class="version">v1.3</span>
+  </div>
+
+  <div class="status-badge status-idle" id="statusBadge">
+    <span class="dot"></span>
+    <span id="statusLabel">Ready</span>
+  </div>
+
+  <!-- Mic status — shown in idle state -->
+  <div id="micBlock" style="display:none" class="mic-block mic-denied">
+    <span id="micStatusText"></span>
+    <br>
+    <button class="mic-btn" id="btnMic">Grant microphone access</button>
+  </div>
+
+  <!-- Timer — hidden by default, shown via JS -->
+  <div id="timerBlock" style="display:none">
+    <div class="timer" id="timerText">00:00</div>
+    <div class="chunks-info"><span id="chunksText">0</span> chunks uploaded</div>
+  </div>
+
+  <!-- START button -->
+  <button class="btn btn-record" id="btnStart">
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><circle cx="12" cy="12" r="8"/></svg>
+    Start Recording
+  </button>
+
+  <!-- STOP button — hidden by default -->
+  <button class="btn btn-stop" id="btnStop" style="display:none">
+    <svg viewBox="0 0 24 24" fill="currentColor" stroke="none"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>
+    Stop Recording
+  </button>
+
+  <!-- Reset button -->
+  <button class="btn btn-reset" id="btnReset" style="display:none">Reset</button>
+
+  <!-- Session info -->
+  <div id="infoPanel" style="display:none" class="info-panel">
+    <div class="info-row" id="sessionRow">
+      <span class="info-label">Session</span>
+      <span class="info-value"><a id="sessionLink" href="#" target="_blank">-</a></span>
+    </div>
+    <div class="info-row" id="resultRow" style="display:none">
+      <span class="info-label">Result</span>
+      <span class="info-value"><a id="resultLink" href="#" target="_blank">Open dashboard</a></span>
+    </div>
+    <div id="processingEta" style="display:none" class="processing-eta"></div>
+  </div>
+
+  <div id="errorText" style="display:none" class="error-text"></div>
+
+  <!-- Server URL hidden — hardcoded -->
+  <input type="hidden" id="serverUrl" value="https://rogov.automate-it.fun">
+
+  <script src="popup.js"></script>
+</body>
+</html>

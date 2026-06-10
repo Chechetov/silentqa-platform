@@ -1,0 +1,28 @@
+__pycache__/
+*.pyc
+.venv/
+venv/
+*.egg-info/
+.env
+*.log
+.DS_Store
+
+# Build artifacts & binaries (too large for git)
+desktop-app/node_modules/
+desktop-app/build/
+backend/static/call-recorder-mac.zip
+backend/static/call-recorder-setup.exe
+backend/static/*.zip
+backend/static/*.exe
+chrome-extension.zip
+*.zip
+
+# Dev / scratch artifacts — should not enter git
+.playwright-mcp/
+.test_files/
+screenshots/
+# Throwaway design/debug screenshots dropped in repo root
+/*.png
+# Celery beat scheduler state file (binary, regenerated at startup)
+worker/celerybeat-schedule
+data/

@@ -1,0 +1,62 @@
+appId: com.callrecorder.desktop
+productName: Call Recorder
+copyright: Copyright © 2026
+
+directories:
+  output: build
+
+files:
+  - src/**/*
+  - package.json
+
+asar: true
+
+win:
+  target:
+    - target: nsis
+      arch:
+        - x64
+  icon: src/assets/icon.ico
+
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  installerIcon: src/assets/icon.ico
+  uninstallerIcon: src/assets/icon.ico
+
+mac:
+  target:
+    - target: dmg
+      arch:
+        - x64
+        - arm64
+  icon: src/assets/icon.png
+  category: public.app-category.utilities
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+  extendInfo:
+    NSMicrophoneUsageDescription: "Call Recorder needs microphone access to record your voice during calls."
+    NSScreenCaptureUsageDescription: "Call Recorder needs Screen Recording permission to capture system audio. No video is recorded."
+
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
+
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+  icon: src/assets/icon.png
+  category: AudioVideo
+  synopsis: Call recorder
+  description: Captures system audio + microphone and uploads to the call-eval server.
+  maintainer: Rogov Estate <alex.chechetov@gmail.com>

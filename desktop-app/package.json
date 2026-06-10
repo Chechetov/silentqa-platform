@@ -1,0 +1,27 @@
+{
+  "name": "call-recorder",
+  "version": "4.0.0",
+  "description": "Desktop audio recorder — captures system audio + microphone and uploads to server",
+  "main": "src/main/index.js",
+  "scripts": {
+    "start": "electron .",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac",
+    "build:linux": "electron-builder --linux",
+    "build:all": "electron-builder --win --mac --linux",
+    "build": "electron-builder --win --linux"
+  },
+  "author": {
+    "name": "Rogov Estate",
+    "email": "alex.chechetov@gmail.com"
+  },
+  "homepage": "https://rogov-estate.ru",
+  "license": "PRIVATE",
+  "devDependencies": {
+    "electron": "^31.0.1",
+    "electron-builder": "^24.13.3"
+  },
+  "dependencies": {
+    "electron-audio-loopback": "^1.0.0"
+  }
+}

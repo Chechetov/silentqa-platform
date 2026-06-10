@@ -1,0 +1,422 @@
+import asyncio
+import logging
+import secrets
+import shutil
+import uuid
+from pathlib import Path
+
+from celery import Celery
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from pydantic import BaseModel
+from sqlalchemy import select, func, text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from app.auth_jwt import get_current_broker
+from app.config import settings
+from app.database import get_db
+from app.models import Chunk, Session, SessionStatus
+from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/api/sessions", tags=["sessions"])
+
+celery_app = Celery("voiceqa", broker=settings.REDIS_URL)
+
+
+@router.get("")
+async def list_sessions(
+    limit: int = 50,
+    offset: int = 0,
+    source: str | None = None,
+    phone: str | None = None,
+    template_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
+    """List all sessions with pagination, sorted by created_at DESC.
+
+    Optional filters:
+    - source: exact match on metadata.source (e.g. 'amocrm', 'desktop-app')
+    - phone: substring match on metadata.phone (case-insensitive, digits-friendly)
+    - template_id: 'none' = sessions without any template (regular broker calls);
+                   UUID = sessions with that exact template
+    """
+    filters = []
+    if source:
+        filters.append(Session.metadata_["source"].astext == source)
+    if phone:
+        filters.append(Session.metadata_["phone"].astext.ilike(f"%{phone.strip()}%"))
+    if template_id:
+        if template_id == "none":
+            filters.append(Session.metadata_["template_id"].astext.is_(None))
+        else:
+            filters.append(Session.metadata_["template_id"].astext == template_id)
+
+    count_q = select(func.count()).select_from(Session)
+    list_q = select(Session).order_by(Session.created_at.desc())
+    for f in filters:
+        count_q = count_q.where(f)
+        list_q = list_q.where(f)
+
+    total = await db.scalar(count_q)
+
+    result = await db.execute(list_q.limit(limit).offset(offset))
+    sessions = result.scalars().all()
+
+    # Build template_id -> name map for the visible page (one SQL query, cheap)
+    tpl_ids = {(s.metadata_ or {}).get("template_id") for s in sessions}
+    tpl_ids.discard(None)
+    tpl_map: dict[str, str] = {}
+    if tpl_ids:
+        tpl_rows = (await db.execute(text(
+            "SELECT id::text, name FROM extraction_templates WHERE id::text = ANY(:ids)"
+        ), {"ids": list(tpl_ids)})).all()
+        tpl_map = {r[0]: r[1] for r in tpl_rows}
+
+    items = []
+    for session in sessions:
+        chunks_count = await db.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.session_id == session.id)
+        )
+        resp = _to_response(session, chunks_count or 0)
+        # Inject template_name into the response metadata so the dashboard can render it.
+        meta_in = (session.metadata_ or {})
+        tid = meta_in.get("template_id")
+        if tid and tid in tpl_map:
+            resp = resp.model_copy(update={"metadata": {**(resp.metadata or {}), "template_name": tpl_map[tid]}})
+        items.append(resp)
+
+    return {"items": items, "total": total or 0}
+
+
+# Metadata keys the server controls. A client may NOT set these directly —
+# they're either populated from the authenticated broker JWT or left absent.
+# This prevents an unauthenticated (or differently-authenticated) client from
+# spoofing attribution by stuffing values into request metadata.
+_SERVER_OWNED_METADATA = ("broker_id", "amocrm_user_id", "broker_name", "responsible_user_id")
+
+# Seeded by migration 008 — applied by default to desktop-app recordings,
+# which are Zoom meetings (not outbound calls).
+_DEFAULT_DESKTOP_TEMPLATE_NAME = "Zoom-встреча брокера (презентация ЖК)"
+
+
+async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
+    row = (await db.execute(
+        text("SELECT id FROM extraction_templates WHERE name = :n AND kind = 'evaluation' LIMIT 1"),
+        {"n": _DEFAULT_DESKTOP_TEMPLATE_NAME},
+    )).first()
+    return str(row[0]) if row else None
+
+
+@router.post("", response_model=SessionResponse, status_code=201)
+async def create_session(
+    body: SessionCreate,
+    db: AsyncSession = Depends(get_db),
+    broker: BrokerInfo | None = Depends(get_current_broker),
+):
+    meta = dict(body.metadata or {})
+    # Strip any server-owned keys the client tried to supply.
+    for k in _SERVER_OWNED_METADATA:
+        meta.pop(k, None)
+
+    if broker is not None:
+        # Auto-attribute the session to the authenticated broker. Authoritative
+        # — overwrite any (now-cleared) values from the client.
+        meta["broker_id"] = str(broker.id)
+        meta["amocrm_user_id"] = broker.amocrm_user_id
+        meta["broker_name"] = broker.name
+        # Mirror to responsible_user_id so existing AmoCRM name resolution works.
+        meta["responsible_user_id"] = broker.amocrm_user_id
+
+    # Desktop-app recordings are Zoom meetings (presentation), not outbound
+    # calls — auto-apply the Zoom-meeting evaluation template so the protocol
+    # used by the LLM matches the genre. Client may override by passing an
+    # explicit template_id.
+    if meta.get("source") == "desktop-app" and not meta.get("template_id"):
+        tid = await _resolve_default_desktop_template_id(db)
+        if tid:
+            meta["template_id"] = tid
+
+    session = Session(metadata_=meta or None)
+    db.add(session)
+    await db.commit()
+    await db.refresh(session)
+    return _to_response(session, 0)
+
+
+@router.get("/{session_id}", response_model=SessionResponse)
+async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(session, chunks_count or 0)
+
+
+def _require_delete_password(provided: str | None) -> None:
+    expected = settings.DELETE_PASSWORD
+    if not expected:
+        # Fail-closed if password is not configured on the server.
+        raise HTTPException(status_code=503, detail="Delete is disabled: DELETE_PASSWORD not configured")
+    if not provided or not secrets.compare_digest(provided, expected):
+        raise HTTPException(status_code=401, detail="Invalid delete password")
+
+
+@router.delete("/{session_id}", status_code=204)
+async def delete_session(
+    session_id: uuid.UUID,
+    x_delete_password: str | None = Header(default=None, alias="X-Delete-Password"),
+    db: AsyncSession = Depends(get_db),
+):
+    """Delete a session: DB row (cascades chunks) + audio and results directories.
+
+    Requires X-Delete-Password header matching server-side DELETE_PASSWORD.
+    """
+    _require_delete_password(x_delete_password)
+
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    await db.delete(session)
+    await db.commit()
+
+    sid = str(session_id)
+    for base in (settings.AUDIO_STORAGE_PATH, settings.RESULTS_STORAGE_PATH):
+        # AUDIO is under <base>/sessions/<id>; RESULTS is under <base>/<id>
+        for candidate in (Path(base) / "sessions" / sid, Path(base) / sid):
+            if candidate.exists():
+                try:
+                    shutil.rmtree(candidate)
+                except OSError as e:
+                    logger.warning("Failed to remove %s: %s", candidate, e)
+
+    return Response(status_code=204)
+
+
+class ReprocessBody(BaseModel):
+    template_id: uuid.UUID
+
+
+@router.post("/{session_id}/reprocess", response_model=SessionResponse)
+async def reprocess_session(
+    session_id: uuid.UUID,
+    body: ReprocessBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reprocess an existing session with a different template (skip transcription)."""
+    sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sess.status in (SessionStatus.processing, SessionStatus.uploading):
+        raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
+
+    tpl = (await db.execute(text("SELECT id FROM extraction_templates WHERE id=:id"),
+                            {"id": body.template_id})).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+
+    meta = dict(sess.metadata_ or {})
+    meta["template_id"] = str(body.template_id)
+    sess.metadata_ = meta
+    sess.status = SessionStatus.processing
+    await db.commit()
+    await db.refresh(sess)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+    )
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(sess, chunks_count or 0)
+
+
+class LinkLeadBody(BaseModel):
+    lead_id: int | None = None  # None = unlink
+
+
+@router.post("/{session_id}/link-lead", response_model=SessionResponse)
+async def link_lead(
+    session_id: uuid.UUID,
+    body: LinkLeadBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """Attach, change, or detach an AmoCRM lead on a session.
+
+    Behavior depends on the transition:
+
+    - **Same lead** (idempotent re-link to the current lead, including
+      unlink-of-unlinked): no-op. No DB write, no Celery task.
+    - **Unlink** (`lead_id=null`, was linked): delete the notes we created
+      on the old lead in AmoCRM, drop metadata.lead_id, status stays
+      `completed`. No reprocess — re-evaluation would burn ~9k tokens
+      with no destination to publish to.
+    - **New / changed lead**: write metadata.lead_id, status →
+      `processing`, enqueue `pipeline.process_session`. Re-evaluation is
+      worth it here — `prior_context` (previous calls / deal stage /
+      events) flows into the LLM prompt and `_push_to_amocrm` publishes
+      the enriched note, plan, and deal summary to the new lead.
+
+    Transcription is cached either way; the rerun only re-does
+    sentiment + LLM quality (+ optional next-call plan).
+    """
+    sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sess.status in (SessionStatus.processing, SessionStatus.uploading):
+        raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
+
+    meta = dict(sess.metadata_ or {})
+    old_lead_id = meta.get("lead_id")
+    new_lead_id = body.lead_id
+
+    # Idempotent: caller asked to set the same lead we already have (or
+    # to unlink a session that isn't linked). Nothing has changed.
+    if old_lead_id == new_lead_id:
+        chunks_count = await db.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+        )
+        return _to_response(sess, chunks_count or 0)
+
+    # Lead is changing or being removed: tear down any notes we created
+    # on the old lead in AmoCRM so the deal doesn't keep a stale
+    # evaluation pointing back to a session that no longer references it.
+    old_note_ids = [nid for nid in (meta.get("amo_note_id"), meta.get("plan_amo_note_id")) if nid]
+    if old_lead_id and old_note_ids:
+        try:
+            import sys as _sys
+            from pathlib import Path as _Path
+            _wp = _Path(__file__).resolve().parents[3] / "worker"
+            if str(_wp) not in _sys.path:
+                _sys.path.insert(0, str(_wp))
+            from tasks.amocrm_sync import delete_note as _delete_note
+            for nid in old_note_ids:
+                _delete_note(int(old_lead_id), int(nid))
+        except Exception:
+            logger.exception("Failed to clean up old AmoCRM notes during link-lead")
+        meta.pop("amo_note_id", None)
+        meta.pop("plan_amo_note_id", None)
+
+    if new_lead_id is None:
+        # Unlink: notes are gone, nothing to re-evaluate against. Skip
+        # the Celery reprocess — it would just burn tokens on a quality
+        # report with no AmoCRM destination.
+        meta.pop("lead_id", None)
+        sess.metadata_ = meta
+        await db.commit()
+        await db.refresh(sess)
+        chunks_count = await db.scalar(
+            select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+        )
+        return _to_response(sess, chunks_count or 0)
+
+    # New or changed lead: reprocess so prior_context flows in and the
+    # pipeline publishes a fresh note/plan/summary to the new lead.
+    meta["lead_id"] = new_lead_id
+    sess.metadata_ = meta
+    sess.status = SessionStatus.processing
+    await db.commit()
+    await db.refresh(sess)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+    )
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(sess, chunks_count or 0)
+
+
+@router.get("/{session_id}/extraction")
+async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    """Return the latest extraction for the session, or 404 if none exists."""
+    row = (await db.execute(text("""
+        SELECT ce.id, ce.raw_data, ce.complex_id, t.id, t.name, t.json_schema
+        FROM complex_extractions ce
+        JOIN extraction_templates t ON t.id = ce.template_id
+        WHERE ce.session_id = :sid
+        ORDER BY ce.created_at DESC LIMIT 1
+    """), {"sid": session_id})).first()
+    if not row:
+        raise HTTPException(status_code=404, detail="No extraction for this session")
+    return {
+        "extraction_id": str(row[0]),
+        "raw_data": row[1],
+        "complex_id": str(row[2]) if row[2] else None,
+        "template": {"id": str(row[3]), "name": row[4], "json_schema": row[5]},
+    }
+
+
+@router.post("/{session_id}/finish", response_model=SessionResponse)
+async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.status not in (SessionStatus.created, SessionStatus.uploading):
+        raise HTTPException(status_code=400, detail=f"Cannot finish session in status '{session.status}'")
+
+    session.status = SessionStatus.processing
+    await db.commit()
+    await db.refresh(session)
+
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+    )
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(session, chunks_count or 0)
+
+
+@router.patch("/{session_id}/speaker-map")
+async def update_speaker_map(
+    session_id: uuid.UUID,
+    body: SpeakerMapUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Update speaker name/role mapping in session metadata."""
+    result = await db.execute(select(Session).where(Session.id == session_id))
+    session = result.scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    meta = dict(session.metadata_ or {})
+    meta["speaker_map"] = {k: v.model_dump() for k, v in body.speaker_map.items()}
+    session.metadata_ = meta
+    await db.commit()
+    await db.refresh(session)
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(session, chunks_count or 0)
+
+
+def _to_response(session: Session, chunks_count: int) -> SessionResponse:
+    return SessionResponse(
+        id=session.id,
+        status=session.status,
+        created_at=session.created_at,
+        finished_at=session.finished_at,
+        duration_seconds=session.duration_seconds,
+        file_size_bytes=session.file_size_bytes,
+        metadata=session.metadata_,
+        chunks_count=chunks_count,
+    )
