@@ -1,6 +1,7 @@
 import base64
 import secrets
 import subprocess
+import sys
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -76,9 +77,11 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run alembic migrations on startup
+    # Run the two-track migration runner (shared registry first, then the
+    # tenant track per active schema). Fresh process: env.py's asyncio.run
+    # would clash with the already-running loop here, hence subprocess.
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "app.migrate"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
