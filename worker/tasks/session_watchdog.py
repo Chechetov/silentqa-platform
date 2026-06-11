@@ -16,6 +16,7 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from tenancy.context import get_tenant_schema, reset_tenant_schema, set_tenant_schema
 from tenancy.db import get_sync_db_url, tenant_connect
 
 from tasks.celery_app import app
@@ -29,8 +30,7 @@ CREATED_STALE_MIN = int(os.getenv("SESSION_CREATED_STALE_MIN", "60"))
 _get_sync_db_url = get_sync_db_url
 
 
-@app.task(name="session_watchdog.sweep_stuck_sessions")
-def sweep_stuck_sessions():
+def _sweep_for_current_tenant():
     """Find stuck desktop-app sessions and either finalize or fail them."""
     if not _get_sync_db_url():
         logger.warning("DATABASE_URL not set, watchdog skipped")
@@ -99,7 +99,12 @@ def sweep_stuck_sessions():
     # Queue pipeline tasks AFTER the DB transaction committed.
     for sid in finalized:
         try:
-            app.send_task("pipeline.process_session", args=[sid], queue="transcription")
+            app.send_task(
+                "pipeline.process_session",
+                args=[sid],
+                kwargs={"tenant_schema": get_tenant_schema()},
+                queue="transcription",
+            )
             logger.warning("[watchdog] finalized stuck session %s — pipeline queued", sid)
         except Exception:
             logger.exception("[watchdog] failed to queue pipeline for %s", sid)
@@ -108,3 +113,17 @@ def sweep_stuck_sessions():
         logger.warning("[watchdog] failed empty session %s (no chunks)", sid)
 
     return {"finalized": len(finalized), "failed": len(failed)}
+
+
+@app.task(name="session_watchdog.sweep_stuck_sessions")
+def sweep_stuck_sessions():
+    """Beat task: run the stuck-session sweep for every active tenant."""
+    from tenancy.registry import iter_active_tenants
+    for t in iter_active_tenants():
+        token = set_tenant_schema(t["schema_name"])
+        try:
+            _sweep_for_current_tenant()
+        except Exception:
+            logger.exception(f"watchdog sweep failed for tenant {t['slug']}")
+        finally:
+            reset_tenant_schema(token)

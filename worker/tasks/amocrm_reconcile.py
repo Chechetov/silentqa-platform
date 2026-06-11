@@ -37,6 +37,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
+from tenancy.context import reset_tenant_schema, set_tenant_schema
 from tenancy.db import tenant_connect
 
 from tasks.celery_app import app
@@ -122,9 +123,8 @@ def _stuck_counts() -> dict:
     }
 
 
-@app.task(name="amocrm_reconcile.reconcile_amocrm_calls")
-def reconcile_amocrm_calls():
-    """Beat task: deep-sweep for missed calls + stuck-call detection."""
+def _reconcile_for_current_tenant():
+    """Deep-sweep for missed calls + stuck-call detection (tenant context set)."""
     try:
         # 1. Deep-sweep: re-scan a wide window, ingest notes missing from the DB.
         since = int(
@@ -170,3 +170,17 @@ def reconcile_amocrm_calls():
     except Exception:
         logger.exception("[reconcile] sweep failed")
         return {"error": True}
+
+
+@app.task(name="amocrm_reconcile.reconcile_amocrm_calls")
+def reconcile_amocrm_calls():
+    """Beat task: run the reconcile sweep for each AmoCRM tenant."""
+    from tenancy.registry import iter_amocrm_tenants
+    for t in iter_amocrm_tenants():
+        token = set_tenant_schema(t["schema_name"])
+        try:
+            _reconcile_for_current_tenant()
+        except Exception:
+            logger.exception(f"reconcile failed for tenant {t['slug']}")
+        finally:
+            reset_tenant_schema(token)

@@ -13,6 +13,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
+from tenancy.context import get_tenant_schema, reset_tenant_schema, set_tenant_schema
 from tenancy.db import get_sync_db_url, tenant_connect
 
 from tasks.celery_app import app
@@ -300,13 +301,12 @@ def _ingest_call_event(event: dict) -> int | None:
         entity_id=entity_id,
     )
     if call_id:
-        process_amocrm_call.delay(call_id)
+        process_amocrm_call.delay(call_id, tenant_schema=get_tenant_schema())
     return call_id
 
 
-@app.task(name="amocrm_poll.poll_amocrm_calls")
-def poll_amocrm_calls():
-    """Celery Beat task: poll AmoCRM for new call recordings every 5 minutes."""
+def _poll_for_current_tenant():
+    """Poll AmoCRM for new call recordings (tenant context already set)."""
     logger.info("Polling AmoCRM for new calls...")
     since = _get_last_poll_timestamp()
     events = get_recent_call_events(since)
@@ -320,14 +320,27 @@ def poll_amocrm_calls():
     retryable = _get_retryable_calls()
     for call in retryable:
         logger.info(f"Retrying failed call {call['id']} (note {call['amo_note_id']})")
-        process_amocrm_call.delay(call["id"])
+        process_amocrm_call.delay(call["id"], tenant_schema=get_tenant_schema())
 
     logger.info(f"Poll complete: {new_count} new calls, {len(retryable)} retries")
     return {"new": new_count, "retries": len(retryable)}
 
 
-@app.task(bind=True, queue="transcription", name="amocrm_poll.process_amocrm_call")
-def process_amocrm_call(self, call_id: int):
+@app.task(name="amocrm_poll.poll_amocrm_calls")
+def poll_amocrm_calls():
+    """Celery Beat task (every 5 minutes): poll AmoCRM for each AmoCRM tenant."""
+    from tenancy.registry import iter_amocrm_tenants
+    for t in iter_amocrm_tenants():
+        token = set_tenant_schema(t["schema_name"])
+        try:
+            _poll_for_current_tenant()
+        except Exception:
+            logger.exception(f"poll failed for tenant {t['slug']}")
+        finally:
+            reset_tenant_schema(token)
+
+
+def _process_amocrm_call_body(task, call_id: int):
     """Download recording from AmoCRM note and run through pipeline."""
     # Read call data from DB
     if not _get_sync_db_url():
@@ -452,7 +465,7 @@ def process_amocrm_call(self, call_id: int):
         company_config = load_company_config("realestate")
         scenario = get_scenario(company_config, scenario_id)
 
-        result = _run_pipeline(self, session_id, wav_path, {
+        result = _run_pipeline(task, session_id, wav_path, {
             "company_id": "realestate",
             "scenario_id": scenario_id,
         }, company_config, scenario, session_meta)
@@ -497,3 +510,15 @@ def process_amocrm_call(self, call_id: int):
         _update_call_status(call_id, "failed", error_message=str(e)[:500], retry_count=retry_count + 1)
         logger.exception(f"[amo:{amo_note_id}] Pipeline failed: {e}")
         raise
+
+
+@app.task(bind=True, queue="transcription", name="amocrm_poll.process_amocrm_call")
+def process_amocrm_call(self, call_id: int, tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_amocrm_call_body(self, call_id)
+    finally:
+        reset_tenant_schema(token)

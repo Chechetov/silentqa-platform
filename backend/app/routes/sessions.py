@@ -228,10 +228,17 @@ async def reprocess_session(
     await db.commit()
     await db.refresh(sess)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(
@@ -327,10 +334,17 @@ async def link_lead(
     await db.commit()
     await db.refresh(sess)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(
@@ -373,10 +387,17 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
     await db.refresh(session)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(

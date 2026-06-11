@@ -43,7 +43,7 @@ def test_missing_recording_parks_call_as_awaiting(monkeypatch):
     monkeypatch.setattr(ap, "_update_call_status",
                         lambda cid, status, **kw: updates.append((cid, status, kw)))
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     assert len(updates) == 1
     cid, status, kw = updates[0]
@@ -67,7 +67,7 @@ def test_missing_recording_resolved_on_retry(monkeypatch, tmp_path):
     # Stop right after URL resolution by making the download fail fast.
     monkeypatch.setattr(ap, "download_recording", lambda url, dest: False)
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     # First status update persists the resolved URL alongside 'downloading'
     # and clears the stale 'recording_not_published' marker.
@@ -88,6 +88,6 @@ def test_present_recording_skips_resolution(monkeypatch, tmp_path):
     monkeypatch.setattr(ap, "download_recording", lambda url, dest: False)
     monkeypatch.setattr(ap, "get_note_details", lambda *a, **k: fetched.append(1))
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     assert fetched == []                                # resolution path not entered

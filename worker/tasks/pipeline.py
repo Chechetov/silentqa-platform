@@ -15,6 +15,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tenancy.context import reset_tenant_schema, set_tenant_schema
 from tenancy.db import (
     get_sync_db_url,
     get_sync_dialect_url,
@@ -750,8 +751,7 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     }
 
 
-@app.task(bind=True, queue="transcription", name="pipeline.process_session")
-def process_session(self, session_id: str, config: dict | None = None):
+def _process_session_body(task, session_id: str, config: dict | None = None):
     """Full pipeline for browser-recorded sessions (WebM chunks)."""
     config = config or {}
     logger.info(f"[{session_id}] Starting processing pipeline...")
@@ -767,12 +767,12 @@ def process_session(self, session_id: str, config: dict | None = None):
 
     try:
         # Step 1: Merge chunks
-        self.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
+        task.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
         logger.info(f"[{session_id}] Step 1: Merging audio chunks...")
         audio_path = merge_chunks(session_id)
 
         # Steps 2-8: shared pipeline
-        result = _run_pipeline(self, session_id, audio_path, config, company_config, scenario, session_meta)
+        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
 
         # Done
         finished_at = datetime.now(timezone.utc)
@@ -801,8 +801,20 @@ def process_session(self, session_id: str, config: dict | None = None):
         raise
 
 
-@app.task(bind=True, queue="transcription", name="pipeline.process_session_from_file")
-def process_session_from_file(self, session_id: str, audio_path: str, config: dict | None = None):
+@app.task(bind=True, queue="transcription", name="pipeline.process_session")
+def process_session(self, session_id: str, config: dict | None = None,
+                    tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_session_body(self, session_id, config)
+    finally:
+        reset_tenant_schema(token)
+
+
+def _process_session_from_file_body(task, session_id: str, audio_path: str, config: dict | None = None):
     """Pipeline for pre-existing audio files (AmoCRM calls, uploaded files)."""
     config = config or {}
     logger.info(f"[{session_id}] Starting file-based pipeline for {audio_path}...")
@@ -817,7 +829,7 @@ def process_session_from_file(self, session_id: str, audio_path: str, config: di
     logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
-        result = _run_pipeline(self, session_id, audio_path, config, company_config, scenario, session_meta)
+        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
 
         finished_at = datetime.now(timezone.utc)
         audio_duration = _get_audio_duration(audio_path)
@@ -843,3 +855,16 @@ def process_session_from_file(self, session_id: str, audio_path: str, config: di
         update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
         logger.exception(f"[{session_id}] File-based pipeline failed: {e}")
         raise
+
+
+@app.task(bind=True, queue="transcription", name="pipeline.process_session_from_file")
+def process_session_from_file(self, session_id: str, audio_path: str, config: dict | None = None,
+                              tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_session_from_file_body(self, session_id, audio_path, config)
+    finally:
+        reset_tenant_schema(token)

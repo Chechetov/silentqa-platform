@@ -47,7 +47,7 @@ def test_inbound_call_skipped_without_download(monkeypatch):
     monkeypatch.setattr(ap, "download_recording", lambda *a, **k: downloaded.append(1) or True)
     monkeypatch.setattr(ap, "get_note_details", lambda *a, **k: downloaded.append(1) or {})
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     assert downloaded == []                       # never tried to fetch/download
     assert len(updates) == 1
@@ -83,7 +83,7 @@ def _wire_full_path(monkeypatch, tmp_path, pushed: bool):
 def test_push_failure_marks_call_failed(monkeypatch, tmp_path):
     """Push expected (use_extended, no skip) but no amo_note_id landed -> failed."""
     updates = _wire_full_path(monkeypatch, tmp_path, pushed=False)
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
     final = updates[-1]
     assert final[0] == "failed"
     assert final[1].get("error_message") == "amocrm_push_failed"
@@ -93,5 +93,5 @@ def test_push_failure_marks_call_failed(monkeypatch, tmp_path):
 def test_push_success_marks_call_completed(monkeypatch, tmp_path):
     """Push succeeded (amo_note_id present) -> completed."""
     updates = _wire_full_path(monkeypatch, tmp_path, pushed=True)
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
     assert updates[-1][0] == "completed"
