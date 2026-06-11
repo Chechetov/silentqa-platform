@@ -12,6 +12,8 @@ let currentRoute = '';
 let sessionsCache = null;
 let _currentCallData = null; // {session, transcript, analysis} for export
 let _currentCompanyData = null; // company config for editing
+let currentUser = null; // {email, role} после логина
+const isAdmin = () => currentUser && currentUser.role === 'admin';
 
 // ---- Router ----
 function navigate(hash) {
@@ -55,8 +57,10 @@ async function router() {
   } else if (route === 'templates') {
     await renderTemplates();
   } else if (route === 'template/new') {
+    if (!isAdmin()) { navigate('#templates'); return; }
     await renderTemplateEdit(null);
   } else if (route.startsWith('template/')) {
+    if (!isAdmin()) { navigate('#templates'); return; }
     await renderTemplateEdit(route.split('/')[1]);
   } else if (route === 'complexes') {
     await renderComplexes();
@@ -70,8 +74,63 @@ async function router() {
 window.addEventListener('hashchange', router);
 window.addEventListener('load', () => {
   checkHealth();
-  router();
+  bootAuth().then((ok) => { if (ok) { router(); } else { showLogin(); } });
 });
+
+// ---- Auth (user sessions) ----
+async function bootAuth() {
+  try {
+    currentUser = await api('/api/user-auth/me');
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function showLogin() {
+  currentUser = null;
+  const el = document.getElementById('app') || document.body;
+  el.innerHTML = `
+    <div class="login-screen">
+      <form id="login-form" class="login-card">
+        <h2>Вход в дашборд</h2>
+        <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+        <input type="password" id="login-password" placeholder="Пароль" required autocomplete="current-password">
+        <button type="submit">Войти</button>
+        <div id="login-error" class="login-error"></div>
+      </form>
+    </div>`;
+  document.getElementById('login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+      const res = await fetch('/api/user-auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('login-email').value.trim(),
+          password: document.getElementById('login-password').value,
+        }),
+      });
+      if (!res.ok) {
+        errEl.textContent = res.status === 429
+          ? 'Слишком много попыток — подождите 5 минут'
+          : 'Неверный email или пароль';
+        return;
+      }
+      currentUser = await res.json();
+      window.location.reload();
+    } catch (e) {
+      errEl.textContent = 'Сервер недоступен';
+    }
+  });
+}
+
+async function logout() {
+  try { await fetch('/api/user-auth/logout', { method: 'POST' }); } catch (e) {}
+  showLogin();
+}
 
 // ---- API Helpers ----
 async function api(path, options = {}) {
@@ -79,22 +138,22 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   });
+  if (res.status === 401) {
+    let detail = '';
+    try { detail = (await res.clone().json()).detail || ''; } catch (e) {}
+    // Редирект на логин ТОЛЬКО для cookie-гейченных ответов (спека 5.2):
+    // ошибки API-ключа/брокерского JWT сюда не относятся.
+    if (detail === 'auth_required') {
+      showLogin();
+      throw new Error('auth required');
+    }
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   if (res.status === 204) return null;
   return res.json();
-}
-
-async function ensureDeletePassword() {
-  let p = sessionStorage.getItem('deletePassword');
-  if (!p) {
-    p = prompt('Пароль для опасных действий:');
-    if (!p) return null;
-    sessionStorage.setItem('deletePassword', p);
-  }
-  return p;
 }
 
 async function checkHealth() {
@@ -428,8 +487,8 @@ async function renderCallDetail(id) {
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
         <button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>
-        <button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>
+        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
       </div>
 
       <div class="call-detail-header">
@@ -477,7 +536,7 @@ async function renderCallDetail(id) {
           ${extraction.complex_id ? `
             <a class="btn btn-secondary btn-sm" href="#complex/${extraction.complex_id}">Открыть профиль ЖК</a>
           ` : ''}
-          <button class="btn btn-secondary btn-sm" onclick="relinkExtraction('${extraction.extraction_id}')">${extraction.complex_id ? 'Перепривязать к другому ЖК…' : 'Привязать к ЖК…'}</button>
+          ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="relinkExtraction('${extraction.extraction_id}')">${extraction.complex_id ? 'Перепривязать к другому ЖК…' : 'Привязать к ЖК…'}</button>` : ''}
         </div>
       </div>
       ` : ''}
@@ -825,7 +884,7 @@ async function renderCallDetail(id) {
                   return `
                     <div class="transcript-line" data-start="${seg.start != null ? seg.start : ''}" data-end="${seg.end != null ? seg.end : ''}">
                       ${time ? `<span class="transcript-time">${time}</span>` : ''}
-                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}" onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать">${escapeHtml(displayName)}</span>
+                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
                       <span class="transcript-text">${escapeHtml(text)}</span>
                     </div>
                   `;
@@ -956,8 +1015,18 @@ async function renderManagers() {
 // ============================================
 async function renderCompanies() {
   showLoading();
+  let companies;
   try {
-    const companies = await api('/api/companies');
+    companies = await api('/api/companies');
+  } catch (err) {
+    if (/not found|404/i.test(err.message)) {
+      app.innerHTML = '<div class="empty-state"><p>Раздел доступен только платформенному администратору</p></div>';
+    } else {
+      app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки: ${escapeHtml(err.message)}</p></div>`;
+    }
+    return;
+  }
+  try {
     app.innerHTML = `
       <div class="page-header">
         <h1>Компании</h1>
@@ -1299,10 +1368,6 @@ function collectScenariosFromDOM() {
 // PAGE: Upload Audio File
 // ============================================
 async function renderUpload() {
-  // Load companies for scenario selection
-  let companies = [];
-  try { companies = await api('/api/companies'); } catch {}
-
   let templates = [];
   try { templates = await api('/api/templates'); } catch {}
 
@@ -1344,19 +1409,6 @@ async function renderUpload() {
       <div class="form-group">
         <label>Сотрудник / врач</label>
         <input type="text" id="uploadEmployee" placeholder="Имя сотрудника">
-      </div>
-      <div class="form-group">
-        <label>Компания</label>
-        <select id="uploadCompany">
-          <option value="">-- По умолчанию --</option>
-          ${companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || c.id)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group" id="scenarioGroup" style="display:none">
-        <label>Сценарий оценки</label>
-        <select id="uploadScenario">
-          <option value="">-- Протокол по умолчанию --</option>
-        </select>
       </div>
       <div class="form-group">
         <label>Комментарий</label>
@@ -1420,34 +1472,6 @@ async function renderUpload() {
     dropzone.classList.add('upload-dropzone--selected');
     $('#uploadBtn').disabled = false;
   }
-
-  // Company → scenarios dynamic loading
-  const companySelect = $('#uploadCompany');
-  companySelect.addEventListener('change', async () => {
-    const companyId = companySelect.value;
-    const scenarioGroup = $('#scenarioGroup');
-    const scenarioSelect = $('#uploadScenario');
-    if (!companyId) {
-      scenarioGroup.style.display = 'none';
-      return;
-    }
-    try {
-      const company = await api(`/api/companies/${companyId}`);
-      const scenarios = company.scenarios || [];
-      if (scenarios.length === 0) {
-        scenarioGroup.style.display = 'none';
-        return;
-      }
-      scenarioSelect.innerHTML = '<option value="">-- Протокол по умолчанию --</option>' +
-        scenarios.map(s => {
-          const badge = s.type === 'in_person' ? '[Очно]' : '[Звонок]';
-          return `<option value="${escapeHtml(s.id)}">${badge} ${escapeHtml(s.name)}</option>`;
-        }).join('');
-      scenarioGroup.style.display = 'block';
-    } catch {
-      scenarioGroup.style.display = 'none';
-    }
-  });
 }
 
 async function startUpload() {
@@ -1455,8 +1479,6 @@ async function startUpload() {
   if (!file) return;
 
   const employee = $('#uploadEmployee').value.trim();
-  const companyId = $('#uploadCompany').value;
-  const scenarioId = ($('#uploadScenario') && $('#uploadScenario').value) || '';
   const comment = $('#uploadComment').value.trim();
 
   const btn = $('#uploadBtn');
@@ -1466,8 +1488,6 @@ async function startUpload() {
 
   const metadata = { source: 'file-upload', uploadedAt: new Date().toISOString() };
   if (employee) metadata.employee = employee;
-  if (companyId) metadata.company_id = companyId;
-  if (scenarioId) metadata.scenario_id = scenarioId;
   if (comment) metadata.comment = comment;
 
   try {
@@ -1537,22 +1557,14 @@ async function deleteSession(id) {
     showToast('Удаление отменено: фраза не совпадает', 'error');
     return;
   }
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/sessions/${id}`, {
       method: 'DELETE',
-      headers: { 'X-Delete-Password': password },
     });
     showToast('Сессия удалена');
     navigate('calls');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль удаления', 'error');
-    } else {
-      showToast(`Не удалось удалить: ${err.message}`, 'error');
-    }
+    showToast(`Не удалось удалить: ${err.message}`, 'error');
   }
 }
 
@@ -1812,7 +1824,7 @@ async function renderTemplates() {
           <h1>Шаблоны</h1>
           <p>Что и как анализировать в записи: извлекать факты или оценивать звонок</p>
         </div>
-        <button class="btn btn-primary" onclick="navigate('template/new')">+ Новый шаблон</button>
+        ${isAdmin() ? `<button class="btn btn-primary" onclick="navigate('template/new')">+ Новый шаблон</button>` : ''}
       </div>
       ${items.length === 0
         ? '<div class="empty-state"><p>Пока нет шаблонов</p></div>'
@@ -1820,9 +1832,9 @@ async function renderTemplates() {
             <a class="tpl-card" href="#template/${t.id}">
               <div class="tpl-card-head">
                 <span class="tpl-kind tpl-kind-${escapeHtml(t.kind)}">${escapeHtml(_kindLabel(t.kind))}</span>
-                <button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
+                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
-                </button>
+                </button>` : ''}
               </div>
               <div class="tpl-card-name">${escapeHtml(t.name)}</div>
               <div class="tpl-card-desc">${escapeHtml(t.description || '—')}</div>
@@ -1913,31 +1925,22 @@ async function saveTemplate(id) {
   };
   if (!id) body.kind = $('#tplKind').value;
 
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     if (id) {
       await api(`/api/templates/${id}`, {
         method: 'PATCH',
-        headers: { 'X-Delete-Password': password },
         body: JSON.stringify(body),
       });
     } else {
       await api('/api/templates', {
         method: 'POST',
-        headers: { 'X-Delete-Password': password },
         body: JSON.stringify(body),
       });
     }
     showToast('Шаблон сохранён');
     navigate('templates');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Не удалось сохранить: ' + err.message, 'error');
-    }
+    showToast('Не удалось сохранить: ' + err.message, 'error');
   }
 }
 
@@ -1952,22 +1955,14 @@ function validateSchemaInline() {
 
 async function deleteTemplate(id, name) {
   if (!confirm(`Удалить шаблон "${name}"?`)) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/templates/${id}`, {
       method: 'DELETE',
-      headers: { 'X-Delete-Password': password },
     });
     showToast('Шаблон удалён');
     renderTemplates();
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Не удалось удалить: ' + err.message, 'error');
-    }
+    showToast('Не удалось удалить: ' + err.message, 'error');
   }
 }
 
@@ -2483,23 +2478,15 @@ async function relinkExtraction(extractionId) {
   if (!choice) return;
   const target = items.find(c => c.name === choice.trim());
   if (!target) return showToast('ЖК не найден', 'error');
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/extractions/${extractionId}/relink`, {
       method: 'POST',
-      headers: { 'X-Delete-Password': password },
       body: JSON.stringify({ complex_id: target.id }),
     });
     showToast('Перепривязано');
     location.reload();
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
 }
 
@@ -2572,10 +2559,11 @@ async function renderComplexDetail(id) {
         <h1>${escapeHtml(c.name)}</h1>
         <p>${escapeHtml(c.developer || '')} ${c.class ? '· ' + escapeHtml(c.class) : ''} ${c.district ? '· ' + escapeHtml(c.district) : ''}</p>
       </div>
+      ${isAdmin() ? `
       <div style="margin-bottom:16px;display:flex;gap:8px">
         <button class="btn btn-secondary btn-sm" onclick="renameComplex('${c.id}', ${JSON.stringify(c.name)})">Переименовать</button>
         <button class="btn btn-danger btn-sm" onclick="deleteComplex('${c.id}', ${JSON.stringify(c.name)})">Удалить профиль</button>
-      </div>
+      </div>` : ''}
       <div class="cx-profile">
         ${renderComplexProfile(c.aggregated_data)}
       </div>
@@ -2592,40 +2580,25 @@ async function renderComplexDetail(id) {
 async function renameComplex(id, currentName) {
   const newName = prompt('Новое имя ЖК:', currentName);
   if (!newName || newName === currentName) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/complexes/${id}`, {
       method: 'PATCH',
-      headers: { 'X-Delete-Password': password },
       body: JSON.stringify({ name: newName }),
     });
     showToast('Переименовано');
     renderComplexDetail(id);
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
 }
 
 async function deleteComplex(id, name) {
   if (!confirm(`Удалить профиль "${name}"? Сами записи останутся, но будут отвязаны.`)) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
-    await api(`/api/complexes/${id}`, { method: 'DELETE', headers: { 'X-Delete-Password': password } });
+    await api(`/api/complexes/${id}`, { method: 'DELETE' });
     showToast('Удалено');
     navigate('complexes');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
 }
