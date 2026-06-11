@@ -33,10 +33,33 @@ def test_uses_tenant_row_value(monkeypatch):
 
 def test_falls_back_to_subdomain(monkeypatch):
     monkeypatch.setattr(ams, "shared_connect", lambda: _fake_conn(None))
-    monkeypatch.setenv("BASE_DOMAIN", "silentqa.com")
+    # недефолтный домен — чтобы тест пиновал чтение env, а не хардкод-дефолт
+    monkeypatch.setenv("BASE_DOMAIN", "example.test")
     token = set_tenant_schema("t_acme")
     try:
-        assert ams._dashboard_base_url() == "https://acme.silentqa.com"
+        assert ams._dashboard_base_url() == "https://acme.example.test"
+    finally:
+        reset_tenant_schema(token)
+
+
+def test_transient_lookup_failure_is_not_cached(monkeypatch):
+    """Сбой shared_connect не должен пиновать subdomain-фоллбек в кеше навсегда."""
+    monkeypatch.setenv("BASE_DOMAIN", "example.test")
+    calls = {"n": 0}
+
+    def flaky_connect():
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise RuntimeError("db down")
+        return _fake_conn("https://rogov.automate-it.fun")
+
+    monkeypatch.setattr(ams, "shared_connect", flaky_connect)
+    token = set_tenant_schema("t_realestate")
+    try:
+        # первый вызов: транзиентная ошибка → фоллбек, но БЕЗ кеширования
+        assert ams._dashboard_base_url() == "https://realestate.example.test"
+        # второй вызов: БД ожила → реальное значение из shared.tenants
+        assert ams._dashboard_base_url() == "https://rogov.automate-it.fun"
     finally:
         reset_tenant_schema(token)
 

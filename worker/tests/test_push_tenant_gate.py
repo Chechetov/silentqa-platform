@@ -12,13 +12,13 @@ def test_amocrm_tenant_slugs_is_realestate_only():
 
 def test_push_to_amocrm_noops_for_foreign_tenant(monkeypatch):
     from tenancy.context import reset_tenant_schema, set_tenant_schema
-    # любой AmoCRM-вызов внутри тела должен быть недостижим
-    monkeypatch.setattr(pl, "find_lead_by_phone", mock.MagicMock(side_effect=AssertionError),
-                        raising=False)
+    # любой AmoCRM-вызов внутри тела должен быть недостижим;
+    # phone задан, чтобы без гейта тело дошло бы до find_lead_by_phone
+    monkeypatch.setattr(pl, "find_lead_by_phone", mock.MagicMock(side_effect=AssertionError))
     token = set_tenant_schema("t_acme")
     try:
         # ранний return до любых обращений к CRM/БД
-        pl._push_to_amocrm("sid", {}, {}, "/tmp/x.wav")
+        pl._push_to_amocrm("sid", {}, {"phone": "+79990000000"}, "/tmp/x.wav")
     finally:
         reset_tenant_schema(token)
 

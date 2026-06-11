@@ -42,6 +42,7 @@ def _dashboard_base_url() -> str:
     if slug in _DASHBOARD_URL_CACHE:
         return _DASHBOARD_URL_CACHE[slug]
     url = None
+    lookup_ok = False
     try:
         conn = shared_connect()
         try:
@@ -52,13 +53,17 @@ def _dashboard_base_url() -> str:
                 )
                 row = cur.fetchone()
                 url = row[0] if row and row[0] else None
+            lookup_ok = True
         finally:
             conn.close()
     except Exception:
         logger.exception("dashboard_base_url lookup failed; using fallback")
     if not url:
         url = f"https://{slug}.{os.getenv('BASE_DOMAIN', 'silentqa.com')}"
-    _DASHBOARD_URL_CACHE[slug] = url
+    if lookup_ok:
+        # Транзиентный сбой БД не должен пиновать фоллбек в module-global
+        # кеше на всю жизнь процесса воркера — кешируем только успешный lookup.
+        _DASHBOARD_URL_CACHE[slug] = url
     return url
 
 # Token is owned by rogov-partner-portal and stored in portal.amocrm_tokens.
