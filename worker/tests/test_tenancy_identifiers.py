@@ -14,10 +14,12 @@ def test_valid_slug_roundtrip():
     assert validate_slug("realestate") == "realestate"
     assert schema_for_slug("realestate") == "t_realestate"
     assert slug_from_schema("t_realestate") == "realestate"
+    assert validate_slug("ab") == "ab"
+    assert validate_slug("x" * 31) == "x" * 31
 
 
 def test_slug_rejects_bad_charset():
-    for bad in ("My-Client", "my-client", "1abc", "a", "x" * 32, "", "acme.evil", "т_кир"):
+    for bad in ("My-Client", "my-client", "1abc", "a", "x" * 32, "", "acme.evil", "т_кир", "acme\n"):
         with pytest.raises(ValueError):
             validate_slug(bad)
 
@@ -31,7 +33,7 @@ def test_slug_rejects_reserved():
 
 def test_schema_name_validation_blocks_injection():
     assert validate_schema_name("t_acme") == "t_acme"
-    for bad in ("public", "t_acme; DROP TABLE x", "t_", "t_Acme", "acme"):
+    for bad in ("public", "t_acme; DROP TABLE x", "t_", "t_Acme", "acme", "t_acme\n"):
         with pytest.raises(ValueError):
             validate_schema_name(bad)
 

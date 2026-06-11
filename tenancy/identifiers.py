@@ -20,7 +20,7 @@ RESERVED_SLUGS = frozenset(
 
 
 def validate_slug(slug: str) -> str:
-    if not SLUG_RE.match(slug or ""):
+    if not SLUG_RE.fullmatch(slug or ""):
         raise ValueError(
             f"invalid tenant slug {slug!r}: must match {SLUG_RE.pattern}"
         )
@@ -34,7 +34,7 @@ def schema_for_slug(slug: str) -> str:
 
 
 def validate_schema_name(schema: str) -> str:
-    if not SCHEMA_RE.match(schema or ""):
+    if not SCHEMA_RE.fullmatch(schema or ""):
         raise ValueError(f"invalid tenant schema name {schema!r}")
     return schema
 
