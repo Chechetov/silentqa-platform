@@ -8,21 +8,27 @@ and `name` are refreshed.
 
 Usage (from /root/projects/realestate/worker):
 
-    ../.venv/bin/python3 -m scripts.sync_brokers
+    ../.venv/bin/python3 -m scripts.sync_brokers --tenant <slug>
 """
 from __future__ import annotations
 
+import argparse
 import logging
-import os
 import sys
 from collections import Counter
+from pathlib import Path
 
-import psycopg2
 from dotenv import load_dotenv
 
 # `python -m scripts.sync_brokers` from the worker root puts cwd on sys.path
-# automatically; no manipulation needed.
-from tasks.amocrm_sync import AMOCRM_BASE_URL, _amo_request
+# automatically; the repo root (for `tenancy`) has to be added by hand.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tenancy.context import set_tenant_schema  # noqa: E402
+from tenancy.db import get_sync_db_url, tenant_connect  # noqa: E402
+from tenancy.identifiers import schema_for_slug  # noqa: E402
+
+from tasks.amocrm_sync import AMOCRM_BASE_URL, _amo_request  # noqa: E402
 
 load_dotenv()
 
@@ -33,11 +39,7 @@ logging.basicConfig(
 logger = logging.getLogger("sync_brokers")
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
 
 
 def _fetch_all_users() -> list[dict]:
@@ -81,6 +83,11 @@ UPDATE_SQL = (
 
 
 def main() -> int:
+    parser = argparse.ArgumentParser(description="One-shot AmoCRM users → brokers sync")
+    parser.add_argument("--tenant", required=True, help="tenant slug, e.g. realestate")
+    args = parser.parse_args()
+    set_tenant_schema(schema_for_slug(args.tenant))
+
     db_url = _get_sync_db_url()
     if not db_url:
         print("ERROR: DATABASE_URL / DATABASE_URL_SYNC not set", file=sys.stderr)
@@ -111,7 +118,7 @@ def main() -> int:
         return 1
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
     except Exception as exc:
         print(f"ERROR: failed to connect to database: {exc}", file=sys.stderr)
         return 1

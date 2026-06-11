@@ -8,7 +8,7 @@ produced materially different or richer output — specifically:
 - New plan's talking_points are tagged with playbook category_ids
 
 Usage (from /root/projects/realestate/worker):
-    ../.venv/bin/python3 -m scripts.compare_reassess [--top 20]
+    ../.venv/bin/python3 -m scripts.compare_reassess --tenant <slug> [--top 20]
 """
 from __future__ import annotations
 
@@ -24,11 +24,17 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(REPO_ROOT / ".env")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(REPO_ROOT))
+
+from tenancy.context import set_tenant_schema  # noqa: E402
+from tenancy.identifiers import schema_for_slug  # noqa: E402
 
 from prompts.sales_playbook import MEETING_PLAYBOOK_CATEGORIES  # noqa: E402
 
 
-RESULTS_PATH = Path(os.getenv("RESULTS_STORAGE_PATH", "/data/realestate/results"))
+RESULTS_ROOT = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
+# Per-tenant results dir (<RESULTS_ROOT>/<slug>); finalized in main() from --tenant.
+RESULTS_PATH = Path(RESULTS_ROOT)
 PLAYBOOK_SET = set(MEETING_PLAYBOOK_CATEGORIES)
 
 
@@ -226,10 +232,16 @@ def _fmt_top(rows: list[dict], top: int = 20) -> str:
 
 
 def main() -> int:
+    global RESULTS_PATH
+
     parser = argparse.ArgumentParser()
+    parser.add_argument("--tenant", required=True, help="tenant slug, e.g. realestate")
     parser.add_argument("--top", type=int, default=20, help="Top N interesting calls to show")
     parser.add_argument("--json-out", type=str, default=None, help="Also dump full analysis to JSON file")
     args = parser.parse_args()
+
+    set_tenant_schema(schema_for_slug(args.tenant))
+    RESULTS_PATH = Path(RESULTS_ROOT) / args.tenant
 
     data = analyze()
     print(_fmt_counts(data["counts"]))

@@ -108,9 +108,8 @@ async def reprocess(body: ReprocessRequest):
                 # Already in DB (ON CONFLICT DO NOTHING returned no row)
                 if body.force:
                     # We don't know the row id without another query; use amo_note_id to look it up
-                    from tasks.amocrm_poll import _get_sync_db_url
-                    import psycopg2
-                    conn = psycopg2.connect(_get_sync_db_url())
+                    from tenancy.db import tenant_connect
+                    conn = tenant_connect()
                     try:
                         with conn, conn.cursor() as cur:
                             cur.execute(

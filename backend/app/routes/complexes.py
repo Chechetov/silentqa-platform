@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import sys
 import uuid
 from pathlib import Path
@@ -25,18 +24,14 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api", tags=["complexes"])
 
 
-def _sync_db_url() -> str:
-    return os.environ.get("DATABASE_URL_SYNC") or os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg2")
-
-
 def _recompute_aggregate_sync(complex_id: uuid.UUID) -> None:
     """Run worker's _recompute_aggregate synchronously inside a fresh sync session."""
-    from sqlalchemy import create_engine
     from sqlalchemy.orm import Session as DbSession
 
     from tasks.complex_match import _recompute_aggregate
+    from tenancy.db import tenant_engine
 
-    eng = create_engine(_sync_db_url(), future=True)
+    eng = tenant_engine()
     try:
         with eng.connect() as conn:
             with DbSession(bind=conn, expire_on_commit=False) as sdb:
