@@ -26,29 +26,8 @@ class BasicAuthMiddleware(BaseHTTPMiddleware):
     """HTTP Basic Auth on UI routes only. API endpoints are open for the Chrome extension."""
 
     OPEN_PREFIXES = ("/api/", "/health")
-    PROTECTED_PREFIXES = ("/api/templates", "/api/complexes", "/api/extractions")
-    PROTECTED_METHODS = {"POST", "PATCH", "DELETE"}
 
     async def dispatch(self, request: Request, call_next):
-        # Destructive calls on templates/complexes/extractions need the delete password
-        if (request.method in self.PROTECTED_METHODS
-                and any(request.url.path.startswith(p) for p in self.PROTECTED_PREFIXES)):
-            expected = settings.DELETE_PASSWORD
-            if not expected:
-                return Response(
-                    status_code=503,
-                    content='{"detail":"Mutations disabled: DELETE_PASSWORD not configured"}',
-                    media_type="application/json",
-                )
-            provided = request.headers.get("X-Delete-Password")
-            if not provided or not secrets.compare_digest(provided, expected):
-                return Response(
-                    status_code=401,
-                    content='{"detail":"Invalid delete password"}',
-                    media_type="application/json",
-                )
-            return await call_next(request)
-
         if request.url.path.startswith(self.OPEN_PREFIXES):
             return await call_next(request)
 

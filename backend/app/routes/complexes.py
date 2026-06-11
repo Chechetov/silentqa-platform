@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import require_admin, require_viewer
 from app.database import get_db
 from app.schemas_templates import (
     ComplexDetail, ComplexListItem, ComplexMerge, ComplexRename, ExtractionRelink,
@@ -41,7 +42,7 @@ def _recompute_aggregate_sync(complex_id: uuid.UUID) -> None:
         eng.dispose()
 
 
-@router.get("/complexes", response_model=list[ComplexListItem])
+@router.get("/complexes", response_model=list[ComplexListItem], dependencies=[Depends(require_viewer)])
 async def list_complexes(
     developer: str | None = None,
     class_: str | None = None,
@@ -81,7 +82,7 @@ async def list_complexes(
     ]
 
 
-@router.get("/complexes/{complex_id}", response_model=ComplexDetail)
+@router.get("/complexes/{complex_id}", response_model=ComplexDetail, dependencies=[Depends(require_viewer)])
 async def get_complex(complex_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     c = (await db.execute(text("""
         SELECT id, name, developer, class, district, updated_at, aggregated_data
@@ -106,7 +107,7 @@ async def get_complex(complex_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     )
 
 
-@router.patch("/complexes/{complex_id}", response_model=ComplexDetail)
+@router.patch("/complexes/{complex_id}", response_model=ComplexDetail, dependencies=[Depends(require_admin)])
 async def rename_complex(complex_id: uuid.UUID, body: ComplexRename, db: AsyncSession = Depends(get_db)):
     from tasks._text_normalize import normalize_complex_name
     res = await db.execute(text("""
@@ -119,7 +120,7 @@ async def rename_complex(complex_id: uuid.UUID, body: ComplexRename, db: AsyncSe
     return await get_complex(complex_id, db)
 
 
-@router.delete("/complexes/{complex_id}", status_code=204)
+@router.delete("/complexes/{complex_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_complex(complex_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     res = await db.execute(text("DELETE FROM complexes WHERE id=:id RETURNING id"), {"id": complex_id})
     if not res.first():
@@ -127,7 +128,7 @@ async def delete_complex(complex_id: uuid.UUID, db: AsyncSession = Depends(get_d
     await db.commit()
 
 
-@router.post("/complexes/{complex_id}/merge", status_code=204)
+@router.post("/complexes/{complex_id}/merge", status_code=204, dependencies=[Depends(require_admin)])
 async def merge_complex(complex_id: uuid.UUID, body: ComplexMerge, db: AsyncSession = Depends(get_db)):
     if complex_id == body.target_complex_id:
         raise HTTPException(status_code=400, detail="Cannot merge complex into itself")
@@ -148,7 +149,7 @@ async def merge_complex(complex_id: uuid.UUID, body: ComplexMerge, db: AsyncSess
     _recompute_aggregate_sync(body.target_complex_id)
 
 
-@router.post("/extractions/{extraction_id}/relink", status_code=204)
+@router.post("/extractions/{extraction_id}/relink", status_code=204, dependencies=[Depends(require_admin)])
 async def relink_extraction(extraction_id: uuid.UUID, body: ExtractionRelink, db: AsyncSession = Depends(get_db)):
     if body.complex_id is not None:
         target = (await db.execute(text("SELECT id FROM complexes WHERE id=:id"),
