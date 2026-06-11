@@ -56,6 +56,13 @@ def do_run_migrations(connection):
         connection.exec_driver_sql(
             f"SET search_path TO {_TENANT_SCHEMA}, shared, public"
         )
+        # The SET above autobegins a transaction. Alembic's
+        # begin_transaction() treats an in-progress transaction as
+        # externally managed (no-op), and the async template below never
+        # commits — every migration would silently ROLL BACK on connection
+        # close. Commit here so alembic owns (and commits) the migration
+        # transaction. SET search_path is session-level: it survives.
+        connection.commit()
     context.configure(
         connection=connection,
         target_metadata=target_metadata,
