@@ -1,0 +1,113 @@
+"""Tenant provisioning CLI.
+
+  python -m app.provision_tenant acme --name "ACME Corp" \
+      --admin-email admin@acme.ru [--admin-password ...]
+
+  python -m app.provision_tenant realestate --seed-only \
+      --admin-email alex.chechetov@gmail.com
+
+--seed-only: tenant already exists (the cutover created realestate) — only
+create the first admin user and the API key. The API-key plaintext is printed
+ONCE to stdout; only its sha256 lands in shared.tenants.
+"""
+from __future__ import annotations
+
+import argparse
+import getpass
+import hashlib
+import secrets
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root
+
+from argon2 import PasswordHasher
+
+from tenancy.db import shared_connect, get_sync_db_url
+from tenancy.identifiers import schema_for_slug, validate_slug
+
+
+def _seed_admin(conn, schema: str, email: str, password: str) -> None:
+    ph = PasswordHasher()
+    with conn.cursor() as cur:
+        cur.execute(
+            f"INSERT INTO {schema}.users (email, password_hash, role) "
+            "VALUES (%s, %s, 'admin')",
+            (email, ph.hash(password)),
+        )
+
+
+def _set_api_key(conn, slug: str) -> str:
+    key = f"sqa_{secrets.token_urlsafe(32)}"
+    digest = hashlib.sha256(key.encode()).hexdigest()
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE shared.tenants SET api_key_hash = %s WHERE slug = %s",
+            (digest, slug),
+        )
+    return key
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("slug")
+    p.add_argument("--name", default="")
+    p.add_argument("--admin-email", required=True)
+    p.add_argument("--admin-password", default="")
+    p.add_argument("--seed-only", action="store_true",
+                   help="tenant exists; only seed admin user + API key")
+    args = p.parse_args()
+
+    slug = validate_slug(args.slug)
+    schema = schema_for_slug(slug)
+    if not get_sync_db_url():
+        sys.exit("DATABASE_URL_SYNC / DATABASE_URL is not set")
+    password = args.admin_password or getpass.getpass(
+        f"Password for {args.admin_email}: "
+    )
+
+    conn = shared_connect()
+    conn.autocommit = False
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT 1 FROM shared.tenants WHERE slug = %s", (slug,)
+            )
+            exists = cur.fetchone() is not None
+
+        if args.seed_only:
+            if not exists:
+                sys.exit(f"tenant {slug!r} not found (run without --seed-only)")
+        else:
+            if exists:
+                sys.exit(f"tenant {slug!r} already exists")
+            with conn.cursor() as cur:
+                cur.execute(f"CREATE SCHEMA {schema}")
+                cur.execute(
+                    "INSERT INTO shared.tenants "
+                    "(slug, schema_name, display_name, status) "
+                    "VALUES (%s, %s, %s, 'active')",
+                    (slug, schema, args.name or slug),
+                )
+            conn.commit()
+            # tenant track 001→head on the fresh schema
+            from app.migrate import run_tenant
+
+            run_tenant(schema)
+
+        _seed_admin(conn, schema, args.admin_email, password)
+        key = _set_api_key(conn, slug)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    print(f"tenant: {slug}  schema: {schema}")
+    print(f"admin:  {args.admin_email}")
+    print(f"API key (shown once, store it now): {key}")
+
+
+if __name__ == "__main__":
+    main()
