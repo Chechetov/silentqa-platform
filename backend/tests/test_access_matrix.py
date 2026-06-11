@@ -81,9 +81,10 @@ ADMIN_MUTATIONS = [
     ("delete", "/api/complexes/00000000-0000-0000-0000-000000000001"),
     ("post", "/api/complexes/00000000-0000-0000-0000-000000000001/merge"),
     ("post", "/api/extractions/00000000-0000-0000-0000-000000000001/relink"),
-    # ВНИМАНИЕ: /api/amocrm/* сюда НЕ добавлять до Task 12 — до навешивания
-    # auth-зависимостей search-leads реально исполнит handler и дёрнет живой
-    # AmoCRM (portal-токен). Пути добавляются в Task 12 вместе с гейтом.
+    # /api/amocrm/* безопасны здесь только с гейтом require_amocrm_tenant
+    # (Task 12): зависимость отвечает 403 ДО handler'а — живой AmoCRM не дёргается.
+    ("post", "/api/amocrm/reprocess"),
+    ("get", "/api/amocrm/search-leads?q=ab"),
 ]
 
 
@@ -123,3 +124,34 @@ def test_broker_auth_contour_stays_open(client):
 
 def test_health_open(client):
     assert client.get("/health").status_code == 200
+
+
+def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
+    from app.tenancy_http import TenantRegistry
+
+    rows = [{
+        "slug": "acme", "schema_name": "t_acme", "status": "active",
+        "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+    }]
+
+    async def fake_all(self):
+        return rows
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app
+    from tenancy.context import reset_tenant_schema, set_tenant_schema
+    from app import auth_sessions
+
+    async def seed():
+        token = set_tenant_schema("t_acme")
+        try:
+            return await auth_sessions.create_session("u1", "a@t.io", "admin")
+        finally:
+            reset_tenant_schema(token)
+
+    sid = asyncio.run(seed())  # инвариант 13
+    c = TestClient(app, base_url="https://acme.silentqa.com")
+    r = c.post("/api/amocrm/reprocess", cookies={SESSION_COOKIE: sid},
+               json={"lead_id": 1})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "amocrm_not_enabled"

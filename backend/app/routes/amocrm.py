@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from celery import Celery
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 # Make worker/tasks importable (shared codebase for AmoCRM helpers and DB ops)
@@ -17,6 +17,8 @@ from tasks.amocrm_sync import get_lead_with_contacts, list_call_notes_on_entity,
 from tasks.amocrm_poll import _insert_call, reset_call_for_reprocess
 
 from tenancy.context import require_tenant_schema
+
+from ..auth_user import require_amocrm_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -61,7 +63,8 @@ def _enqueue_process_call(call_id: int, tenant_schema: str) -> str:
     return res.id
 
 
-@router.post("/reprocess", response_model=ReprocessResponse)
+@router.post("/reprocess", response_model=ReprocessResponse,
+             dependencies=[Depends(require_amocrm_tenant)])
 async def reprocess(body: ReprocessRequest):
     lead = get_lead_with_contacts(body.lead_id)
     if not lead:
@@ -141,7 +144,7 @@ async def reprocess(body: ReprocessRequest):
     )
 
 
-@router.get("/search-leads")
+@router.get("/search-leads", dependencies=[Depends(require_amocrm_tenant)])
 async def amocrm_search_leads(
     q: str = Query(..., min_length=2, max_length=200, description="Имя, телефон или email"),
     limit: int = Query(20, ge=1, le=50),
