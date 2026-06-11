@@ -29,7 +29,7 @@
 
 `worker/tests/conftest.py` уже вставляет `worker/` в `sys.path`; добавим и корень репо (нужно для `import tenancy`).
 
-- [ ] **Step 1: Расширить conftest**
+- [x] **Step 1: Расширить conftest**
 
 В `worker/tests/conftest.py` после существующего `sys.path.insert(0, str(Path(__file__).parent.parent))` добавить:
 
@@ -38,7 +38,7 @@
 sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 ```
 
-- [ ] **Step 2: Написать failing-тест**
+- [x] **Step 2: Написать failing-тест**
 
 ```python
 """Tests for tenancy.identifiers — slug/schema validation and derivation."""
@@ -84,12 +84,12 @@ def test_slug_from_schema_rejects_foreign_schema():
         slug_from_schema("public")
 ```
 
-- [ ] **Step 3: Прогнать — убедиться, что падает**
+- [x] **Step 3: Прогнать — убедиться, что падает**
 
 Run: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_identifiers.py -v`
 Expected: FAIL `ModuleNotFoundError: No module named 'tenancy'`
 
-- [ ] **Step 4: Реализация `tenancy/identifiers.py`**
+- [x] **Step 4: Реализация `tenancy/identifiers.py`**
 
 ```python
 """Slug and schema-name validation for tenants.
@@ -137,12 +137,12 @@ def slug_from_schema(schema: str) -> str:
     return validate_schema_name(schema)[2:]
 ```
 
-- [ ] **Step 5: Прогнать — зелёный**
+- [x] **Step 5: Прогнать — зелёный**
 
 Run: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_identifiers.py -v`
 Expected: 5 passed
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet && git add tenancy worker/tests/test_tenancy_identifiers.py worker/tests/conftest.py
