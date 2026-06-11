@@ -3,10 +3,13 @@ import os
 from pathlib import Path
 from typing import Literal
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-router = APIRouter(prefix="/api/companies", tags=["companies"])
+from ..auth_user import require_platform_admin_basic
+
+router = APIRouter(prefix="/api/companies", tags=["companies"],
+                   dependencies=[Depends(require_platform_admin_basic)])
 
 COMPANIES_DIR = Path(os.getenv("COMPANIES_PATH", "/companies"))
 
