@@ -37,7 +37,7 @@ import logging
 import os
 from datetime import datetime, timezone, timedelta
 
-import psycopg2
+from tenancy.db import tenant_connect
 
 from tasks.celery_app import app
 from tasks.amocrm_poll import (
@@ -65,10 +65,9 @@ def _existing_note_ids(note_ids: list[int]) -> set[int]:
     skips them before the per-note get_note_details call — keeps it cheap)."""
     if not note_ids:
         return set()
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return set()
-    conn = psycopg2.connect(db_url)
+    conn = tenant_connect()
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
@@ -83,10 +82,9 @@ def _existing_note_ids(note_ids: list[int]) -> set[int]:
 def _stuck_counts() -> dict:
     """Counts of terminally-stuck calls the retry layer can no longer help, plus
     the age (minutes) of the most recent ingest. Read-only observability."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return {"recording_timeout": 0, "failed_terminal": 0, "last_ingest_age_min": None}
-    conn = psycopg2.connect(db_url)
+    conn = tenant_connect()
     try:
         with conn, conn.cursor() as cur:
             # awaiting_recording that exhausted its retry budget or aged out

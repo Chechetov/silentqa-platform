@@ -40,8 +40,8 @@ def test_inbound_call_skipped_without_download(monkeypatch):
     updates = []
     downloaded = []
     monkeypatch.setattr(ap, "_get_sync_db_url", lambda: "postgresql://x")
-    monkeypatch.setattr(ap, "psycopg2",
-                        MagicMock(connect=lambda *a, **k: _fake_conn(_row(direction="in"))))
+    monkeypatch.setattr(ap, "tenant_connect",
+                        lambda *a, **k: _fake_conn(_row(direction="in")))
     monkeypatch.setattr(ap, "_update_call_status",
                         lambda cid, status, **kw: updates.append((status, kw)))
     monkeypatch.setattr(ap, "download_recording", lambda *a, **k: downloaded.append(1) or True)
@@ -61,8 +61,8 @@ def _wire_full_path(monkeypatch, tmp_path, pushed: bool):
     updates = []
     monkeypatch.setattr(ap, "AUDIO_PATH", str(tmp_path))
     monkeypatch.setattr(ap, "_get_sync_db_url", lambda: "postgresql://x")
-    monkeypatch.setattr(ap, "psycopg2",
-                        MagicMock(connect=lambda *a, **k: _fake_conn(_row(direction="out"))))
+    monkeypatch.setattr(ap, "tenant_connect",
+                        lambda *a, **k: _fake_conn(_row(direction="out")))
     monkeypatch.setattr(ap, "_update_call_status",
                         lambda cid, status, **kw: updates.append((status, kw)))
     monkeypatch.setattr(ap, "download_recording", lambda *a, **k: True)

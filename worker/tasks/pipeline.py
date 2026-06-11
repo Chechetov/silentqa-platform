@@ -15,7 +15,12 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg2
+from tenancy.db import (
+    get_sync_db_url,
+    get_sync_dialect_url,
+    tenant_connect,
+    tenant_engine,
+)
 
 from tasks.celery_app import app
 from tasks.transcribe import transcribe_audio
@@ -135,18 +140,12 @@ def _detect_broken_recording(audio_path: str, duration: float) -> dict | None:
     return None
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    # Normalize to plain postgresql:// for psycopg2
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
 
 
 def update_session_status(session_id: str, status: str, **kwargs):
     """Update session status directly in PostgreSQL via psycopg2."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         logger.warning("DATABASE_URL not set, cannot update session status")
         return
 
@@ -161,7 +160,7 @@ def update_session_status(session_id: str, status: str, **kwargs):
     query = f"UPDATE sessions SET {', '.join(sets)} WHERE id = %s"
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(query, values)
@@ -189,11 +188,10 @@ RESULTS_PATH = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
 
 def _get_session_metadata(session_id: str) -> dict:
     """Read session metadata from DB."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return {}
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -214,11 +212,10 @@ def _load_template_kind(template_id: str | None) -> tuple[str | None, str]:
     """
     if not template_id:
         return None, "evaluation"
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None, "evaluation"
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         try:
             with eng.connect() as conn:
@@ -235,11 +232,10 @@ def _load_template_kind(template_id: str | None) -> tuple[str | None, str]:
 
 def _load_evaluation_template_prompt(template_id: str) -> str | None:
     """Return the prompt of an evaluation template, or None on error."""
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         with eng.connect() as conn:
             row = conn.execute(_text("SELECT prompt FROM extraction_templates WHERE id=:id"),
@@ -253,11 +249,10 @@ def _load_evaluation_template_prompt(template_id: str) -> str | None:
 
 def _load_evaluation_template_criteria(template_id: str) -> list[dict] | None:
     """Return the criteria list of an evaluation template, or None on error / NULL column."""
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         with eng.connect() as conn:
             row = conn.execute(_text("SELECT criteria FROM extraction_templates WHERE id=:id"),
@@ -273,11 +268,10 @@ def _load_evaluation_template_criteria(template_id: str) -> list[dict] | None:
 
 def _get_session_created_at(session_id: str):
     """Return created_at (datetime or None) for a session."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return None
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT created_at FROM sessions WHERE id = %s", (session_id,))
@@ -389,11 +383,10 @@ def save_results(session_id: str, key: str, data: dict | list):
 
 def _save_speaker_roles(session_id: str, speaker_roles: dict):
     """Save auto-detected speaker roles to session metadata (if no manual override exists)."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -411,11 +404,10 @@ def _save_speaker_roles(session_id: str, speaker_roles: dict):
 
 def _update_session_metadata(session_id: str, updates: dict):
     """Merge updates into session metadata."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -619,12 +611,10 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     template_id, template_kind = _load_template_kind(template_id_meta)
     if template_kind == "extraction" and template_id:
         from tasks.extract import run_extraction
-        from sqlalchemy import create_engine
         from sqlalchemy.orm import Session as _DbSession
         task.update_state(state="PROGRESS", meta={"step": "extracting", "progress": 85})
         logger.info(f"[{session_id}] Step 5e: LLM extraction with template {template_id}...")
-        db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg2")
-        eng = create_engine(db_url, future=True)
+        eng = tenant_engine()
         try:
             with eng.connect() as conn:
                 with _DbSession(bind=conn, expire_on_commit=False) as db:

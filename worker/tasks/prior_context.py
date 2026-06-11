@@ -13,7 +13,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import psycopg2
+from tenancy.db import get_sync_db_url, tenant_connect
 
 logger = logging.getLogger(__name__)
 
@@ -182,9 +182,7 @@ def build_prior_context_dict(past_reports: list[dict], current_created_at: str) 
 
 # === Orchestrator: pulls past reports from DB + filesystem =========================
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    return url.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+asyncpg://", "postgresql://")
+_get_sync_db_url = get_sync_db_url
 
 
 def _load_quality_report(session_id: str) -> dict | None:
@@ -216,12 +214,11 @@ def load_past_sessions_for_lead(lead_id: int, before_created_at: datetime | str)
     Fetch completed sessions for a lead that started before the given timestamp.
     Returns entries ready for build_prior_context_dict.
     """
-    db_url = _get_sync_db_url()
-    if not db_url or not lead_id:
+    if not _get_sync_db_url() or not lead_id:
         return []
     entries: list[dict] = []
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         try:
             with conn.cursor() as cur:
                 cur.execute(

@@ -13,7 +13,7 @@ import uuid
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-import psycopg2
+from tenancy.db import get_sync_db_url, tenant_connect
 
 from tasks.celery_app import app
 from tasks.amocrm_sync import (
@@ -45,11 +45,7 @@ MAX_RETRIES = int(os.getenv("AMOCRM_MAX_RETRIES", "36"))
 RETRY_MAX_AGE_HOURS = int(os.getenv("AMOCRM_RETRY_MAX_AGE_HOURS", "24"))
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
 
 
 def _get_last_poll_timestamp() -> int:
@@ -63,12 +59,11 @@ def _get_last_poll_timestamp() -> int:
     safety_cutoff = now_ts - POLL_SAFETY_WINDOW_MINUTES * 60
     initial_cutoff = int((datetime.now(timezone.utc) - timedelta(hours=INITIAL_LOOKBACK_HOURS)).timestamp())
 
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return initial_cutoff
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT MAX(created_at) FROM amocrm_calls")
@@ -94,12 +89,11 @@ def _insert_call(amo_note_id: int, lead_id: int, phone: str, direction: str,
     entity reference (`entity_type`/`entity_id`) lets process_amocrm_call
     re-read the note later to pick the recording up once it lands.
     """
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return None
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -126,8 +120,7 @@ _ALLOWED_UPDATE_COLUMNS = {"error_message", "session_id", "retry_count", "proces
 
 def _update_call_status(call_id: int, status: str, **kwargs):
     """Update amocrm_calls row status and optional fields."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return
 
     sets = ["status = %s"]
@@ -140,7 +133,7 @@ def _update_call_status(call_id: int, status: str, **kwargs):
     values.append(call_id)
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(f"UPDATE amocrm_calls SET {', '.join(sets)} WHERE id = %s", values)
@@ -151,11 +144,10 @@ def _update_call_status(call_id: int, status: str, **kwargs):
 
 def reset_call_for_reprocess(call_id: int) -> bool:
     """Reset a call to 'created' status so it can be re-enqueued. Returns True if reset."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return False
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -181,12 +173,11 @@ def _get_retryable_calls() -> list[dict]:
     (call ingested before its recording was published) — the latter is retried
     until the recording lands or the retry budget is exhausted.
     """
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return []
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -214,14 +205,13 @@ def _get_retryable_calls() -> list[dict]:
 
 def _create_session(metadata: dict) -> str:
     """Create a new session in the sessions table. Returns session_id."""
-    db_url = _get_sync_db_url()
     session_id = str(uuid.uuid4())
 
-    if not db_url:
+    if not _get_sync_db_url():
         return session_id
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -340,13 +330,12 @@ def poll_amocrm_calls():
 def process_amocrm_call(self, call_id: int):
     """Download recording from AmoCRM note and run through pipeline."""
     # Read call data from DB
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         logger.error("DATABASE_URL not set")
         return
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
