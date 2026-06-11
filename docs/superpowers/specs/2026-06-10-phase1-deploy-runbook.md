@@ -3,7 +3,11 @@
 Прод: /root/projects/realestate, systemd realestate-{backend,worker}.service.
 
 1. Бэкап: pg_dump + tar data/. Прогнать весь Task-15 сценарий на копии прод-БД.
-2. `systemctl stop realestate-worker` (beat переживёт паузу: POLL_SAFETY_WINDOW).
+2. `systemctl stop realestate-worker realestate-backend` (beat переживёт
+   паузу: POLL_SAFETY_WINDOW). Backend тоже стоит: сессия, залитая между
+   этим шагом и шагом 4, легла бы в legacy-раскладку `$AUDIO/sessions/<id>`,
+   и новый worker её чанков не найдёт (merge_chunks смотрит в
+   `<slug>/sessions/`) → сессия уйдёт в failed.
 3. git pull; `.venv/bin/pip install -r backend/requirements.txt` (argon2-cffi).
 4. `bash scripts/migrate_storage_layout.sh` (с env из .env!).
 5. В .env добавить: `BASE_DOMAIN=silentqa.com`, `DEFAULT_TENANT=` (пусто —
