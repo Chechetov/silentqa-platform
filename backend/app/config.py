@@ -14,5 +14,11 @@ class Settings(BaseSettings):
     # Empty value means destructive actions are disabled (fail-closed).
     DELETE_PASSWORD: str = ""
 
+    # Multi-tenancy
+    BASE_DOMAIN: str = "silentqa.com"
+    # Fallback tenant slug for hosts that match neither custom_domains nor
+    # *.BASE_DOMAIN (local dev: localhost/IP). Empty → platform contour.
+    DEFAULT_TENANT: str = ""
+
 
 settings = Settings()

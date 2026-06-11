@@ -3,6 +3,9 @@ import secrets
 import subprocess
 import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → tenancy
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -104,6 +107,16 @@ app.add_middleware(
 
 # Basic Auth
 app.add_middleware(BasicAuthMiddleware)
+
+# Tenant resolution — outermost: unknown hosts 404 before anything else runs
+from app.tenancy_http import TenantRegistry, TenantResolutionMiddleware
+
+app.add_middleware(
+    TenantResolutionMiddleware,
+    registry=TenantRegistry(),
+    base_domain=settings.BASE_DOMAIN,
+    default_tenant=settings.DEFAULT_TENANT,
+)
 
 # Routes
 app.include_router(sessions.router)
