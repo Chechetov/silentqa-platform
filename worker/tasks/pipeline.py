@@ -23,6 +23,7 @@ from tenancy.db import (
     tenant_engine,
 )
 from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
+from tenancy.registry import AMOCRM_TENANT_SLUGS
 
 from tasks.celery_app import app
 from tasks.transcribe import transcribe_audio
@@ -440,6 +441,13 @@ def _push_to_amocrm(
     reports (short calls, broken recordings, extraction-only) carry a
     `skip_reason` and are intentionally not published.
     """
+    slug = require_tenant_slug()
+    if slug not in AMOCRM_TENANT_SLUGS:
+        logger.info(
+            f"[{session_id}] AmoCRM push skipped: tenant '{slug}' has no AmoCRM integration"
+        )
+        return
+
     lead_id = session_meta.get("lead_id")
     phone = session_meta.get("phone", "")
     amo_note_id = session_meta.get("amo_note_id")
@@ -673,7 +681,8 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     # with lead_id=None; we need it for prior_context lookup AND for the plan gate.
     lead_id = session_meta.get("lead_id")
     phone = session_meta.get("phone", "")
-    if not lead_id and phone:
+    amocrm_enabled = require_tenant_slug() in AMOCRM_TENANT_SLUGS
+    if not lead_id and phone and amocrm_enabled:
         lead_id = find_lead_by_phone(phone)
         if lead_id:
             _update_session_metadata(session_id, {"lead_id": lead_id})
@@ -685,8 +694,8 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         )
     # Fetch deal stage + events for stage-aware + offline-gap awareness (Phase 2)
     from tasks.amocrm_sync import get_lead_stage, fetch_lead_events
-    deal_stage = get_lead_stage(lead_id) if lead_id else None
-    events = fetch_lead_events(lead_id) if lead_id else []
+    deal_stage = get_lead_stage(lead_id) if (lead_id and amocrm_enabled) else None
+    events = fetch_lead_events(lead_id) if (lead_id and amocrm_enabled) else []
 
     prior_context = (
         build_prior_context_for_session(lead_id, current_created_at, deal_stage=deal_stage, events=events)
