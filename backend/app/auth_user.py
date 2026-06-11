@@ -102,10 +102,16 @@ def require_platform_admin_basic(request: Request) -> None:
         try:
             decoded = base64.b64decode(header[6:]).decode()
             username, _, password = decoded.partition(":")
+            # bytes: compare_digest отвергает non-ASCII str (TypeError → 500
+            # на unauthenticated-границе и lockout кириллических паролей);
+            # обе проверки без short-circuit — нет тайминг-сигнала о username
+            user_ok = secrets.compare_digest(
+                username.encode(), settings.AUTH_USERNAME.encode())
+            pass_ok = secrets.compare_digest(
+                password.encode(), settings.AUTH_PASSWORD.encode())
         except Exception:
-            username, password = "", ""
-        if secrets.compare_digest(username, settings.AUTH_USERNAME) and \
-                secrets.compare_digest(password, settings.AUTH_PASSWORD):
+            user_ok = pass_ok = False
+        if user_ok and pass_ok:
             return
     raise HTTPException(
         status_code=401,

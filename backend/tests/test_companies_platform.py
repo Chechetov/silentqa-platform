@@ -57,3 +57,29 @@ def test_companies_ok_on_platform_with_basic(clients):
                      headers=_basic(settings.AUTH_USERNAME, settings.AUTH_PASSWORD))
     # 200 — список (читает companies/*.json с диска, БД не нужна)
     assert r.status_code == 200
+
+
+def test_companies_401_on_platform_with_wrong_password(clients):
+    _, platform = clients
+    r = platform.get("/api/companies",
+                     headers=_basic(settings.AUTH_USERNAME, "wrong-password"))
+    assert r.status_code == 401
+    assert r.headers.get("www-authenticate") == "Basic"
+
+
+def test_companies_401_on_platform_with_non_ascii_basic(clients):
+    # compare_digest отказывается сравнивать non-ASCII str — гейт обязан
+    # отвечать 401, а не падать в 500 (TypeError)
+    _, platform = clients
+    r = platform.get("/api/companies", headers=_basic("üser", "pass"))
+    assert r.status_code == 401
+    assert r.headers.get("www-authenticate") == "Basic"
+
+
+def test_companies_ok_with_non_ascii_auth_password(clients, monkeypatch):
+    # оператор с кириллическим AUTH_PASSWORD должен мочь аутентифицироваться
+    _, platform = clients
+    monkeypatch.setattr(settings, "AUTH_PASSWORD", "кириллический-пароль")
+    r = platform.get("/api/companies",
+                     headers=_basic(settings.AUTH_USERNAME, "кириллический-пароль"))
+    assert r.status_code == 200
