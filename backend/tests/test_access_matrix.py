@@ -126,6 +126,20 @@ def test_health_open(client):
     assert client.get("/health").status_code == 200
 
 
+def test_ui_routes_public_no_basic(client):
+    # SPA-статика публична by design (спека 5.2): / отдаёт index.html без Basic
+    r = client.get("/")
+    assert r.status_code == 200
+    assert "text/html" in r.headers.get("content-type", "")
+
+
+def test_recorder_route_removed(client):
+    # роут указывал на отсутствующий static/recorder.html — удалён
+    r = client.get("/recorder")
+    assert r.status_code in (404, 200)  # 404 или index.html от SPA-fallback
+    # главное: это больше не FileResponse несуществующего файла (раньше — 500)
+
+
 def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
     from app.tenancy_http import TenantRegistry
 

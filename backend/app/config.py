@@ -8,11 +8,9 @@ class Settings(BaseSettings):
     RESULTS_STORAGE_PATH: str = "./data/results"
     SECRET_KEY: str = "change-this-in-production"
     ALLOWED_ORIGINS: str = "*"
+    # interim gate for /api/companies until Plan 3
     AUTH_USERNAME: str = "admin"
     AUTH_PASSWORD: str = "rogov2025secure"
-    # Separate password required to perform destructive actions (e.g. DELETE session).
-    # Empty value means destructive actions are disabled (fail-closed).
-    DELETE_PASSWORD: str = ""
 
     # Dashboard auth (Plan 2)
     SESSION_TTL_SECONDS: int = 7 * 24 * 3600  # 7 days
