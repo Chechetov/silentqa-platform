@@ -47,6 +47,12 @@
   t_acme.alembic_version = 012, admin-юзер создан, API-ключ `sqa_...`
   напечатан один раз. Сиды шаблонов легли в t_acme: 3 шт (004 «Презентация
   ЖК» + 005 «Звонок брокера» + 008 «Zoom-встреча») — идентично t_realestate.
+- Если provision_tenant упал ПОСЛЕ регистрации тенанта (т.е. после первого
+  commit), остаётся полусозданный тенант: строка в shared.tenants + схема
+  t_<slug> без миграций/сидов. Повторный запуск заблокируется проверкой
+  «already exists». Зачистка перед ретраем:
+  `DELETE FROM shared.tenants WHERE slug='<slug>'; DROP SCHEMA IF EXISTS
+  t_<slug> CASCADE;` — затем повторить провижининг.
 - SQL-изоляция: INSERT в t_acme.sessions не виден при
   `search_path=t_realestate,...` (count = 0).
 - Откат: порядок строго «тенант-трек → shared-трек» (см. шаг 10). Прямой

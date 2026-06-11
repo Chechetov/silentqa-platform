@@ -1,6 +1,6 @@
 # Multi-Tenant Core (Phase 1) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Превратить одно-тенантную систему в мульти-тенантную: реестр тенантов в схеме `shared`, схема `t_<slug>` на тенанта, резолв по домену, единая фабрика sync-соединений с пер-тенант `search_path`, проброс тенанта в Celery, изоляция файлового хранилища, провижининг-CLI.
 
@@ -157,7 +157,7 @@ git commit -m "feat(tenancy): slug/schema identifier validation"
 - Create: `tenancy/context.py`
 - Test: `worker/tests/test_tenancy_context.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 ```python
 """Tests for tenancy.context — request/task-scoped tenant state."""
@@ -210,11 +210,11 @@ def test_set_none_is_platform_context():
         reset_tenant_schema(token)
 ```
 
-- [ ] **Step 2: Прогнать — FAIL (`ModuleNotFoundError`)**
+- [x] **Step 2: Прогнать — FAIL (`ModuleNotFoundError`)**
 
 Run: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_context.py -v`
 
-- [ ] **Step 3: Реализация `tenancy/context.py`**
+- [x] **Step 3: Реализация `tenancy/context.py`**
 
 ```python
 """Request/task-scoped tenant context.
@@ -272,7 +272,7 @@ def require_tenant_slug() -> str:
     return slug_from_schema(require_tenant_schema())
 ```
 
-- [ ] **Step 4: Прогнать — зелёный; Commit**
+- [x] **Step 4: Прогнать — зелёный; Commit**
 
 ```bash
 cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_context.py -v
@@ -288,7 +288,7 @@ git commit -m "feat(tenancy): tenant contextvar with validation"
 - Create: `tenancy/db.py`
 - Test: `worker/tests/test_tenancy_db.py`
 
-- [ ] **Step 1: Failing-тест** (psycopg2.connect монкипатчится — реальная БД не нужна)
+- [x] **Step 1: Failing-тест** (psycopg2.connect монкипатчится — реальная БД не нужна)
 
 ```python
 """Tests for tenancy.db — the single sync-connection factory."""
@@ -372,7 +372,7 @@ def test_tenant_engine_options(monkeypatch):
     }
 ```
 
-- [ ] **Step 2: Прогнать — FAIL. Step 3: Реализация `tenancy/db.py`**
+- [x] **Step 2: Прогнать — FAIL. Step 3: Реализация `tenancy/db.py`**
 
 ```python
 """The single factory for raw sync DB connections.
@@ -440,7 +440,7 @@ def tenant_engine():
     )
 ```
 
-- [ ] **Step 4: Прогнать — зелёный; Commit**
+- [x] **Step 4: Прогнать — зелёный; Commit**
 
 ```bash
 cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_db.py -v
@@ -456,7 +456,7 @@ git commit -m "feat(tenancy): sync connection factory with per-connection search
 - Create: `tenancy/paths.py`, `tenancy/registry.py`
 - Test: `worker/tests/test_tenancy_paths.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 ```python
 """Tests for tenancy.paths and tenancy.registry."""
@@ -514,7 +514,7 @@ def test_iter_active_tenants(monkeypatch):
     assert [t["slug"] for t in amo] == ["realestate"]
 ```
 
-- [ ] **Step 2: FAIL → Step 3: Реализация**
+- [x] **Step 2: FAIL → Step 3: Реализация**
 
 `tenancy/paths.py`:
 
@@ -578,7 +578,7 @@ def iter_amocrm_tenants() -> list[dict]:
     ]
 ```
 
-- [ ] **Step 4: Прогнать — зелёный; Commit**
+- [x] **Step 4: Прогнать — зелёный; Commit**
 
 ```bash
 cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_tenancy_paths.py -v
@@ -597,7 +597,7 @@ git commit -m "feat(tenancy): storage path layout and tenant registry iteration"
 
 Ревизии 001–010 остаются нетронутыми. env.py учится принимать `tenant_schema` (через `config.attributes` из раннера или `-x tenant_schema=...` из CLI), выставлять `search_path` и `version_table_schema`.
 
-- [ ] **Step 1: Заменить `backend/alembic/env.py` целиком**
+- [x] **Step 1: Заменить `backend/alembic/env.py` целиком**
 
 ```python
 import asyncio
@@ -688,7 +688,7 @@ else:
     run_migrations_online()
 ```
 
-- [ ] **Step 2: Ревизия 011 — `backend/alembic/versions/011_amocrm_calls_drift.py`**
+- [x] **Step 2: Ревизия 011 — `backend/alembic/versions/011_amocrm_calls_drift.py`**
 
 ```python
 """Capture schema drift: amocrm_calls.responsible_user_id was added on prod
@@ -719,7 +719,7 @@ def downgrade() -> None:
     pass
 ```
 
-- [ ] **Step 3: Ревизия 012 — `backend/alembic/versions/012_users.py`**
+- [x] **Step 3: Ревизия 012 — `backend/alembic/versions/012_users.py`**
 
 ```python
 """Tenant dashboard users (email+password accounts with roles).
@@ -759,12 +759,12 @@ def downgrade() -> None:
     op.execute("DROP TABLE users")
 ```
 
-- [ ] **Step 4: Smoke-проверка синтаксиса (без БД)**
+- [x] **Step 4: Smoke-проверка синтаксиса (без БД)**
 
 Run: `cd /root/projects/meet/backend && ../.venv/bin/python -c "import ast; [ast.parse(open(f).read()) for f in ['alembic/env.py','alembic/versions/011_amocrm_calls_drift.py','alembic/versions/012_users.py']]; print('ok')"`
 Expected: `ok`. Реальный прогон миграций — в Task 14 (интеграционная верификация).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/alembic
@@ -781,7 +781,7 @@ git commit -m "feat(alembic): tenant-track env with version_table_schema; revisi
 - Create: `backend/alembic_shared/versions/s001_shared_registry.py`
 - Create: `backend/alembic_shared/versions/s002_realestate_cutover.py`
 
-- [ ] **Step 1: `backend/alembic_shared.ini`**
+- [x] **Step 1: `backend/alembic_shared.ini`**
 
 ```ini
 [alembic]
@@ -823,7 +823,7 @@ format = %(levelname)-5.5s [%(name)s] %(message)s
 datefmt = %H:%M:%S
 ```
 
-- [ ] **Step 2: `backend/alembic_shared/env.py`** (sync-движок — проще и достаточно)
+- [x] **Step 2: `backend/alembic_shared/env.py`** (sync-движок — проще и достаточно)
 
 ```python
 import os
@@ -872,7 +872,7 @@ if context.is_offline_mode():
 run_migrations_online()
 ```
 
-- [ ] **Step 3: `backend/alembic_shared/versions/s001_shared_registry.py`**
+- [x] **Step 3: `backend/alembic_shared/versions/s001_shared_registry.py`**
 
 ```python
 """Shared registry: tenants + platform_admins.
@@ -924,7 +924,7 @@ def downgrade() -> None:
     op.execute("DROP TABLE shared.tenants")
 ```
 
-- [ ] **Step 4: `backend/alembic_shared/versions/s002_realestate_cutover.py`**
+- [x] **Step 4: `backend/alembic_shared/versions/s002_realestate_cutover.py`**
 
 ```python
 """Cutover: move legacy public tables into t_realestate, transfer the alembic
@@ -1029,7 +1029,7 @@ def downgrade() -> None:
 
 **Внимание:** downgrade вернёт `public.alembic_version` со stamp'ом головы tenant-трека (может быть `012`, не `010`) — после даунгрейда надо вручную `UPDATE public.alembic_version SET version_num='010'`, если откатываемся к до-тенантному коду. Зафиксировано в ранбуке (Task 15).
 
-- [ ] **Step 5: Syntax smoke + Commit**
+- [x] **Step 5: Syntax smoke + Commit**
 
 ```bash
 cd /root/projects/meet/backend && ../.venv/bin/python -c "import ast; [ast.parse(open(f).read()) for f in ['alembic_shared/env.py','alembic_shared/versions/s001_shared_registry.py','alembic_shared/versions/s002_realestate_cutover.py']]; print('ok')"
@@ -1045,7 +1045,7 @@ git commit -m "feat(alembic): shared track — registry S001, realestate cutover
 - Create: `backend/app/migrate.py`
 - Modify: `backend/app/main.py:77-88` (lifespan)
 
-- [ ] **Step 1: `backend/app/migrate.py`**
+- [x] **Step 1: `backend/app/migrate.py`**
 
 ```python
 """Two-track migration runner.
@@ -1113,7 +1113,7 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 2: Заменить lifespan в `backend/app/main.py`**
+- [x] **Step 2: Заменить lifespan в `backend/app/main.py`**
 
 Old (строки 76-88):
 
@@ -1143,7 +1143,7 @@ async def lifespan(app: FastAPI):
 
 И добавить `import sys` к импортам main.py (после `import subprocess`). Остальное тело lifespan (проверка returncode, RuntimeError) не меняется.
 
-- [ ] **Step 3: Smoke: `cd /root/projects/meet/backend && ../.venv/bin/python -c "import app.migrate; print('ok')"` → `ok`. Step 4: Commit**
+- [x] **Step 3: Smoke: `cd /root/projects/meet/backend && ../.venv/bin/python -c "import app.migrate; print('ok')"` → `ok`. Step 4: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/app/migrate.py backend/app/main.py
@@ -1162,7 +1162,7 @@ git commit -m "feat(migrate): two-track runner replaces bare alembic startup hoo
 - Create: `backend/tests/__init__.py` (пустой), `backend/tests/conftest.py`
 - Test: `backend/tests/test_tenant_middleware.py`
 
-- [ ] **Step 1: config.py — добавить в класс Settings**
+- [x] **Step 1: config.py — добавить в класс Settings**
 
 ```python
     # Multi-tenancy
@@ -1172,7 +1172,7 @@ git commit -m "feat(migrate): two-track runner replaces bare alembic startup hoo
     DEFAULT_TENANT: str = ""
 ```
 
-- [ ] **Step 2: `backend/tests/conftest.py`**
+- [x] **Step 2: `backend/tests/conftest.py`**
 
 ```python
 """Backend test fixtures: import paths for app/ and the tenancy package."""
@@ -1184,7 +1184,7 @@ sys.path.insert(0, str(BACKEND))          # import app.*
 sys.path.insert(0, str(BACKEND.parent))   # import tenancy.*
 ```
 
-- [ ] **Step 3: Failing-тест `backend/tests/test_tenant_middleware.py`**
+- [x] **Step 3: Failing-тест `backend/tests/test_tenant_middleware.py`**
 
 ```python
 """Tenant resolution middleware: host → tenant schema contextvar."""
@@ -1286,7 +1286,7 @@ def test_context_reset_after_request():
     assert get_tenant_schema() is None
 ```
 
-- [ ] **Step 4: FAIL → Step 5: Реализация `backend/app/tenancy_http.py`**
+- [x] **Step 4: FAIL → Step 5: Реализация `backend/app/tenancy_http.py`**
 
 ```python
 """HTTP-plane tenant resolution: Host header → shared.tenants → contextvar.
@@ -1403,7 +1403,7 @@ class TenantResolutionMiddleware:
         return "tenant", row
 ```
 
-- [ ] **Step 6: Листенер в `backend/app/database.py`** — добавить после строки 8 (`async_session = ...`):
+- [x] **Step 6: Листенер в `backend/app/database.py`** — добавить после строки 8 (`async_session = ...`):
 
 ```python
 import re
@@ -1427,7 +1427,7 @@ def _set_tenant_search_path(conn):
         )
 ```
 
-- [ ] **Step 7: Подключение в `backend/app/main.py`**
+- [x] **Step 7: Подключение в `backend/app/main.py`**
 
 В начало файла (до импортов `app.*`), после stdlib-импортов:
 
@@ -1452,12 +1452,12 @@ app.add_middleware(
 )
 ```
 
-- [ ] **Step 8: Прогнать backend-тесты — зелёные**
+- [x] **Step 8: Прогнать backend-тесты — зелёные**
 
 Run: `cd /root/projects/meet/backend && ../.venv/bin/python -m pytest tests -v`
 Expected: 8 passed (httpx уже в venv как зависимость fastapi-тулчейна; если нет — `../.venv/bin/pip install httpx`)
 
-- [ ] **Step 9: Worker-тесты не сломаны: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q`. Step 10: Commit**
+- [x] **Step 9: Worker-тесты не сломаны: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q`. Step 10: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/app/config.py backend/app/tenancy_http.py backend/app/database.py backend/app/main.py backend/tests
@@ -1528,7 +1528,7 @@ git commit -m "feat(backend): tenant resolution middleware + per-transaction sea
         conn = tenant_connect()
 ```
 
-- [ ] **Step 1: Guard-тест `worker/tests/test_no_raw_connects.py`** (написать ДО правок — он зафиксирует завершённость замены)
+- [x] **Step 1: Guard-тест `worker/tests/test_no_raw_connects.py`** (написать ДО правок — он зафиксирует завершённость замены)
 
 ```python
 """No application code may call psycopg2.connect directly — only tenancy.db.
@@ -1567,9 +1567,9 @@ def test_no_direct_psycopg2_connect_in_backend_app():
     assert _offending(BACKEND_APP) == []
 ```
 
-- [ ] **Step 2: Прогнать — FAIL (десятки находок). Step 3: Применить рецепт ко всем 22 сайтам таблицы.**
+- [x] **Step 2: Прогнать — FAIL (десятки находок). Step 3: Применить рецепт ко всем 22 сайтам таблицы.**
 
-- [ ] **Step 4: Прогнать guard-тест — `test_no_direct_psycopg2_connect_in_worker_tasks` зелёный (backend-тест ещё красный — Task 10). Прогнать весь worker-suite:**
+- [x] **Step 4: Прогнать guard-тест — `test_no_direct_psycopg2_connect_in_worker_tasks` зелёный (backend-тест ещё красный — Task 10). Прогнать весь worker-suite:**
 
 Run: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q --deselect tests/test_no_raw_connects.py::test_no_direct_psycopg2_connect_in_backend_app`
 Expected: всё зелёное. Существующие тесты идут без `DATABASE_URL_SYNC` → guard'ы early-return до `tenant_connect()`, контекст не нужен. Если какой-то тест ставит URL и доходит до connect — добавить в него фикстуру:
@@ -1583,7 +1583,7 @@ def _tenant_ctx():
     reset_tenant_schema(token)
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet && git add worker/tasks worker/tests/test_no_raw_connects.py
@@ -1598,7 +1598,7 @@ git commit -m "refactor(worker): route all raw DB connections through tenancy.db
 - Modify: `backend/app/routes/amocrm.py:109-123`, `backend/app/routes/complexes.py:28-46`
 - Modify: `worker/scripts/reassess_quality.py`, `worker/scripts/compare_reassess.py`, `worker/scripts/sync_brokers.py`, `worker/scripts/backfill_amocrm_push.py`
 
-- [ ] **Step 1: `routes/amocrm.py` force-ветка (109-123)** — заменить inline psycopg2 на фабрику:
+- [x] **Step 1: `routes/amocrm.py` force-ветка (109-123)** — заменить inline psycopg2 на фабрику:
 
 ```python
 # Было:
@@ -1612,7 +1612,7 @@ git commit -m "refactor(worker): route all raw DB connections through tenancy.db
 
 (Тенант-контекст выставлен middleware'ом запроса; `tenancy` импортируется — main.py уже добавил repo root в sys.path.)
 
-- [ ] **Step 2: `routes/complexes.py` `_recompute_aggregate_sync` (32-46)**:
+- [x] **Step 2: `routes/complexes.py` `_recompute_aggregate_sync` (32-46)**:
 
 ```python
 # Было:
@@ -1624,7 +1624,7 @@ git commit -m "refactor(worker): route all raw DB connections through tenancy.db
 
 Удалить хелпер `_sync_db_url` (28-29), если на него больше нет ссылок в файле (проверить grep'ом).
 
-- [ ] **Step 3: Скрипты — обязательный `--tenant <slug>`.** В каждый из четырёх скриптов добавить в начало `main()` (или перед первым обращением к БД):
+- [x] **Step 3: Скрипты — обязательный `--tenant <slug>`.** В каждый из четырёх скриптов добавить в начало `main()` (или перед первым обращением к БД):
 
 ```python
 import argparse
@@ -1644,12 +1644,12 @@ RESULTS_PATH = str(Path(RESULTS_ROOT) / args.tenant)  # для скриптов 
 - `sync_brokers.py`, `backfill_amocrm_push.py`: только `--tenant` + контекст (психопг-сайты уже ходят через свои `_get_sync_db_url`-алиасы → заменить connect на `tenant_connect()` по рецепту Task 9; `backfill_amocrm_push.py:39` импортирует `RESULTS_PATH` из pipeline — заменить на построение через `tenant_results_dir`).
 - Скрипты без `--tenant` должны падать сразу (argparse `required=True` это гарантирует).
 
-- [ ] **Step 4: Guard-тест целиком зелёный + worker-suite:**
+- [x] **Step 4: Guard-тест целиком зелёный + worker-suite:**
 
 Run: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q`
 Expected: всё зелёное, включая оба теста `test_no_raw_connects.py`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/app/routes worker/scripts
@@ -1665,7 +1665,7 @@ git commit -m "refactor: backend raw DB sites and ops scripts go through tenancy
 - Modify: `backend/app/routes/sessions.py` (3 enqueue-сайта: 231-235, 330-334, 376-380), `backend/app/routes/amocrm.py` (`_enqueue_process_call`, 47-58)
 - Test: `worker/tests/test_tenant_propagation.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 ```python
 """Tenant propagation: enqueue tasks require tenant_schema; beat iterates."""
@@ -1700,7 +1700,7 @@ def test_process_amocrm_call_requires_tenant_schema():
         ap.process_amocrm_call.run(1)
 ```
 
-- [ ] **Step 2: FAIL → Step 3: Сигнатуры enqueue-тасок.** Паттерн (на примере `process_session`; тело таски выносится в `_process_session_body(task, session_id, config)` без изменений логики):
+- [x] **Step 2: FAIL → Step 3: Сигнатуры enqueue-тасок.** Паттерн (на примере `process_session`; тело таски выносится в `_process_session_body(task, session_id, config)` без изменений логики):
 
 ```python
 @app.task(bind=True, queue="transcription", name="pipeline.process_session")
@@ -1718,7 +1718,7 @@ def process_session(self, session_id: str, config: dict | None = None,
 
 То же для `process_session_from_file(self, session_id, audio_path, config=None, tenant_schema=None)` и `amocrm_poll.process_amocrm_call(self, call_id, tenant_schema=None)`. Импорты: `from tenancy.context import set_tenant_schema, reset_tenant_schema`.
 
-- [ ] **Step 4: Beat-таски — итерация тенантов.** Существующее тело каждой beat-таски выносится в `_<name>_for_current_tenant()`, новое тело:
+- [x] **Step 4: Beat-таски — итерация тенантов.** Существующее тело каждой beat-таски выносится в `_<name>_for_current_tenant()`, новое тело:
 
 ```python
 @app.task(name="amocrm_poll.poll_amocrm_calls")
@@ -1739,7 +1739,7 @@ def poll_amocrm_calls():
 - Внутренние `.delay(call_id)` в `amocrm_poll.py:313` и `:333` → `.delay(call_id, tenant_schema=get_tenant_schema())` (контекст в этих точках уже выставлен beat-циклом).
 - per-tenant исключение ловится и логируется — упавший тенант не прерывает остальных.
 
-- [ ] **Step 5: Backend enqueue-сайты.** Все три блока в `sessions.py` (231-235, 330-334, 376-380):
+- [x] **Step 5: Backend enqueue-сайты.** Все три блока в `sessions.py` (231-235, 330-334, 376-380):
 
 ```python
     from tenancy.context import require_tenant_schema
@@ -1760,9 +1760,9 @@ def poll_amocrm_calls():
 
 `amocrm.py _enqueue_process_call` (47-58): сигнатура `def _enqueue_process_call(call_id: int, tenant_schema: str) -> str`, в send_task добавить `kwargs={"tenant_schema": tenant_schema}`; оба вызова (124, 131) передают `require_tenant_schema()`.
 
-- [ ] **Step 6: Прогнать: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q` — всё зелёное (существующие тесты, зовущие таски напрямую, обновить: передавать `tenant_schema="t_realestate"`).**
+- [x] **Step 6: Прогнать: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q` — всё зелёное (существующие тесты, зовущие таски напрямую, обновить: передавать `tenant_schema="t_realestate"`).**
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /root/projects/meet && git add worker/tasks backend/app/routes worker/tests/test_tenant_propagation.py
@@ -1781,7 +1781,7 @@ git commit -m "feat(celery): explicit tenant_schema on enqueue tasks; beat tasks
 
 Слой: `<root>/<slug>/sessions/<id>` (аудио), `<root>/<slug>/amocrm/<note_id>` (аудио AmoCRM), `<root>/<slug>/<id>` (результаты). Slug везде берётся `require_tenant_slug()` (контекст уже выставлен: в backend — middleware, в worker — входом таски).
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 ```python
 """Storage paths gain the tenant slug component."""
@@ -1814,7 +1814,7 @@ def test_merge_chunks_reads_tenant_dir(tmp_path, monkeypatch, acme_ctx):
         pl.merge_chunks("sid-1")  # пустая директория → прежняя ошибка "no chunks"
 ```
 
-- [ ] **Step 2: FAIL → Step 3: Правки.** Образцы:
+- [x] **Step 2: FAIL → Step 3: Правки.** Образцы:
 
 `pipeline.py save_results` (382): `results_dir = Path(RESULTS_PATH) / session_id` → `results_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)`; `merge_chunks` (306): `session_dir = Path(AUDIO_PATH) / "sessions" / session_id` → `session_dir = tenant_audio_sessions_dir(AUDIO_PATH, require_tenant_slug(), session_id)`; reprocess-чтение (583): `transcript_path = Path(RESULTS_PATH) / session_id / "transcript.json"` → через `tenant_results_dir(...)`. Импорт в шапку: `from tenancy.context import require_tenant_slug` + `from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir`.
 
@@ -1843,7 +1843,7 @@ Backend (slug из request-контекста): `chunks.py:80` → `session_dir 
 
 Примечание: `chunks.file_path` в БД хранит старые абсолютные пути — их никто не читает для обработки (merge_chunks глобит директорию), оставляем как есть.
 
-- [ ] **Step 4: `scripts/migrate_storage_layout.sh`**
+- [x] **Step 4: `scripts/migrate_storage_layout.sh`**
 
 ```bash
 #!/usr/bin/env bash
@@ -1875,9 +1875,9 @@ echo "storage migrated under $AUDIO/$SLUG and $RESULTS/$SLUG"
 
 `chmod +x scripts/migrate_storage_layout.sh`.
 
-- [ ] **Step 5: Полный прогон worker-suite + backend-suite.** Существующие тесты, упавшие из-за нового слоя путей, обновить: добавить фикстуру `acme_ctx`/`t_realestate`-контекст и ожидаемые пути с `<slug>/`. (Тесты, монкипатчащие `ap.AUDIO_PATH`, продолжают работать — root остался параметром.)
+- [x] **Step 5: Полный прогон worker-suite + backend-suite.** Существующие тесты, упавшие из-за нового слоя путей, обновить: добавить фикстуру `acme_ctx`/`t_realestate`-контекст и ожидаемые пути с `<slug>/`. (Тесты, монкипатчащие `ap.AUDIO_PATH`, продолжают работать — root остался параметром.)
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/app/routes worker/tasks scripts/migrate_storage_layout.sh worker/tests/test_tenant_storage_paths.py
@@ -1892,7 +1892,7 @@ git commit -m "feat(storage): tenant slug in audio/results layout + cutover scri
 - Modify: `worker/tasks/lead_lock.py:21-22` и построение ключа
 - Modify: `worker/tests/test_lead_lock.py`
 
-- [ ] **Step 1: Обновить тесты** — в `test_acquires_on_first_try` ожидать ключ `lock:acme:42`; добавить фикстуру контекста и тест изоляции:
+- [x] **Step 1: Обновить тесты** — в `test_acquires_on_first_try` ожидать ключ `lock:acme:42`; добавить фикстуру контекста и тест изоляции:
 
 ```python
 @pytest.fixture(autouse=True)
@@ -1919,7 +1919,7 @@ def test_lock_key_namespaced_by_tenant():
     assert client.set.call_args_list[1][0][0] == "lock:other:42"
 ```
 
-- [ ] **Step 2: FAIL → Step 3: Правка `lead_lock.py`:** `LOCK_KEY_PREFIX = "lead_lock:"` удалить; в `lead_lock()` вместо `key = f"{LOCK_KEY_PREFIX}{lead_id}"`:
+- [x] **Step 2: FAIL → Step 3: Правка `lead_lock.py`:** `LOCK_KEY_PREFIX = "lead_lock:"` удалить; в `lead_lock()` вместо `key = f"{LOCK_KEY_PREFIX}{lead_id}"`:
 
 ```python
     from tenancy.context import require_tenant_slug
@@ -1928,7 +1928,7 @@ def test_lock_key_namespaced_by_tenant():
 
 (Контекст в продакшене гарантирован входом таски — Task 11.) Импорт `LOCK_KEY_PREFIX` в тестах заменить на литералы.
 
-- [ ] **Step 4: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_lead_lock.py -v` — зелёный. Step 5: Commit**
+- [x] **Step 4: `cd /root/projects/meet/worker && ../.venv/bin/python -m pytest tests/test_lead_lock.py -v` — зелёный. Step 5: Commit**
 
 ```bash
 cd /root/projects/meet && git add worker/tasks/lead_lock.py worker/tests/test_lead_lock.py
@@ -1943,7 +1943,7 @@ git commit -m "feat(lead_lock): per-tenant lock key namespace"
 - Create: `backend/app/provision_tenant.py`
 - Modify: `backend/requirements.txt` (добавить строку `argon2-cffi==23.1.0`)
 
-- [ ] **Step 1: `backend/app/provision_tenant.py`**
+- [x] **Step 1: `backend/app/provision_tenant.py`**
 
 ```python
 """Tenant provisioning CLI.
@@ -2063,7 +2063,7 @@ if __name__ == "__main__":
 
 Примечание: `run_tenant()` коммитит свои DDL сам (alembic), поэтому строка тенанта коммитится до него — если миграция упадёт, строку и схему надо удалить вручную (см. вывод ошибки); для Phase 1 этого достаточно.
 
-- [ ] **Step 2: `../.venv/bin/pip install argon2-cffi==23.1.0` + добавить в `backend/requirements.txt`. Smoke: `cd backend && ../.venv/bin/python -c "import app.provision_tenant; print('ok')"`. Step 3: Commit**
+- [x] **Step 2: `../.venv/bin/pip install argon2-cffi==23.1.0` + добавить в `backend/requirements.txt`. Smoke: `cd backend && ../.venv/bin/python -c "import app.provision_tenant; print('ok')"`. Step 3: Commit**
 
 ```bash
 cd /root/projects/meet && git add backend/app/provision_tenant.py backend/requirements.txt
@@ -2077,7 +2077,7 @@ git commit -m "feat(provision): tenant provisioning CLI with admin seed and one-
 **Files:**
 - Create: `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`
 
-- [ ] **Step 1: Скретч-БД и прогон cutover-сценария** (порт/креды взять из `.env`; ниже — дефолты `run.sh`)
+- [x] **Step 1: Скретч-БД и прогон cutover-сценария** (порт/креды взять из `.env`; ниже — дефолты `run.sh`)
 
 ```bash
 cd /root/projects/meet
@@ -2109,7 +2109,7 @@ psql -h localhost -p 5434 -U realestate mt_scratch -c "
 ../.venv/bin/python -m app.migrate && echo IDEMPOTENT-OK
 ```
 
-- [ ] **Step 2: Провижининг второго тенанта на той же БД**
+- [x] **Step 2: Провижининг второго тенанта на той же БД**
 
 ```bash
 cd /root/projects/meet/backend
@@ -2123,7 +2123,7 @@ psql -h localhost -p 5434 -U realestate mt_scratch -c "
 # Expected: 012 ; admin@acme.test|admin ; 2  (сиды 005/008 легли в новый тенант)
 ```
 
-- [ ] **Step 3: Изоляция на уровне SQL**
+- [x] **Step 3: Изоляция на уровне SQL**
 
 ```bash
 psql -h localhost -p 5434 -U realestate mt_scratch -c "
@@ -2134,7 +2134,7 @@ psql -h localhost -p 5434 -U realestate mt_scratch -c "
 # Expected: 0  (сессия acme не видна из t_realestate)
 ```
 
-- [ ] **Step 4: Полные сьюты + downgrade-репетиция**
+- [x] **Step 4: Полные сьюты + downgrade-репетиция**
 
 ```bash
 cd /root/projects/meet/worker && ../.venv/bin/python -m pytest -q
@@ -2147,7 +2147,7 @@ psql -h localhost -p 5434 -U realestate mt_scratch -c "SELECT to_regclass('publi
 dropdb -h localhost -p 5434 -U realestate mt_scratch
 ```
 
-- [ ] **Step 5: Ранбук `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`** — зафиксировать порядок прод-деплоя:
+- [x] **Step 5: Ранбук `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`** — зафиксировать порядок прод-деплоя:
 
 ```markdown
 # Phase 1 cutover — прод-ранбук
@@ -2173,7 +2173,7 @@ dropdb -h localhost -p 5434 -U realestate mt_scratch
     stamp!) → обратный mv каталогов → git checkout прежнего коммита → start.
 ```
 
-- [ ] **Step 6: Final commit**
+- [x] **Step 6: Final commit**
 
 ```bash
 cd /root/projects/meet && git add docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md
