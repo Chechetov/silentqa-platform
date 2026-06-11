@@ -33,7 +33,8 @@ class TenantRegistry:
             async with async_session() as db:
                 res = await db.execute(
                     text(
-                        "SELECT slug, schema_name, status, custom_domains "
+                        "SELECT slug, schema_name, status, custom_domains, "
+                        "api_key_hash, api_key_required "
                         "FROM shared.tenants"
                     )
                 )
@@ -43,6 +44,8 @@ class TenantRegistry:
                         "schema_name": r.schema_name,
                         "status": r.status,
                         "custom_domains": list(r.custom_domains or []),
+                        "api_key_hash": r.api_key_hash,
+                        "api_key_required": r.api_key_required,
                     }
                     for r in res
                 ]
@@ -71,6 +74,8 @@ class TenantResolutionMiddleware:
         if kind == "notfound":
             resp = JSONResponse({"detail": "Unknown tenant"}, status_code=404)
             return await resp(scope, receive, send)
+
+        scope.setdefault("state", {})["tenant"] = dict(row) if row else None
 
         token = set_tenant_schema(row["schema_name"] if row else None)
         try:
