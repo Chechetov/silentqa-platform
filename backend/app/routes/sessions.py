@@ -95,7 +95,12 @@ async def list_sessions(
 # they're either populated from the authenticated broker JWT or left absent.
 # This prevents an unauthenticated (or differently-authenticated) client from
 # spoofing attribution by stuffing values into request metadata.
-_SERVER_OWNED_METADATA = ("broker_id", "amocrm_user_id", "broker_name", "responsible_user_id")
+_SERVER_OWNED_METADATA = (
+    "broker_id", "amocrm_user_id", "broker_name", "responsible_user_id",
+    # company_id/scenario_id — выбор конфига оценки принадлежит серверу
+    # (берётся из shared.tenants.company_config_id), клиент подменить не может.
+    "company_id", "scenario_id",
+)
 
 # Seeded by migration 008 — applied by default to desktop-app recordings,
 # which are Zoom meetings (not outbound calls).
