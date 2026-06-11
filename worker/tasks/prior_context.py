@@ -10,10 +10,11 @@ import json
 import logging
 import os
 from datetime import datetime
-from pathlib import Path
 from typing import Any
 
+from tenancy.context import require_tenant_slug
 from tenancy.db import get_sync_db_url, tenant_connect
+from tenancy.paths import tenant_results_dir
 
 logger = logging.getLogger(__name__)
 
@@ -186,7 +187,7 @@ _get_sync_db_url = get_sync_db_url
 
 
 def _load_quality_report(session_id: str) -> dict | None:
-    path = Path(RESULTS_PATH) / session_id / "quality.json"
+    path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "quality.json"
     if not path.exists():
         return None
     try:
@@ -198,7 +199,7 @@ def _load_quality_report(session_id: str) -> dict | None:
 
 
 def _load_plan(session_id: str) -> dict | None:
-    path = Path(RESULTS_PATH) / session_id / "next_call_plan.json"
+    path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "next_call_plan.json"
     if not path.exists():
         return None
     try:

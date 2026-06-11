@@ -16,6 +16,8 @@ from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
 from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
+from tenancy.context import require_tenant_slug
+from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
 
 logger = logging.getLogger(__name__)
 
@@ -187,14 +189,20 @@ async def delete_session(
     await db.commit()
 
     sid = str(session_id)
-    for base in (settings.AUDIO_STORAGE_PATH, settings.RESULTS_STORAGE_PATH):
-        # AUDIO is under <base>/sessions/<id>; RESULTS is under <base>/<id>
-        for candidate in (Path(base) / "sessions" / sid, Path(base) / sid):
-            if candidate.exists():
-                try:
-                    shutil.rmtree(candidate)
-                except OSError as e:
-                    logger.warning("Failed to remove %s: %s", candidate, e)
+    slug = require_tenant_slug()
+    candidates = [
+        tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, slug, sid),
+        tenant_results_dir(settings.RESULTS_STORAGE_PATH, slug, sid),
+        # legacy pre-tenant layout (files written before the cutover)
+        Path(settings.AUDIO_STORAGE_PATH) / "sessions" / sid,
+        Path(settings.RESULTS_STORAGE_PATH) / sid,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                shutil.rmtree(candidate)
+            except OSError as e:
+                logger.warning("Failed to remove %s: %s", candidate, e)
 
     return Response(status_code=204)
 

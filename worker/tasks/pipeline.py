@@ -15,13 +15,14 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tenancy.context import reset_tenant_schema, set_tenant_schema
+from tenancy.context import require_tenant_slug, reset_tenant_schema, set_tenant_schema
 from tenancy.db import (
     get_sync_db_url,
     get_sync_dialect_url,
     tenant_connect,
     tenant_engine,
 )
+from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
 
 from tasks.celery_app import app
 from tasks.transcribe import transcribe_audio
@@ -298,7 +299,7 @@ def merge_chunks(session_id: str) -> str:
     остальные — продолжение без EBML header. Поэтому сначала склеиваем
     байты в один .webm, затем конвертируем в WAV через ffmpeg.
     """
-    session_dir = Path(AUDIO_PATH) / "sessions" / session_id
+    session_dir = tenant_audio_sessions_dir(AUDIO_PATH, require_tenant_slug(), session_id)
     output_path = session_dir / "full.wav"
 
     if output_path.exists():
@@ -374,7 +375,7 @@ def merge_transcript_with_speakers(transcript: list, diarization: list) -> list:
 
 def save_results(session_id: str, key: str, data: dict | list):
     """Сохраняет результат обработки в JSON."""
-    results_dir = Path(RESULTS_PATH) / session_id
+    results_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)
     results_dir.mkdir(parents=True, exist_ok=True)
     output_file = results_dir / f"{key}.json"
     with open(output_file, "w", encoding="utf-8") as f:
@@ -573,7 +574,7 @@ def _run_pipeline(task, session_id: str, audio_path: str, config: dict, company_
 def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict, audio_duration: float):
     """Steps 2–8 of the pipeline, wrapped by a per-lead lock in the caller."""
     # === 2. Transcription (skipped if transcript already on disk — reprocess) ===
-    transcript_path = Path(RESULTS_PATH) / session_id / "transcript.json"
+    transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
     if transcript_path.exists():
         logger.info(f"[{session_id}] Step 2: Transcript already on disk, skipping transcription")
         with transcript_path.open() as f:

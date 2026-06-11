@@ -16,6 +16,8 @@ from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
 from app.schemas import ChunkResponse
+from tenancy.context import require_tenant_slug
+from tenancy.paths import tenant_audio_sessions_dir
 
 # Hard cap so a malicious or buggy client cannot DoS missing-chunks (which
 # materializes a range up to received[-1]) or blow the filename pad. 99999
@@ -77,7 +79,7 @@ async def upload_chunk(
         if chunk_number > MAX_CHUNK_NUMBER:
             raise HTTPException(status_code=400, detail="chunk count exceeded")
 
-    session_dir = Path(settings.AUDIO_STORAGE_PATH) / "sessions" / str(session_id)
+    session_dir = tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, require_tenant_slug(), session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     file_path = session_dir / f"chunk_{chunk_number:06d}.webm"
 
@@ -206,7 +208,7 @@ async def upload_audio_file(
     ext = Path(original_name).suffix.lower() or ".webm"
 
     # Save uploaded file
-    session_dir = Path(settings.AUDIO_STORAGE_PATH) / "sessions" / str(session_id)
+    session_dir = tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, require_tenant_slug(), session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     original_path = session_dir / f"original{ext}"
 

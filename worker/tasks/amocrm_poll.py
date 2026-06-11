@@ -11,10 +11,15 @@ import os
 import subprocess
 import uuid
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
-from tenancy.context import get_tenant_schema, reset_tenant_schema, set_tenant_schema
+from tenancy.context import (
+    get_tenant_schema,
+    require_tenant_slug,
+    reset_tenant_schema,
+    set_tenant_schema,
+)
 from tenancy.db import get_sync_db_url, tenant_connect
+from tenancy.paths import tenant_audio_amocrm_dir
 
 from tasks.celery_app import app
 from tasks.amocrm_sync import (
@@ -415,7 +420,7 @@ def _process_amocrm_call_body(task, call_id: int):
         _update_call_status(call_id, "downloading")
 
     # === 1. Download recording ===
-    call_dir = Path(AUDIO_PATH) / "amocrm" / str(amo_note_id)
+    call_dir = tenant_audio_amocrm_dir(AUDIO_PATH, require_tenant_slug(), amo_note_id)
     call_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine file extension from URL or default to mp3
