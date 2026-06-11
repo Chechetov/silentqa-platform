@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import require_viewer
 from app.database import get_db
 from app.models import Chunk, Session
 from app.schemas import SessionResponse
@@ -11,7 +12,7 @@ from app.schemas import SessionResponse
 router = APIRouter(prefix="/api/managers", tags=["managers"])
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_viewer)])
 async def list_managers(db: AsyncSession = Depends(get_db)):
     """List unique managers with aggregated stats."""
     result = await db.execute(select(Session))
@@ -54,7 +55,7 @@ async def list_managers(db: AsyncSession = Depends(get_db)):
     return result_list
 
 
-@router.get("/{name}/sessions", response_model=list[SessionResponse])
+@router.get("/{name}/sessions", response_model=list[SessionResponse], dependencies=[Depends(require_viewer)])
 async def get_manager_sessions(name: str, db: AsyncSession = Depends(get_db)):
     """List sessions for a specific manager."""
     result = await db.execute(select(Session))
