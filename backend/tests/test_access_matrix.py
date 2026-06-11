@@ -108,6 +108,12 @@ def test_admin_mutations_403_for_viewer(client, fake_redis, method, path):
     assert r.status_code == 403, (method, path)
 
 
+def test_webhooks_surface_removed(client):
+    assert client.get("/api/webhooks").status_code == 404
+    # POST падает в StaticFiles-маунт "/" → 405 Method Not Allowed (не 404!)
+    assert client.post("/api/webhooks", json={}).status_code in (404, 405)
+
+
 def test_broker_auth_contour_stays_open(client):
     # /api/auth/* не за cookie-гейтом (спека 5.6): claim/start валидирует
     # body (422 без него), а не требует сессию (не 401 auth_required)

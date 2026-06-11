@@ -18,7 +18,7 @@ from starlette.responses import Response
 from app.config import settings
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
-    webhooks, amocrm, templates, complexes, auth, user_auth,
+    amocrm, templates, complexes, auth, user_auth,
 )
 
 
@@ -104,7 +104,6 @@ app.include_router(transcripts.router)
 app.include_router(companies.router)
 app.include_router(analysis.router)
 app.include_router(managers.router)
-app.include_router(webhooks.router)
 app.include_router(amocrm.router)
 app.include_router(templates.router)
 app.include_router(complexes.router)
