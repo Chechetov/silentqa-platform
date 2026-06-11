@@ -18,7 +18,7 @@ from starlette.responses import Response
 from app.config import settings
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
-    webhooks, amocrm, templates, complexes, auth,
+    webhooks, amocrm, templates, complexes, auth, user_auth,
 )
 
 
@@ -130,6 +130,7 @@ app.include_router(amocrm.router)
 app.include_router(templates.router)
 app.include_router(complexes.router)
 app.include_router(auth.router)
+app.include_router(user_auth.router)
 
 
 @app.get("/health")
