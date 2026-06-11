@@ -12,6 +12,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import require_ingestion_auth
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
@@ -37,7 +38,8 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg exit {result.returncode}: {stderr_tail}")
 
 
-@router.post("/{session_id}/chunks", response_model=ChunkResponse, status_code=201)
+@router.post("/{session_id}/chunks", response_model=ChunkResponse, status_code=201,
+             dependencies=[Depends(require_ingestion_auth)])
 async def upload_chunk(
     session_id: uuid.UUID,
     file: UploadFile,
@@ -160,7 +162,7 @@ async def upload_chunk(
     )
 
 
-@router.get("/{session_id}/missing-chunks")
+@router.get("/{session_id}/missing-chunks", dependencies=[Depends(require_ingestion_auth)])
 async def missing_chunks(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """List chunk numbers that should exist but don't.
 
@@ -185,7 +187,7 @@ async def missing_chunks(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     return {"received": received, "missing": missing, "max": received[-1]}
 
 
-@router.post("/{session_id}/upload-audio")
+@router.post("/{session_id}/upload-audio", dependencies=[Depends(require_ingestion_auth)])
 async def upload_audio_file(
     session_id: uuid.UUID,
     file: UploadFile,

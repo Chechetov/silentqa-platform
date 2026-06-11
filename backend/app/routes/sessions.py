@@ -1,17 +1,17 @@
 import asyncio
 import logging
-import secrets
 import shutil
 import uuid
 from pathlib import Path
 
 from celery import Celery
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_jwt import get_current_broker
+from app.auth_user import require_admin, require_ingestion_auth, require_viewer
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
@@ -26,7 +26,7 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 celery_app = Celery("voiceqa", broker=settings.REDIS_URL)
 
 
-@router.get("")
+@router.get("", dependencies=[Depends(require_viewer)])
 async def list_sessions(
     limit: int = 50,
     offset: int = 0,
@@ -110,7 +110,8 @@ async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
     return str(row[0]) if row else None
 
 
-@router.post("", response_model=SessionResponse, status_code=201)
+@router.post("", response_model=SessionResponse, status_code=201,
+             dependencies=[Depends(require_ingestion_auth)])
 async def create_session(
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
@@ -146,7 +147,8 @@ async def create_session(
     return _to_response(session, 0)
 
 
-@router.get("/{session_id}", response_model=SessionResponse)
+@router.get("/{session_id}", response_model=SessionResponse,
+            dependencies=[Depends(require_ingestion_auth)])
 async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -159,27 +161,15 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     return _to_response(session, chunks_count or 0)
 
 
-def _require_delete_password(provided: str | None) -> None:
-    expected = settings.DELETE_PASSWORD
-    if not expected:
-        # Fail-closed if password is not configured on the server.
-        raise HTTPException(status_code=503, detail="Delete is disabled: DELETE_PASSWORD not configured")
-    if not provided or not secrets.compare_digest(provided, expected):
-        raise HTTPException(status_code=401, detail="Invalid delete password")
-
-
-@router.delete("/{session_id}", status_code=204)
+@router.delete("/{session_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_session(
     session_id: uuid.UUID,
-    x_delete_password: str | None = Header(default=None, alias="X-Delete-Password"),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a session: DB row (cascades chunks) + audio and results directories.
 
-    Requires X-Delete-Password header matching server-side DELETE_PASSWORD.
+    Requires an admin cookie session (access matrix 5.6).
     """
-    _require_delete_password(x_delete_password)
-
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
@@ -211,7 +201,8 @@ class ReprocessBody(BaseModel):
     template_id: uuid.UUID
 
 
-@router.post("/{session_id}/reprocess", response_model=SessionResponse)
+@router.post("/{session_id}/reprocess", response_model=SessionResponse,
+             dependencies=[Depends(require_admin)])
 async def reprocess_session(
     session_id: uuid.UUID,
     body: ReprocessBody,
@@ -259,7 +250,8 @@ class LinkLeadBody(BaseModel):
     lead_id: int | None = None  # None = unlink
 
 
-@router.post("/{session_id}/link-lead", response_model=SessionResponse)
+@router.post("/{session_id}/link-lead", response_model=SessionResponse,
+             dependencies=[Depends(require_ingestion_auth)])
 async def link_lead(
     session_id: uuid.UUID,
     body: LinkLeadBody,
@@ -361,7 +353,7 @@ async def link_lead(
     return _to_response(sess, chunks_count or 0)
 
 
-@router.get("/{session_id}/extraction")
+@router.get("/{session_id}/extraction", dependencies=[Depends(require_viewer)])
 async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Return the latest extraction for the session, or 404 if none exists."""
     row = (await db.execute(text("""
@@ -381,7 +373,8 @@ async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depen
     }
 
 
-@router.post("/{session_id}/finish", response_model=SessionResponse)
+@router.post("/{session_id}/finish", response_model=SessionResponse,
+             dependencies=[Depends(require_ingestion_auth)])
 async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -414,7 +407,7 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     return _to_response(session, chunks_count or 0)
 
 
-@router.patch("/{session_id}/speaker-map")
+@router.patch("/{session_id}/speaker-map", dependencies=[Depends(require_admin)])
 async def update_speaker_map(
     session_id: uuid.UUID,
     body: SpeakerMapUpdate,
