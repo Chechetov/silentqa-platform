@@ -14,6 +14,16 @@ class Settings(BaseSettings):
     # Empty value means destructive actions are disabled (fail-closed).
     DELETE_PASSWORD: str = ""
 
+    # Dashboard auth (Plan 2)
+    SESSION_TTL_SECONDS: int = 7 * 24 * 3600  # 7 days
+    SESSION_COOKIE_SECURE: bool = True  # False only for local http:// dev
+    LOGIN_RATE_MAX_ATTEMPTS: int = 10
+    LOGIN_RATE_WINDOW_SECONDS: int = 300
+    LOGIN_RATE_IP_MULTIPLIER: int = 10  # IP-backstop: max_attempts × множитель
+    # ISO-дата (UTC) конца grace-окна для брокерских JWT без tenant-claim
+    # (спека 5.4: 30 дней от деплоя). Пусто = grace выключен, claim обязателен.
+    BROKER_JWT_TENANT_GRACE_UNTIL: str = ""
+
     # Multi-tenancy
     BASE_DOMAIN: str = "silentqa.com"
     # Fallback tenant slug for hosts that match neither custom_domains nor
