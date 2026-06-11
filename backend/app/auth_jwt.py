@@ -7,13 +7,15 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 
 from fastapi import Depends, Header, HTTPException
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from tenancy.context import get_tenant_slug
 
 from app.config import settings
 from app.database import get_db
@@ -56,13 +58,16 @@ def verify_password(plain: str, hashed: str) -> bool:
         return False
 
 
-def create_token(broker_id: uuid.UUID, amocrm_user_id: int, email: str, name: str) -> str:
+def create_token(
+    broker_id: uuid.UUID, amocrm_user_id: int, email: str, name: str, tenant: str
+) -> str:
     now = datetime.now(timezone.utc)
     payload = {
         "sub": str(broker_id),
         "amocrm_user_id": int(amocrm_user_id),
         "email": email,
         "name": name,
+        "tenant": tenant,
         "iat": int(now.timestamp()),
         "exp": int((now + _TOKEN_TTL).timestamp()),
     }
@@ -80,6 +85,34 @@ def decode_token(token: str) -> dict | None:
         # Defensive: jose can raise unexpected errors on weird input.
         logger.exception("Unexpected error decoding broker token")
         return None
+
+
+def _grace_active() -> bool:
+    """Grace-окно (спека 5.4): legacy-JWT без tenant-claim живут 30 дней."""
+    raw = settings.BROKER_JWT_TENANT_GRACE_UNTIL
+    if not raw:
+        return False
+    try:
+        deadline = date.fromisoformat(raw)
+    except ValueError:
+        return False
+    return datetime.now(timezone.utc).date() < deadline
+
+
+def check_tenant_claim(payload: dict) -> None:
+    """401, если tenant-claim токена не совпадает с текущим тенантом.
+
+    Токен без claim (выдан до Plan 2) трактуется как realestate до конца
+    grace-окна; после — отклоняется.
+    """
+    tok_tenant = payload.get("tenant")
+    slug = get_tenant_slug()
+    if tok_tenant is not None:
+        if tok_tenant != slug:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        return
+    if not (_grace_active() and slug == "realestate"):
+        raise HTTPException(status_code=401, detail="Invalid token")
 
 
 async def get_current_broker(
@@ -102,6 +135,8 @@ async def get_current_broker(
     sub = payload.get("sub")
     if not sub:
         raise HTTPException(status_code=401, detail="Invalid token")
+
+    check_tenant_claim(payload)
 
     try:
         broker_id = uuid.UUID(str(sub))

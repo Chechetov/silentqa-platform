@@ -20,6 +20,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tenancy.context import get_tenant_slug, require_tenant_slug
+
 from app.auth_jwt import (
     create_token,
     get_current_broker,
@@ -60,6 +62,8 @@ def _mask_email(email: str) -> str:
 
 @router.post("/claim/start", response_model=BrokerClaimStartResponse)
 async def claim_start(body: BrokerClaimStartRequest, db: AsyncSession = Depends(get_db)):
+    if get_tenant_slug() is None:
+        raise HTTPException(status_code=404, detail="Unknown tenant")
     row = (
         await db.execute(
             text(
@@ -79,6 +83,8 @@ async def claim_start(body: BrokerClaimStartRequest, db: AsyncSession = Depends(
 
 @router.post("/claim/complete", response_model=BrokerTokenResponse)
 async def claim_complete(body: BrokerClaimCompleteRequest, db: AsyncSession = Depends(get_db)):
+    if get_tenant_slug() is None:
+        raise HTTPException(status_code=404, detail="Unknown tenant")
     row = (
         await db.execute(
             text(
@@ -110,6 +116,7 @@ async def claim_complete(body: BrokerClaimCompleteRequest, db: AsyncSession = De
         amocrm_user_id=int(row[1]),
         email=row[2],
         name=row[3],
+        tenant=require_tenant_slug(),
     )
     return BrokerTokenResponse(
         token=token,
@@ -124,6 +131,8 @@ async def claim_complete(body: BrokerClaimCompleteRequest, db: AsyncSession = De
 
 @router.post("/login", response_model=BrokerTokenResponse)
 async def login(body: BrokerLoginRequest, db: AsyncSession = Depends(get_db)):
+    if get_tenant_slug() is None:
+        raise HTTPException(status_code=404, detail="Unknown tenant")
     row = (
         await db.execute(
             text(
@@ -148,6 +157,7 @@ async def login(body: BrokerLoginRequest, db: AsyncSession = Depends(get_db)):
         amocrm_user_id=int(row[1]),
         email=row[2],
         name=row[3],
+        tenant=require_tenant_slug(),
     )
     return BrokerTokenResponse(
         token=token,
