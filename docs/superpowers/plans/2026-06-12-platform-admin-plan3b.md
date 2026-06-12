@@ -2581,7 +2581,7 @@ boot();
 
 Прочитать `index.html` целиком (62 строки) и навигацию в `app.js` (около строки 30, `$$('.nav-link')`) перед правками. Существующие паттерны: `currentUser = {email, role}` (после Task 12 в `/me` добавились `employee_name`, `impersonated_by`), `isAdmin()`, `api()`-хелпер, `showToast`.
 
-- [ ] **Step 1: index.html** — в навигацию добавить (по образцу существующих nav-link):
+- [x] **Step 1: index.html** — в навигацию добавить (по образцу существующих nav-link):
 ```html
 <a href="#team" class="nav-link" data-admin-only>Команда</a>
 <a href="#profile" class="nav-link">Профиль</a>
@@ -2593,7 +2593,7 @@ boot();
 ```
 (сверить классы/структуру с существующими секциями index.html — повторить их точно.)
 
-- [ ] **Step 2: app.js** — добавить:
+- [x] **Step 2: app.js** — добавить:
 
 1. Видимость нав-пункта: после установки `currentUser` (функция, где `currentUser = await api('/api/user-auth/me')`) —
 ```javascript
@@ -2723,8 +2723,8 @@ async function renderProfile() {
 
 4. Роль manager в SPA: серверная фильтрация уже всё прячет; дополнительно скрыть admin-кнопки уже делает `isAdmin()`. Проверить: нав-пункт «Команда» скрыт (data-admin-only), дашборд-лента у менеджера показывает только свои звонки (сервер).
 
-- [ ] **Step 3: вручную** — `cd backend && SECRET_KEY=x ../.venv/bin/python -c "import pathlib; src=pathlib.Path('static/app.js').read_text(); assert 'renderTeam' in src"` + открыть SPA не выйдет без БД: синтаксис-чек `node --check static/app.js && node --check static/admin.js` (node есть на сервере).
-- [ ] **Step 4: commit** — `feat(spa): Команда, Профиль, бейдж режима поддержки`
+- [x] **Step 3: вручную** — `cd backend && SECRET_KEY=x ../.venv/bin/python -c "import pathlib; src=pathlib.Path('static/app.js').read_text(); assert 'renderTeam' in src"` + открыть SPA не выйдет без БД: синтаксис-чек `node --check static/app.js && node --check static/admin.js` (node есть на сервере).
+- [x] **Step 4: commit** — `feat(spa): Команда, Профиль, бейдж режима поддержки`
 
 ---
 
