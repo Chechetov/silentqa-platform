@@ -6,10 +6,10 @@ from typing import Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from ..auth_user import require_platform_admin_basic
+from ..auth_platform import require_platform_admin
 
 router = APIRouter(prefix="/api/companies", tags=["companies"],
-                   dependencies=[Depends(require_platform_admin_basic)])
+                   dependencies=[Depends(require_platform_admin)])
 
 COMPANIES_DIR = Path(os.getenv("COMPANIES_PATH", "/companies"))
 

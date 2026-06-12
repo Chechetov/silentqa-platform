@@ -41,10 +41,10 @@ def test_tenant_paths_404_on_platform_host(client, path):
 
 def test_platform_path_passes_gate_on_platform_host(client):
     # Позитив: платформенный путь на платформенном хосте проходит гейт и
-    # доходит до Basic-auth (НЕ 404). Ловит инверсию условия (== вместо !=).
+    # доходит до платформенной auth-зависимости (НЕ 404). Ловит инверсию условия.
     r = client.get("/api/companies", headers={"Host": "admin.silentqa.com"})
     assert r.status_code != 404
-    assert r.status_code == 401  # Unauthorized (Basic-auth), гейт пропустил
+    assert r.status_code == 401  # platform_auth_required (нет сессии), гейт пропустил
 
 
 def test_tenant_path_passes_gate_on_tenant_host(client):

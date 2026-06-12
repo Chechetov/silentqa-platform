@@ -7,7 +7,6 @@ Three planes:
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import secrets
 from dataclasses import dataclass
@@ -90,38 +89,6 @@ async def require_ingestion_auth(
     if not tenant.get("api_key_required", True):
         return
     raise HTTPException(status_code=401, detail="api_key_required")
-
-
-def require_platform_admin_basic(request: Request) -> None:
-    """Interim-гейт /api/companies до Plan 3 (спека 5.6).
-
-    На тенант-контуре раздел не существует (404). На платформенном контуре —
-    HTTP Basic с AUTH_USERNAME/AUTH_PASSWORD (заменится platform-admin
-    сессиями в Plan 3).
-    """
-    if get_tenant_slug() is not None:
-        raise HTTPException(status_code=404, detail="Not found")
-    header = request.headers.get("Authorization", "")
-    if header.startswith("Basic "):
-        try:
-            decoded = base64.b64decode(header[6:]).decode()
-            username, _, password = decoded.partition(":")
-            # bytes: compare_digest отвергает non-ASCII str (TypeError → 500
-            # на unauthenticated-границе и lockout кириллических паролей);
-            # обе проверки без short-circuit — нет тайминг-сигнала о username
-            user_ok = secrets.compare_digest(
-                username.encode(), settings.AUTH_USERNAME.encode())
-            pass_ok = secrets.compare_digest(
-                password.encode(), settings.AUTH_PASSWORD.encode())
-        except Exception:
-            user_ok = pass_ok = False
-        if user_ok and pass_ok:
-            return
-    raise HTTPException(
-        status_code=401,
-        detail="Unauthorized",
-        headers={"WWW-Authenticate": "Basic"},
-    )
 
 
 async def require_amocrm_tenant(
