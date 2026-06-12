@@ -781,7 +781,7 @@ if __name__ == "__main__":
 - Create: `backend/static/admin.html` (заглушка, полная версия в Task 17)
 - Test: `backend/tests/test_root_dispatch.py` (создать)
 
-- [ ] **Step 1: тест**:
+- [x] **Step 1: тест**:
 
 ```python
 import pytest
@@ -815,9 +815,9 @@ def test_tenant_host_serves_client_spa(client):
     assert 'id="admin-app"' not in r.text
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация.** `static/admin.html` (заглушка):
+- [x] **Step 3: имплементация.** `static/admin.html` (заглушка):
 
 ```html
 <!DOCTYPE html>
@@ -841,8 +841,8 @@ async def root_page():
 # существующий mount StaticFiles остаётся ПОСЛЕДНИМ как был
 ```
 
-- [ ] **Step 4: прогон** → PASS (+ суита).
-- [ ] **Step 5: commit** — `feat(platform): GET / отдаёт admin.html на платформенном контуре`
+- [x] **Step 4: прогон** → PASS (+ суита).
+- [x] **Step 5: commit** — `feat(platform): GET / отдаёт admin.html на платформенном контуре`
 
 ---
 
