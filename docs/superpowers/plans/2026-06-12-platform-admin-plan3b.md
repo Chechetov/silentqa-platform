@@ -222,7 +222,7 @@ registry = TenantRegistry()
 
 Спека §1: на платформенном хосте живут только `/api/platform/*`, `/api/companies*`, `/api/tenancy/*`; на тенант-хосте эти три семейства → 404, остальные `/api/*` → как раньше. Не-`/api/` пути (статика, /health) не гейтятся.
 
-- [ ] **Step 1: тест** `tests/test_contour_gate.py`:
+- [x] **Step 1: тест** `tests/test_contour_gate.py`:
 
 ```python
 """Изоляция контуров (спека §1): пути чужого контура → 404 ДО auth."""
@@ -267,9 +267,9 @@ def test_domain_check_alive_on_both(client):
         assert r.status_code == 200
 ```
 
-- [ ] **Step 2: прогон** → FAIL (сейчас тенантские пути на платформе дают 401/404 вразнобой, платформенных роутов нет — но `/api/companies` на тенант-хосте уже 404 через зависимость; тест унифицирует).
+- [x] **Step 2: прогон** → FAIL (сейчас тенантские пути на платформе дают 401/404 вразнобой, платформенных роутов нет — но `/api/companies` на тенант-хосте уже 404 через зависимость; тест унифицирует).
 
-- [ ] **Step 3: имплементация** — в `TenantResolutionMiddleware.__call__`, после установки contextvar, перед `await self.app(...)`:
+- [x] **Step 3: имплементация** — в `TenantResolutionMiddleware.__call__`, после установки contextvar, перед `await self.app(...)`:
 
 ```python
 # class-level:
@@ -287,9 +287,9 @@ def test_domain_check_alive_on_both(client):
 ```
 Логика: `/api/tenancy/*` — всегда ок; платформенные пути требуют платформенный контур; тенантские — тенантный. После этого 404-ветка `if get_tenant_slug() is None` в `user_auth.login/logout` и `require_platform_admin_basic` становится недостижимой по HTTP (оставить как defense-in-depth — НЕ удалять).
 
-- [ ] **Step 4: прогон** — файл PASS, затем `pytest tests/ -q`: «test_companies_platform» останется зелёным (он ходит платформенным хостом); если какой-то тест ходил тенантскими путями без Host — чинить тест, выставив правильный Host, а не ослаблять гейт.
+- [x] **Step 4: прогон** — файл PASS, затем `pytest tests/ -q`: «test_companies_platform» останется зелёным (он ходит платформенным хостом); если какой-то тест ходил тенантскими путями без Host — чинить тест, выставив правильный Host, а не ослаблять гейт.
 
-- [ ] **Step 5: commit** — `feat(tenancy): 404-гейт путей чужого контура в middleware`
+- [x] **Step 5: commit** — `feat(tenancy): 404-гейт путей чужого контура в middleware`
 
 ---
 
