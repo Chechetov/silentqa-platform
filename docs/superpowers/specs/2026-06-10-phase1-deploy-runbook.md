@@ -58,3 +58,44 @@
 - Откат: порядок строго «тенант-трек → shared-трек» (см. шаг 10). Прямой
   `downgrade s001` без снятия 011-012 падает (проверено) и безопасно
   откатывается транзакцией — БД остаётся в рабочем состоянии.
+
+## Plan 2 (auth) — дополнение к деплою
+
+Деплой Plan 2 идёт ТЕМ ЖЕ релизом, что и ядро (одна ветка). Дополнительно к
+шагам выше:
+
+1. Перед рестартом backend в .env добавить:
+   `BROKER_JWT_TENANT_GRACE_UNTIL=<дата деплоя + 30 дней, YYYY-MM-DD>`
+   (без неё все ранее выданные брокерские JWT умрут сразу — спека 5.4).
+2. Убедиться, что admin-юзер посеян (сид-CLI шаг 7 выше; иначе после снятия
+   Basic в дашборд никто не войдёт — риск «локаут» из спеки §10).
+   Проверка: `POST /api/user-auth/login` с сид-кредами → 200 + Set-Cookie.
+3. DELETE_PASSWORD из .env можно удалить (больше не читается).
+   AUTH_USERNAME/AUTH_PASSWORD ОСТАВИТЬ — interim-гейт /api/companies
+   (доступен только с платформенного контура: Host=silentqa.com или IP
+   при пустом DEFAULT_TENANT).
+4. Прод-статика realestate: из каталога Caddy (/home/dev/projects/...)
+   удалить посторонние zip-артефакты расширений, если лежат (спека 5.2);
+   в этом репо их нет.
+5. Smoke после рестарта:
+   - GET / → index.html БЕЗ Basic-промпта; логин-форма в SPA;
+   - login viewer-юзером → кнопки удаления/переоценки скрыты;
+   - POST /api/sessions без ключа → 201 (api_key_required=false);
+   - POST /api/sessions с X-API-Key: sqa_wrong → 403;
+   - GET /api/companies на тенант-домене → 404; на платформенном — 401/Basic;
+   - GET /api/webhooks → 404;
+   - звонок из AmoCRM-поллера: нота содержит ссылку на
+     https://rogov.automate-it.fun/#call/... (dashboard_base_url из S002).
+6. Завершение rollout (через ≤30 дней, по факту обновления клиентов):
+   `UPDATE shared.tenants SET api_key_required = TRUE WHERE slug='realestate';`
+   и удалить BROKER_JWT_TENANT_GRACE_UNTIL из .env (конец grace).
+   Ключ генерится вручную кодом _set_api_key (флага ротации в CLI нет):
+   `cd backend && ../.venv/bin/python -c "
+   from app.provision_tenant import _set_api_key
+   from tenancy.db import shared_connect
+   conn = shared_connect(); print(_set_api_key(conn, 'realestate')); conn.commit(); conn.close()"`
+   — вывод показывается один раз, раздаётся клиентам.
+
+### Откат Plan 2
+Код-откат = git revert ветки; данных Plan 2 не создаёт (users уже была в 012,
+сессии в Redis истекают сами). После отката вернуть DELETE_PASSWORD в .env.
