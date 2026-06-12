@@ -300,7 +300,7 @@ def test_domain_check_alive_on_both(client):
 - Create: `backend/app/platform_sessions.py`
 - Test: `backend/tests/test_platform_sessions.py` (создать)
 
-- [ ] **Step 1: тест** `tests/test_platform_sessions.py`:
+- [x] **Step 1: тест** `tests/test_platform_sessions.py`:
 
 ```python
 import asyncio
@@ -349,9 +349,9 @@ def test_tenant_rate_limit_still_works(fake_redis):
     asyncio.run(flow())
 ```
 
-- [ ] **Step 2: прогон** → FAIL (модуля нет).
+- [x] **Step 2: прогон** → FAIL (модуля нет).
 
-- [ ] **Step 3: имплементация.** В `auth_sessions.py` извлечь ядро лимитера (поведение 1:1):
+- [x] **Step 3: имплементация.** В `auth_sessions.py` извлечь ядро лимитера (поведение 1:1):
 
 ```python
 async def _register_attempt(email_key: str, ip_key: str) -> bool:
@@ -424,9 +424,9 @@ async def register_platform_login_attempt(ip: str, email: str) -> bool:
     )
 ```
 
-- [ ] **Step 4: прогон** — файл PASS + `tests/test_auth_sessions.py` PASS (рефактор без регрессии).
+- [x] **Step 4: прогон** — файл PASS + `tests/test_auth_sessions.py` PASS (рефактор без регрессии).
 
-- [ ] **Step 5: commit** — `feat(auth): платформенные сессии + общий _register_attempt`
+- [x] **Step 5: commit** — `feat(auth): платформенные сессии + общий _register_attempt`
 
 ---
 
