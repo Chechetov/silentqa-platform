@@ -1,6 +1,6 @@
 # silentqa Platform Deploy Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Поднять отдельный мультитенантный деплой `/root/projects/silentqa` (порт 8007) с автоматическими клиентскими поддоменами `*.silentqa.com` через KZ-relay и on-demand TLS; создать клиентов `fulldent` и `shuravin`.
 
@@ -19,7 +19,7 @@
 - Modify: `backend/app/main.py` (import + include_router)
 - Test: `backend/tests/test_domain_check.py`
 
-- [ ] **Step 1: Failing-тест** `backend/tests/test_domain_check.py`:
+- [x] **Step 1: Failing-тест** `backend/tests/test_domain_check.py`:
 
 ```python
 """domain-check: гейт для Caddy on_demand_tls ask (спека Plan 3a §3)."""
@@ -81,11 +81,11 @@ def test_rejections(monkeypatch):
         assert r.status_code == 404, bad
 ```
 
-- [ ] **Step 2: Прогнать — падает** (`ModuleNotFoundError: app.routes.tenancy_check`)
+- [x] **Step 2: Прогнать — падает** (`ModuleNotFoundError: app.routes.tenancy_check`)
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_domain_check.py -v`
 
-- [ ] **Step 3: Реализация** `backend/app/routes/tenancy_check.py`:
+- [x] **Step 3: Реализация** `backend/app/routes/tenancy_check.py`:
 
 ```python
 """GET /api/tenancy/domain-check — гейт для Caddy on_demand_tls ask.
@@ -125,9 +125,9 @@ async def domain_check(domain: str = ""):
 
 В `backend/app/main.py`: добавить `tenancy_check` в импорт роутов и `app.include_router(tenancy_check.router)` после `user_auth.router`.
 
-- [ ] **Step 4: Прогнать — зелёный + оба полных сьюта**
+- [x] **Step 4: Прогнать — зелёный + оба полных сьюта**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/tenancy_check.py backend/app/main.py backend/tests/test_domain_check.py
@@ -138,30 +138,30 @@ git commit -m "feat(tenancy): domain-check endpoint for caddy on-demand tls ask"
 
 ### Task 2: Клон деплоя + venv
 
-- [ ] `git clone /root/projects/meet /root/projects/silentqa && cd /root/projects/silentqa && git fetch origin && git checkout multi-tenant-core-phase1` (ветка в клоне видна, т.к. clone локального репо несёт все ветки; worktree-коммиты в общем .git)
-- [ ] `python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install -r backend/requirements.txt -r worker/requirements.txt` (долго: torch; кеш pip ускорит)
-- [ ] Смоук: `cd worker && ../.venv/bin/python -c "import tasks.celery_app; print('ok')"` (с env из шага Task 3)
+- [x] `git clone /root/projects/meet /root/projects/silentqa && cd /root/projects/silentqa && git fetch origin && git checkout multi-tenant-core-phase1` (ветка в клоне видна, т.к. clone локального репо несёт все ветки; worktree-коммиты в общем .git)
+- [x] `python3 -m venv .venv && .venv/bin/pip install -U pip && .venv/bin/pip install -r backend/requirements.txt -r worker/requirements.txt` (долго: torch; кеш pip ускорит)
+- [x] Смоук: `cd worker && ../.venv/bin/python -c "import tasks.celery_app; print('ok')"` (с env из шага Task 3)
 
 ### Task 3: БД + .env
 
-- [ ] Роль+БД: `sudo -u postgres psql -c "CREATE ROLE silentqa LOGIN PASSWORD '<PG_PWD>'" -c "CREATE DATABASE silentqa OWNER silentqa"` (PG_PWD = `openssl rand -hex 16`)
-- [ ] `.env` на основе `/root/projects/meet/.env`: заменить DATABASE_URL/DATABASE_URL_SYNC (user silentqa, db silentqa, host localhost:5432), `REDIS_URL=redis://localhost:6379/4`, новый `SECRET_KEY` (openssl rand -hex 32), `AUTH_USERNAME=admin`/новый `AUTH_PASSWORD` (interim-гейт /api/companies), удалить DELETE_PASSWORD, `BASE_DOMAIN=silentqa.com`, `DEFAULT_TENANT=`, `BROKER_JWT_TENANT_GRACE_UNTIL=` (пусто — легаси-JWT нет), пути хранилища абсолютные `/root/projects/silentqa/data/{audio,results}`, COMPANIES_PATH=/root/projects/silentqa/companies; API-ключи (ASSEMBLYAI/OPENAI/HF_TOKEN) — унаследовать из meet/.env. `mkdir -p data/audio data/results`
-- [ ] Проверка миграций вручную ДО юнитов: `cd backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.migrate` → "[migrate] done"; `psql ... -c "\dt shared.*"` → tenants, platform_admins, alembic_version
+- [x] Роль+БД: `sudo -u postgres psql -c "CREATE ROLE silentqa LOGIN PASSWORD '<PG_PWD>'" -c "CREATE DATABASE silentqa OWNER silentqa"` (PG_PWD = `openssl rand -hex 16`)
+- [x] `.env` на основе `/root/projects/meet/.env`: заменить DATABASE_URL/DATABASE_URL_SYNC (user silentqa, db silentqa, host localhost:5432), `REDIS_URL=redis://localhost:6379/4`, новый `SECRET_KEY` (openssl rand -hex 32), `AUTH_USERNAME=admin`/новый `AUTH_PASSWORD` (interim-гейт /api/companies), удалить DELETE_PASSWORD, `BASE_DOMAIN=silentqa.com`, `DEFAULT_TENANT=`, `BROKER_JWT_TENANT_GRACE_UNTIL=` (пусто — легаси-JWT нет), пути хранилища абсолютные `/root/projects/silentqa/data/{audio,results}`, COMPANIES_PATH=/root/projects/silentqa/companies; API-ключи (ASSEMBLYAI/OPENAI/HF_TOKEN) — унаследовать из meet/.env. `mkdir -p data/audio data/results`
+- [x] Проверка миграций вручную ДО юнитов: `cd backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.migrate` → "[migrate] done"; `psql ... -c "\dt shared.*"` → tenants, platform_admins, alembic_version
 
 ### Task 4: systemd-юниты
 
-- [ ] `/etc/systemd/system/silentqa-backend.service` и `silentqa-worker.service` по образцу meet-* (WorkingDirectory/EnvironmentFile/PATH/VIRTUAL_ENV → /root/projects/silentqa; uvicorn `--port 8007`; worker: `celery -A tasks.celery_app worker -B --loglevel=info --concurrency=2 --max-tasks-per-child=10 -Q default,transcription`); HOME не переопределять (общий кеш моделей)
-- [ ] `systemctl daemon-reload && systemctl enable --now silentqa-backend silentqa-worker`; `journalctl -u silentqa-backend -n 20` → migrate done + uvicorn on 8007; `curl -s localhost:8007/health` → ok
+- [x] `/etc/systemd/system/silentqa-backend.service` и `silentqa-worker.service` по образцу meet-* (WorkingDirectory/EnvironmentFile/PATH/VIRTUAL_ENV → /root/projects/silentqa; uvicorn `--port 8007`; worker: `celery -A tasks.celery_app worker -B --loglevel=info --concurrency=2 --max-tasks-per-child=10 -Q default,transcription`); HOME не переопределять (общий кеш моделей)
+- [x] `systemctl daemon-reload && systemctl enable --now silentqa-backend silentqa-worker`; `journalctl -u silentqa-backend -n 20` → migrate done + uvicorn on 8007; `curl -s localhost:8007/health` → ok
 
 ### Task 5: Caddy
 
-- [ ] Глобальные опции (head Caddyfile — проверить, есть ли блок `{...}` до первого сайта; добавить):
+- [x] Глобальные опции (head Caddyfile — проверить, есть ли блок `{...}` до первого сайта; добавить):
 ```
 on_demand_tls {
     ask http://localhost:8007/api/tenancy/domain-check
 }
 ```
-- [ ] Сайт-блок:
+- [x] Сайт-блок:
 ```
 silentqa.com, *.silentqa.com {
     encode gzip zstd
@@ -171,7 +171,7 @@ silentqa.com, *.silentqa.com {
     reverse_proxy localhost:8007
 }
 ```
-- [ ] `caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`; негатив-проверка: `curl -s "localhost:8007/api/tenancy/domain-check?domain=ghost.silentqa.com"` → 404, `?domain=silentqa.com` → 200
+- [x] `caddy validate --config /etc/caddy/Caddyfile && systemctl reload caddy`; негатив-проверка: `curl -s "localhost:8007/api/tenancy/domain-check?domain=ghost.silentqa.com"` → 404, `?domain=silentqa.com` → 200
 
 ### Task 6: DNS (зависимость от владельца)
 
@@ -179,10 +179,10 @@ silentqa.com, *.silentqa.com {
 
 ### Task 7: Провижининг fulldent + shuravin + smoke
 
-- [ ] `cd /root/projects/silentqa/backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.provision_tenant fulldent --name "FullDent" --admin-email alex.chechetov@gmail.com --admin-password <gen1>` (gen = openssl rand -base64 18); записать API-ключ. Аналогично `shuravin --name "Shuravin"`.
-- [ ] Smoke до DNS (локально, Host-заголовком): login admin'ом fulldent → 200+cookie; `POST /api/sessions` без ключа → 401, с ключом fulldent → 201, с ключом shuravin на хосте fulldent → 403; сессии fulldent не видны из shuravin (GET /api/sessions под cookie каждого).
-- [ ] Smoke после DNS: `https://fulldent.silentqa.com` в браузере — серт выпустился, SPA-логин живой; `https://ghost.silentqa.com` — TLS-ошибка (ask отбил).
+- [x] `cd /root/projects/silentqa/backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.provision_tenant fulldent --name "FullDent" --admin-email alex.chechetov@gmail.com --admin-password <gen1>` (gen = openssl rand -base64 18); записать API-ключ. Аналогично `shuravin --name "Shuravin"`.
+- [x] Smoke до DNS (локально, Host-заголовком): login admin'ом fulldent → 200+cookie; `POST /api/sessions` без ключа → 401, с ключом fulldent → 201, с ключом shuravin на хосте fulldent → 403; сессии fulldent не видны из shuravin (GET /api/sessions под cookie каждого).
+- [x] Smoke после DNS: `https://fulldent.silentqa.com` в браузере — серт выпустился, SPA-логин живой; `https://ghost.silentqa.com` — TLS-ошибка (ask отбил).
 
 ### Task 8: Доки + чекбоксы
 
-- [ ] Дописать в ранбук секцию "silentqa platform deploy — выполнено" с фактическими портами/именами; отметить чекбоксы этого плана; commit в meet-mt; обновить память проекта.
+- [x] Дописать в ранбук секцию "silentqa platform deploy — выполнено" с фактическими портами/именами; отметить чекбоксы этого плана; commit в meet-mt; обновить память проекта.

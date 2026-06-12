@@ -99,3 +99,32 @@
 ### Откат Plan 2
 Код-откат = git revert ветки; данных Plan 2 не создаёт (users уже была в 012,
 сессии в Redis истекают сами). После отката вернуть DELETE_PASSWORD в .env.
+
+## silentqa platform — задеплоено 2026-06-12
+
+Отдельный прод-деплой платформы (realestate/meet НЕ тронуты):
+- Код: `/root/projects/silentqa` (git clone /root/projects/meet, ветка
+  multi-tenant-core-phase1, коммит 68e2f12), свой .venv.
+- БД `silentqa` (PG 5432, роль silentqa), Redis 6379/4, порт 8007,
+  юниты `silentqa-{backend,worker}.service` (worker с -B).
+- Секреты деплоя/клиентов: `/root/projects/silentqa/.deploy-secrets` (0600).
+- Caddy: глобальный `on_demand_tls ask → :8007/api/tenancy/domain-check` +
+  блок `silentqa.com, *.silentqa.com → :8007`. Бэкап: Caddyfile.bak-silentqa.
+- ML-кеш общий: /root/.cache/huggingface (HOME в юнитах не переопределён).
+- Тенанты: fulldent, shuravin (admin = alex.chechetov@gmail.com,
+  api_key_required=true). Смоук пройден: login/роли, dual-auth
+  (401/403/201), изоляция сессий и cookie между тенантами, ghost-хост 404.
+
+Обновление платформы: коммит в ветку (worktree /root/projects/meet-mt) →
+`cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1` →
+`systemctl restart silentqa-backend silentqa-worker` (backend сам гонит
+миграции на старте).
+
+Новый клиент: `cd /root/projects/silentqa/backend && set -a; source ../.env;
+set +a; ../.venv/bin/python -m app.provision_tenant <slug> --name "<Имя>"
+--admin-email <email> --admin-password "$(openssl rand -base64 15)"` —
+ключ печатается один раз; поддомен и сертификат появляются сами.
+
+DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
+`A @ → 89.207.255.231`, обе DNS-only (серая тучка). Без них публичный
+доступ/сертификаты не работают (relay - passthrough, на нём ничего не надо).
