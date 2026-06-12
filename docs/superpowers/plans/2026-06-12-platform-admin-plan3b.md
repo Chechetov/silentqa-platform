@@ -1729,7 +1729,7 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
 - Modify: `backend/tests/conftest.py` (FakeRedis.scan_iter)
 - Test: `backend/tests/test_team_users.py` (создать)
 
-- [ ] **Step 1: FakeRedis.scan_iter** в conftest:
+- [x] **Step 1: FakeRedis.scan_iter** в conftest:
 
 ```python
     async def scan_iter(self, match=None):
@@ -1739,7 +1739,7 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
                 yield k
 ```
 
-- [ ] **Step 2: тесты** `tests/test_team_users.py` (data-слой мокаем; guards — живая логика):
+- [x] **Step 2: тесты** `tests/test_team_users.py` (data-слой мокаем; guards — живая логика):
 
 ```python
 import asyncio
@@ -1845,9 +1845,9 @@ def test_garbage_user_id_404_not_500(client, fake_redis):
     assert r.status_code == 404
 ```
 
-- [ ] **Step 3: прогон** → FAIL.
+- [x] **Step 3: прогон** → FAIL.
 
-- [ ] **Step 4: имплементация.**
+- [x] **Step 4: имплементация.**
 
 `auth_sessions.py` — хелпер:
 ```python
@@ -2015,8 +2015,8 @@ async def reset_password(user_id: str, db: AsyncSession = Depends(get_db),
 ```
 затем (3) обращения к БД (last_admin-проверка и мутация). Тесты используют UUID-жертву `VICTIM` — guards и last_admin тестируются ДО и ПОСЛЕ uuid-валидации соответственно (`test_garbage_user_id_404_not_500` фиксирует порядок).
 
-- [ ] **Step 5: прогон** → PASS (+ суита).
-- [ ] **Step 6: commit** — `feat(team): /api/users с guards самовыпила и инвалидацией сессий`
+- [x] **Step 5: прогон** → PASS (+ суита).
+- [x] **Step 6: commit** — `feat(team): /api/users с guards самовыпила и инвалидацией сессий`
 
 ---
 
