@@ -1485,14 +1485,14 @@ async def tenant_user_reset_password(slug: str, user_id: uuid.UUID,
 - Modify: `backend/tests/conftest.py` (FakeRedis.getdel)
 - Test: `backend/tests/test_impersonation.py` (создать)
 
-- [ ] **Step 1: FakeRedis.getdel** в conftest:
+- [x] **Step 1: FakeRedis.getdel** в conftest:
 
 ```python
     async def getdel(self, key):
         return self.store.pop(key, None)
 ```
 
-- [ ] **Step 2: тест** `tests/test_impersonation.py`:
+- [x] **Step 2: тест** `tests/test_impersonation.py`:
 
 ```python
 import asyncio
@@ -1581,9 +1581,9 @@ def test_token_slug_mismatch(client, fake_redis):
     assert r.status_code == 401
 ```
 
-- [ ] **Step 3: прогон** → FAIL.
+- [x] **Step 3: прогон** → FAIL.
 
-- [ ] **Step 4: имплементация.**
+- [x] **Step 4: имплементация.**
 
 `auth_sessions.create_session` — расширить (обратная совместимость: все вызовы без новых kwargs работают как раньше):
 ```python
@@ -1693,10 +1693,10 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
 
 ПРОД-ЗАВИСИМОСТЬ: `getdel` требует Redis ≥ 6.2 — проверить на сервере при деплое (`redis-cli INFO server | grep redis_version`); сервер на Ubuntu 24.04 → Redis 7.x, ок.
 
-- [ ] **Step 5: прогон** — файл PASS + суита. Известные жертвы расширения payload (ревью):
+- [x] **Step 5: прогон** — файл PASS + суита. Известные жертвы расширения payload (ревью):
   - `tests/test_auth_sessions.py::test_create_load_destroy_roundtrip` сверяет ТОЧНЫЙ dict — добавить в ожидаемый `"employee_name": None, "impersonated_by": None`;
   - `tests/test_user_auth_routes.py` — если /me сверяется точным dict, добавить новые поля в ожидания.
-- [ ] **Step 6: commit** — `feat(platform): impersonation одноразовым токеном + поля сессии`
+- [x] **Step 6: commit** — `feat(platform): impersonation одноразовым токеном + поля сессии`
 
 ---
 
