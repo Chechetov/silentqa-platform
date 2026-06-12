@@ -1183,7 +1183,7 @@ async def create_tenant(body: CreateTenantBody):
 - Modify: `backend/app/routes/platform_tenants.py`
 - Test: `backend/tests/test_platform_tenants.py` (дополнить)
 
-- [ ] **Step 1: тесты** (дополнить файл):
+- [x] **Step 1: тесты** (дополнить файл):
 
 ```python
 def test_patch_status_validates(client, fake_redis):
@@ -1232,9 +1232,9 @@ def test_unknown_tenant_404(client, fake_redis, monkeypatch):
     assert r.status_code == 404
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация** (добавить в `platform_tenants.py`):
+- [x] **Step 3: имплементация** (добавить в `platform_tenants.py`):
 
 ```python
 from typing import Literal
@@ -1283,8 +1283,8 @@ async def rotate_key(slug: str, db: AsyncSession = Depends(get_db)):
     return {"slug": slug, "api_key": key}
 ```
 
-- [ ] **Step 4: прогон** → PASS.
-- [ ] **Step 5: commit** — `feat(platform): suspend/activate и ротация API-ключа`
+- [x] **Step 4: прогон** → PASS.
+- [x] **Step 5: commit** — `feat(platform): suspend/activate и ротация API-ключа`
 
 ---
 
