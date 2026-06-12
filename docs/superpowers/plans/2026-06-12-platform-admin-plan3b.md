@@ -2567,9 +2567,9 @@ async function openTenant(slug) {
 boot();
 ```
 
-- [ ] **Step 1:** написать оба файла.
-- [ ] **Step 2:** `pytest tests/test_root_dispatch.py -q` → PASS (маркер `id="admin-app"` сохранён).
-- [ ] **Step 3: commit** — `feat(platform): админ-SPA (логин, клиенты, карточка, создание)`
+- [x] **Step 1:** написать оба файла.
+- [x] **Step 2:** `pytest tests/test_root_dispatch.py -q` → PASS (маркер `id="admin-app"` сохранён).
+- [x] **Step 3: commit** — `feat(platform): админ-SPA (логин, клиенты, карточка, создание)`
 
 ---
 
