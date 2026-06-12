@@ -44,18 +44,8 @@ async def destroy_session(sid: str) -> None:
     await get_redis().delete(_sess_key(slug, sid))
 
 
-async def register_login_attempt(ip: str, email: str) -> bool:
-    """True — попытка разрешена; False — лимит исчерпан (отвечать 429).
-
-    Два счётчика: основной — по email (за KZ-relay/Caddy client.host
-    вырождается в IP релея для всего трафика, лимит чисто по IP лочил бы
-    весь тенант одним атакующим); по IP — только backstop с множителем
-    против тупого перебора множества email.
-    """
-    slug = require_tenant_slug()
+async def _register_attempt(email_key: str, ip_key: str) -> bool:
     r = get_redis()
-    email_key = f"t:{slug}:rl:login:email:{email.lower()}"
-    ip_key = f"t:{slug}:rl:login:ip:{ip}"
     n_email = await r.incr(email_key)
     if n_email == 1:
         await r.expire(email_key, settings.LOGIN_RATE_WINDOW_SECONDS)
@@ -65,4 +55,19 @@ async def register_login_attempt(ip: str, email: str) -> bool:
     return (
         n_email <= settings.LOGIN_RATE_MAX_ATTEMPTS
         and n_ip <= settings.LOGIN_RATE_MAX_ATTEMPTS * settings.LOGIN_RATE_IP_MULTIPLIER
+    )
+
+
+async def register_login_attempt(ip: str, email: str) -> bool:
+    """True — попытка разрешена; False — лимит исчерпан (отвечать 429).
+
+    Два счётчика: основной — по email (за KZ-relay/Caddy client.host
+    вырождается в IP релея для всего трафика, лимит чисто по IP лочил бы
+    весь тенант одним атакующим); по IP — только backstop с множителем
+    против тупого перебора множества email.
+    """
+    slug = require_tenant_slug()
+    return await _register_attempt(
+        f"t:{slug}:rl:login:email:{email.lower()}",
+        f"t:{slug}:rl:login:ip:{ip}",
     )
