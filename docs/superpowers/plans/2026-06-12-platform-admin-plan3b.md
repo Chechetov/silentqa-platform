@@ -544,7 +544,7 @@ async def require_platform_admin(
 - Modify: `backend/app/main.py` (включить роутер)
 - Test: `backend/tests/test_platform_auth_routes.py` (создать)
 
-- [ ] **Step 1: тест** (без БД — мокаем выборку админа; стиль `test_user_auth_routes.py`, посмотреть его и переиспользовать приёмы):
+- [x] **Step 1: тест** (без БД — мокаем выборку админа; стиль `test_user_auth_routes.py`, посмотреть его и переиспользовать приёмы):
 
 ```python
 """Логин платформенного админа. БД мокается: _fetch_admin → словарь."""
@@ -614,9 +614,9 @@ def test_logout_kills_session(client, admin_row):
     assert client.get("/api/platform/auth/me").status_code == 401
 ```
 
-- [ ] **Step 2: прогон** → FAIL (роутера нет).
+- [x] **Step 2: прогон** → FAIL (роутера нет).
 
-- [ ] **Step 3: имплементация** `routes/platform_auth.py` (зеркало user_auth, но платформа):
+- [x] **Step 3: имплементация** `routes/platform_auth.py` (зеркало user_auth, но платформа):
 
 ```python
 """Логин платформенного админа: /api/platform/auth/* (спека §2)."""
@@ -769,8 +769,8 @@ if __name__ == "__main__":
 
 В `main.py`: добавить `platform_auth` в import-кортеж из `app.routes` (это МНОГОСТРОЧНЫЙ кортеж в скобках — менять аккуратно) и `app.include_router(platform_auth.router)`.
 
-- [ ] **Step 4: прогон** — файл PASS, `pytest tests/ -q` PASS.
-- [ ] **Step 5: commit** — `feat(platform): логин админа платформы + CLI бутстрапа`
+- [x] **Step 4: прогон** — файл PASS, `pytest tests/ -q` PASS.
+- [x] **Step 5: commit** — `feat(platform): логин админа платформы + CLI бутстрапа`
 
 ---
 
