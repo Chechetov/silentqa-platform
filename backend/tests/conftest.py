@@ -43,6 +43,12 @@ class FakeRedis:
     async def expire(self, key, ttl):
         self.ttls[key] = ttl
 
+    async def scan_iter(self, match=None):
+        import fnmatch
+        for k in list(self.store):
+            if match is None or fnmatch.fnmatch(k, match):
+                yield k
+
 
 @pytest.fixture
 def fake_redis():
