@@ -14,7 +14,16 @@ from tenancy.context import get_tenant_slug
 from tenancy.registry import AMOCRM_TENANT_SLUGS
 
 from app.auth_jwt import get_current_broker
-from app.auth_user import require_admin, require_ingestion_auth, require_viewer
+from app.auth_user import (
+    UserCtx,
+    _NO_EMPLOYEE,
+    employee_scope,
+    get_current_user,
+    require_admin,
+    require_ingestion_auth,
+    require_session_access,
+    require_viewer,
+)
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
@@ -37,6 +46,7 @@ async def list_sessions(
     phone: str | None = None,
     template_id: str | None = None,
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(employee_scope),
 ):
     """List all sessions with pagination, sorted by created_at DESC.
 
@@ -56,6 +66,9 @@ async def list_sessions(
             filters.append(Session.metadata_["template_id"].astext.is_(None))
         else:
             filters.append(Session.metadata_["template_id"].astext == template_id)
+
+    if scope is not None:
+        filters.append(Session.metadata_["employee"].astext == scope)
 
     count_q = select(func.count()).select_from(Session)
     list_q = select(Session).order_by(Session.created_at.desc())
@@ -157,11 +170,20 @@ async def create_session(
 
 @router.get("/{session_id}", response_model=SessionResponse,
             dependencies=[Depends(require_ingestion_auth)])
-async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+async def get_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: UserCtx | None = Depends(get_current_user),
+):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if user is not None and user.role == "manager":
+        emp = (session.metadata_ or {}).get("employee")
+        if emp != (user.employee_name or _NO_EMPLOYEE):
+            raise HTTPException(status_code=404, detail="Session not found")
 
     chunks_count = await db.scalar(
         select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
@@ -364,7 +386,7 @@ async def link_lead(
     return _to_response(sess, chunks_count or 0)
 
 
-@router.get("/{session_id}/extraction", dependencies=[Depends(require_viewer)])
+@router.get("/{session_id}/extraction", dependencies=[Depends(require_session_access)])
 async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Return the latest extraction for the session, or 404 if none exists."""
     row = (await db.execute(text("""

@@ -3,7 +3,7 @@ import uuid
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.auth_user import require_viewer
+from app.auth_user import require_session_access
 from app.config import settings
 from tenancy.context import require_tenant_slug
 from tenancy.paths import tenant_results_dir
@@ -19,11 +19,11 @@ def _read_result(session_id: uuid.UUID, filename: str) -> dict | list:
         return json.load(f)
 
 
-@router.get("/{session_id}/transcript", dependencies=[Depends(require_viewer)])
+@router.get("/{session_id}/transcript", dependencies=[Depends(require_session_access)])
 async def get_transcript(session_id: uuid.UUID):
     return _read_result(session_id, "transcript.json")
 
 
-@router.get("/{session_id}/analysis", dependencies=[Depends(require_viewer)])
+@router.get("/{session_id}/analysis", dependencies=[Depends(require_session_access)])
 async def get_analysis(session_id: uuid.UUID):
     return _read_result(session_id, "quality.json")

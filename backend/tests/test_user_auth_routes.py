@@ -20,6 +20,7 @@ class _Row:
         self.email = "admin@t.io"
         self.password_hash = GOOD_HASH
         self.role = "admin"
+        self.employee_name = None
 
 
 class StubDB:
@@ -73,7 +74,8 @@ def test_login_success_sets_cookie_and_me_works(fake_redis):
     r = c.post("/api/user-auth/login",
                json={"email": "admin@t.io", "password": "correct-horse"})
     assert r.status_code == 200
-    assert r.json() == {"email": "admin@t.io", "role": "admin"}
+    assert r.json() == {"email": "admin@t.io", "role": "admin",
+                        "employee_name": None}
     cookie = r.headers.get("set-cookie", "")
     assert SESSION_COOKIE in cookie and "HttpOnly" in cookie
     assert "SameSite=lax" in cookie or "samesite=lax" in cookie

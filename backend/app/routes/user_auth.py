@@ -66,7 +66,7 @@ async def login(
     row = (
         await db.execute(
             text(
-                "SELECT id, email, password_hash, role FROM users "
+                "SELECT id, email, password_hash, role, employee_name FROM users "
                 "WHERE LOWER(email) = LOWER(:email)"
             ),
             {"email": body.email},
@@ -83,7 +83,8 @@ async def login(
     )
     await db.commit()
 
-    sid = await auth_sessions.create_session(str(row.id), row.email, row.role)
+    sid = await auth_sessions.create_session(
+        str(row.id), row.email, row.role, employee_name=row.employee_name)
     response.set_cookie(
         auth_sessions.SESSION_COOKIE,
         sid,
@@ -94,7 +95,8 @@ async def login(
         path="/",
         # Domain НЕ задаём — host-only cookie скоупится на домен тенанта.
     )
-    return {"email": row.email, "role": row.role}
+    return {"email": row.email, "role": row.role,
+            "employee_name": row.employee_name}
 
 
 @router.post("/logout")

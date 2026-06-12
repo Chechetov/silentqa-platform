@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
 from dataclasses import dataclass
 
 from fastapi import Depends, HTTPException, Request
@@ -55,6 +56,40 @@ async def require_viewer(
 async def require_admin(user: UserCtx = Depends(require_viewer)) -> UserCtx:
     if user.role != "admin":
         raise HTTPException(status_code=403, detail="admin_required")
+    return user
+
+
+# Сентинел «менеджер без привязки»: фильтр не совпадёт ни с одним
+# metadata.employee → видит пусто (спека §5)
+_NO_EMPLOYEE = "\x00__unbound__"
+
+
+async def employee_scope(user: UserCtx = Depends(require_viewer)) -> str | None:
+    """None — без фильтра (admin/viewer); строка — only-own (manager)."""
+    if user.role == "manager":
+        return user.employee_name or _NO_EMPLOYEE
+    return None
+
+
+async def require_session_access(
+    session_id: uuid.UUID,
+    user: UserCtx = Depends(require_viewer),
+) -> UserCtx:
+    """Для файловых GET (transcript/analysis/audio/...): manager — только своё.
+
+    Грузит сессию из БД ТОЛЬКО для роли manager (admin/viewer — ноль
+    лишних запросов). Чужая/несуществующая → 404 (не раскрываем).
+    """
+    if user.role != "manager":
+        return user
+    from .database import async_session
+    from .models import Session as SessionModel
+
+    async with async_session() as db:
+        row = await db.get(SessionModel, session_id)
+    emp = (row.metadata_ or {}).get("employee") if row else None
+    if row is None or emp != (user.employee_name or _NO_EMPLOYEE):
+        raise HTTPException(status_code=404, detail="Not found")
     return user
 
 
