@@ -151,7 +151,7 @@ cd /root/projects/meet-mt && git add backend/alembic_shared backend/alembic && g
 - Modify: `backend/app/routes/tenancy_check.py` (использовать singleton)
 - Test: `backend/tests/test_tenant_middleware.py` (дополнить)
 
-- [ ] **Step 1: тесты** — в `test_tenant_middleware.py` добавить (следуя стилю существующего `_app()`-хелпера файла):
+- [x] **Step 1: тесты** — в `test_tenant_middleware.py` добавить (следуя стилю существующего `_app()`-хелпера файла):
 
 ```python
 def test_suspended_tenant_host_returns_403():
@@ -173,11 +173,11 @@ def test_registry_invalidate_drops_cache():
 ```
 (адаптировать к фактическим хелперам файла; если `_client_for` нет — собрать client как в conftest, с monkeypatch `all_tenants`.)
 
-- [ ] **Step 2: прогон** — `../.venv/bin/python -m pytest tests/test_tenant_middleware.py -q` → новые FAIL (suspended сейчас 404).
+- [x] **Step 2: прогон** — `../.venv/bin/python -m pytest tests/test_tenant_middleware.py -q` → новые FAIL (suspended сейчас 404).
 
 ВНИМАНИЕ (ревью): существующий `test_suspended_tenant_404` в этом файле ждёт 404 — переписать его на 403 `tenant_suspended` (и переименовать в `test_suspended_tenant_403`) в этом же шаге.
 
-- [ ] **Step 3: имплементация** в `tenancy_http.py`:
+- [x] **Step 3: имплементация** в `tenancy_http.py`:
 
 ```python
 # в TenantRegistry:
@@ -208,9 +208,9 @@ registry = TenantRegistry()
 
 ВАЖНО: docstring модуля «Unknown slug / suspended tenant → 404» поправить на новое поведение.
 
-- [ ] **Step 4: прогон** — весь файл PASS + `pytest tests/ -q` (никого не сломали; в `test_domain_check.py` suspended-тенант и так ждёт 404 от domain-check — это другой слой, должен остаться зелёным).
+- [x] **Step 4: прогон** — весь файл PASS + `pytest tests/ -q` (никого не сломали; в `test_domain_check.py` suspended-тенант и так ждёт 404 от domain-check — это другой слой, должен остаться зелёным).
 
-- [ ] **Step 5: commit** — `feat(tenancy): suspended-тенант отвечает 403, реестр-синглтон с invalidate()`
+- [x] **Step 5: commit** — `feat(tenancy): suspended-тенант отвечает 403, реестр-синглтон с invalidate()`
 
 ---
 
