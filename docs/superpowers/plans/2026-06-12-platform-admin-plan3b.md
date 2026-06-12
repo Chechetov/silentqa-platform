@@ -2026,7 +2026,7 @@ async def reset_password(user_id: str, db: AsyncSession = Depends(get_db),
 - Modify: `backend/app/routes/user_auth.py`
 - Test: `backend/tests/test_change_password.py` (создать)
 
-- [ ] **Step 1: тест**:
+- [x] **Step 1: тест**:
 
 ```python
 import asyncio
@@ -2099,9 +2099,9 @@ def test_change_password_kills_other_sessions(client, fake_redis, pw_store):
     assert client.get("/api/user-auth/me", cookies=other).status_code == 401
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация** (в `user_auth.py`):
+- [x] **Step 3: имплементация** (в `user_auth.py`):
 
 ```python
 class ChangePasswordRequest(BaseModel):
@@ -2138,8 +2138,8 @@ async def change_password(body: ChangePasswordRequest, request: Request,
 ```
 Импорт `require_viewer` добавить из `..auth_user`.
 
-- [ ] **Step 4: прогон** → PASS.
-- [ ] **Step 5: commit** — `feat(team): смена своего пароля с инвалидацией остальных сессий`
+- [x] **Step 4: прогон** → PASS.
+- [x] **Step 5: commit** — `feat(team): смена своего пароля с инвалидацией остальных сессий`
 
 ---
 
