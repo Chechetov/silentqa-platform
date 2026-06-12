@@ -128,3 +128,20 @@ set +a; ../.venv/bin/python -m app.provision_tenant <slug> --name "<Имя>"
 DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
 `A @ → 89.207.255.231`, обе DNS-only (серая тучка). Без них публичный
 доступ/сертификаты не работают (relay - passthrough, на нём ничего не надо).
+
+### Деплой Plan 3b (админка + команда + роль manager)
+
+1. `cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1`
+2. `systemctl restart silentqa-backend silentqa-worker` — S003+013 накатятся
+   на старте (journalctl: "[migrate] done").
+3. Бутстрап владельца:
+   `cd backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.platform_admin create --email alex.chechetov@gmail.com`
+   — пароль печатается один раз. (provision_tenant теперь тоже печатает
+   сгенерированный пароль админа клиента — изменение вывода CLI.)
+4. Из `.env` удалить `AUTH_USERNAME`, `AUTH_PASSWORD` (Basic выпилен) и
+   рестартнуть backend ещё раз.
+5. Проверить Redis ≥ 6.2 (`redis-cli INFO server | grep redis_version`) —
+   impersonation использует GETDEL.
+6. Смоук: https://admin.silentqa.com → логин → список клиентов со
+   статистикой; impersonate в fulldent (бейдж «режим поддержки»);
+   suspend/activate тестом НЕ на живом клиенте; «Команда» у fulldent.

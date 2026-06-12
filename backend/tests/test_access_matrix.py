@@ -30,6 +30,20 @@ def client(monkeypatch, fake_redis):
     return TestClient(app, base_url="https://realestate.silentqa.com")
 
 
+@pytest.fixture
+def platform_client(monkeypatch, fake_redis):
+    """TestClient на платформенном хосте admin.silentqa.com."""
+    from app.tenancy_http import TenantRegistry
+
+    async def fake_all(self):
+        return ROWS
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app  # noqa: WPS433 — import после патча безопасен
+
+    return TestClient(app, base_url="https://admin.silentqa.com")
+
+
 def _viewer_cookie(fake_redis) -> dict:
     from tenancy.context import reset_tenant_schema, set_tenant_schema
     from app import auth_sessions
@@ -44,6 +58,40 @@ def _viewer_cookie(fake_redis) -> dict:
     sid = asyncio.run(seed())  # инвариант 13
     return {SESSION_COOKIE: sid}
 
+
+def _manager_cookie(fake_redis) -> dict:
+    """Создаёт manager-сессию под t_realestate."""
+    from tenancy.context import reset_tenant_schema, set_tenant_schema
+    from app import auth_sessions
+
+    async def seed():
+        token = set_tenant_schema("t_realestate")
+        try:
+            return await auth_sessions.create_session("u2", "m@t.io", "manager")
+        finally:
+            reset_tenant_schema(token)
+
+    sid = asyncio.run(seed())  # инвариант 13
+    return {SESSION_COOKIE: sid}
+
+
+PLATFORM_MUTATIONS = [
+    ("get", "/api/platform/tenants"),
+    ("post", "/api/platform/tenants"),
+    ("patch", "/api/platform/tenants/acme"),
+    ("post", "/api/platform/tenants/acme/rotate-key"),
+    ("get", "/api/platform/tenants/acme/users"),
+    ("post", "/api/platform/tenants/acme/impersonate"),
+    ("get", "/api/companies"),
+]
+
+TEAM_ADMIN_ONLY = [
+    ("get", "/api/users"),
+    ("post", "/api/users"),
+    ("patch", "/api/users/00000000-0000-0000-0000-000000000001"),
+    ("delete", "/api/users/00000000-0000-0000-0000-000000000001"),
+    ("post", "/api/users/00000000-0000-0000-0000-000000000001/reset-password"),
+]
 
 VIEWER_GETS = [
     "/api/sessions",
@@ -138,6 +186,49 @@ def test_recorder_route_removed(client):
     r = client.get("/recorder")
     assert r.status_code in (404, 200)  # 404 или index.html от SPA-fallback
     # главное: это больше не FileResponse несуществующего файла (раньше — 500)
+
+
+@pytest.mark.parametrize("method,path", PLATFORM_MUTATIONS)
+def test_platform_mutations_401_without_platform_session(platform_client, method, path):
+    """Платформенные мутации на admin-хосте без cookie → 401 platform_auth_required."""
+    r = getattr(platform_client, method)(path)
+    assert r.status_code == 401, (method, path)
+    assert r.json()["detail"] == "platform_auth_required"
+
+
+@pytest.mark.parametrize("method,path", PLATFORM_MUTATIONS)
+def test_platform_paths_404_on_tenant_host(client, method, path):
+    """Платформенные пути на тенант-хосте → 404 (контур-гейт, спека §1)."""
+    r = getattr(client, method)(path)
+    assert r.status_code == 404, (method, path)
+    assert r.json()["detail"] == "Not found"
+
+
+@pytest.mark.parametrize("method,path", TEAM_ADMIN_ONLY)
+def test_team_admin_only_403_for_viewer(client, fake_redis, method, path):
+    """Команда /api/users: viewer → 403 admin_required."""
+    cookies = _viewer_cookie(fake_redis)
+    r = getattr(client, method)(path, cookies=cookies)
+    assert r.status_code == 403, (method, path)
+    assert r.json()["detail"] == "admin_required", (method, path)
+
+
+@pytest.mark.parametrize("method,path", TEAM_ADMIN_ONLY)
+def test_team_admin_only_403_for_manager(client, fake_redis, method, path):
+    """Команда /api/users: manager → 403 admin_required."""
+    cookies = _manager_cookie(fake_redis)
+    r = getattr(client, method)(path, cookies=cookies)
+    assert r.status_code == 403, (method, path)
+    assert r.json()["detail"] == "admin_required", (method, path)
+
+
+def test_change_password_401_for_anonymous(client):
+    """/api/user-auth/change-password без cookie (аноним) → 401."""
+    r = client.post("/api/user-auth/change-password", json={
+        "old_password": "x", "new_password": "y"
+    })
+    assert r.status_code == 401, r.status_code
+    assert r.json()["detail"] == "auth_required"
 
 
 def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
