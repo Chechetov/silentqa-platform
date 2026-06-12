@@ -2734,7 +2734,7 @@ async function renderProfile() {
 - Modify: `backend/tests/test_access_matrix.py`
 - Modify: `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`
 
-- [ ] **Step 1: расширить матрицу** в `test_access_matrix.py`:
+- [x] **Step 1: расширить матрицу** в `test_access_matrix.py`:
 
 ```python
 # Платформенные мутации: 401 без платформенной сессии (хост admin.)
@@ -2759,7 +2759,7 @@ TEAM_ADMIN_ONLY = [
 ```
 + параметризованные тесты: PLATFORM_MUTATIONS на `https://admin.silentqa.com` без cookie → 401 `platform_auth_required`; те же пути на тенант-хосте → 404 (контур-гейт); TEAM_ADMIN_ONLY с viewer-cookie → 403 и с manager-cookie → 403; `/api/user-auth/change-password` с viewer-cookie → НЕ 401/403 (403 у него только wrong_password — мокать не надо: без БД он 500? НЕТ — `_get_password_hash` пойдёт в БД. Для этого кейса достаточно анонима: POST change-password без cookie → 401).
 
-- [ ] **Step 2: полные прогоны**
+- [x] **Step 2: полные прогоны**
 
 ```bash
 cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/ -q
@@ -2767,7 +2767,7 @@ cd /root/projects/meet-mt/worker && set -a; source ../.env 2>/dev/null; set +a; 
 ```
 Expected: backend все PASS (81 старых + новые), worker 149 passed (не трогали — регресс-чек).
 
-- [ ] **Step 3: репетиция на скретч-БД** (как Task 15 Плана 1):
+- [x] **Step 3: репетиция на скретч-БД** (как Task 15 Плана 1):
 
 ```bash
 sudo -u postgres dropdb plan3b_scratch; sudo -u postgres createdb plan3b_scratch
@@ -2789,7 +2789,7 @@ sudo -u postgres psql plan3b_scratch -c "SELECT email FROM shared.platform_admin
 ```
 Expected: миграции зелёные, `employee_name` есть, role=manager вставляется, админ платформы посеян. Затем уронить негатив: `INSERT ... role='boss'` → ошибка CHECK (так и должно).
 
-- [ ] **Step 4: ранбук** — в `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`, в раздел «silentqa platform — задеплоено 2026-06-12» дописать подраздел:
+- [x] **Step 4: ранбук** — в `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`, в раздел «silentqa platform — задеплоено 2026-06-12» дописать подраздел:
 
 ```markdown
 ### Деплой Plan 3b (админка + команда + роль manager)
@@ -2810,7 +2810,7 @@ Expected: миграции зелёные, `employee_name` есть, role=manage
    suspend/activate тестом НЕ на живом клиенте; «Команда» у fulldent.
 ```
 
-- [ ] **Step 5: commit** — `test(matrix): платформенный контур и Команда в матрице доступа + ранбук Plan 3b`
+- [x] **Step 5: commit** — `test(matrix): платформенный контур и Команда в матрице доступа + ранбук Plan 3b`
 
 ---
 
