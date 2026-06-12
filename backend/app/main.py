@@ -7,6 +7,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → te
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 
 from app.config import settings
@@ -72,6 +73,16 @@ app.include_router(platform_auth.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+from tenancy.context import get_tenant_slug as _get_tenant_slug
+
+
+@app.get("/", include_in_schema=False)
+async def root_page():
+    # Платформенный контур (apex и admin.) — админ-SPA; тенант — дашборд
+    page = "admin.html" if _get_tenant_slug() is None else "index.html"
+    return FileResponse(f"static/{page}")
 
 
 # Static files — must be LAST (after all API routers) so it doesn't intercept API routes
