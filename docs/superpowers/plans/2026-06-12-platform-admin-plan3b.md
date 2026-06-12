@@ -984,7 +984,7 @@ def provision(slug: str, name: str, admin_email: str,
 - Modify: `backend/app/main.py` (включить роутер)
 - Test: `backend/tests/test_platform_tenants.py` (создать)
 
-- [ ] **Step 1: тест** (БД мокается через monkeypatch внутренних функций; права — без мока):
+- [x] **Step 1: тест** (БД мокается через monkeypatch внутренних функций; права — без мока):
 
 ```python
 import asyncio
@@ -1063,9 +1063,9 @@ def test_create_tenant_conflict_409(client, fake_redis, monkeypatch):
     assert r.status_code == 409
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация** `routes/platform_tenants.py`:
+- [x] **Step 3: имплементация** `routes/platform_tenants.py`:
 
 ```python
 """Управление клиентами платформы: /api/platform/tenants* (спека §3)."""
@@ -1172,8 +1172,8 @@ async def create_tenant(body: CreateTenantBody):
 
 ПРИМЕЧАНИЕ: `provision()` дёргает alembic — секунды; `anyio.to_thread.run_sync` не блокирует loop.
 
-- [ ] **Step 4: прогон** → PASS (+ суита).
-- [ ] **Step 5: commit** — `feat(platform): список клиентов со статистикой + создание клиента из админки`
+- [x] **Step 4: прогон** → PASS (+ суита).
+- [x] **Step 5: commit** — `feat(platform): список клиентов со статистикой + создание клиента из админки`
 
 ---
 
