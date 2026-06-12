@@ -175,6 +175,8 @@ def test_registry_invalidate_drops_cache():
 
 - [ ] **Step 2: прогон** — `../.venv/bin/python -m pytest tests/test_tenant_middleware.py -q` → новые FAIL (suspended сейчас 404).
 
+ВНИМАНИЕ (ревью): существующий `test_suspended_tenant_404` в этом файле ждёт 404 — переписать его на 403 `tenant_suspended` (и переименовать в `test_suspended_tenant_403`) в этом же шаге.
+
 - [ ] **Step 3: имплементация** в `tenancy_http.py`:
 
 ```python
@@ -1521,7 +1523,22 @@ def _admin_cookie(fake_redis):
     return {ps.PLATFORM_COOKIE: sid}
 
 
-def test_issue_token_and_exchange(client, fake_redis):
+@pytest.fixture
+def schema_mock(monkeypatch):
+    """Impersonate-хендлер зовёт _require_schema (SELECT shared.tenants) —
+    в юнит-окружении Postgres нет, мокаем как в test_platform_tenants."""
+    from app.routes import platform_tenants as pt
+
+    async def fake_require_schema(db, slug):
+        if slug != "acme":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=404, detail="tenant not found")
+        return "t_acme"
+
+    monkeypatch.setattr(pt, "_require_schema", fake_require_schema)
+
+
+def test_issue_token_and_exchange(client, fake_redis, schema_mock):
     r = client.post("/api/platform/tenants/acme/impersonate",
                     cookies=_admin_cookie(fake_redis),
                     headers={"Host": "admin.silentqa.com"})
@@ -1542,7 +1559,7 @@ def test_issue_token_and_exchange(client, fake_redis):
     assert me.json()["role"] == "admin"
 
 
-def test_token_single_use(client, fake_redis):
+def test_token_single_use(client, fake_redis, schema_mock):
     r = client.post("/api/platform/tenants/acme/impersonate",
                     cookies=_admin_cookie(fake_redis),
                     headers={"Host": "admin.silentqa.com"})
@@ -1676,7 +1693,9 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
 
 ПРОД-ЗАВИСИМОСТЬ: `getdel` требует Redis ≥ 6.2 — проверить на сервере при деплое (`redis-cli INFO server | grep redis_version`); сервер на Ubuntu 24.04 → Redis 7.x, ок.
 
-- [ ] **Step 5: прогон** — файл PASS + суита (test_user_auth_routes мог сверять /me точным dict — обновить ожидания на новые поля).
+- [ ] **Step 5: прогон** — файл PASS + суита. Известные жертвы расширения payload (ревью):
+  - `tests/test_auth_sessions.py::test_create_load_destroy_roundtrip` сверяет ТОЧНЫЙ dict — добавить в ожидаемый `"employee_name": None, "impersonated_by": None`;
+  - `tests/test_user_auth_routes.py` — если /me сверяется точным dict, добавить новые поля в ожидания.
 - [ ] **Step 6: commit** — `feat(platform): impersonation одноразовым токеном + поля сессии`
 
 ---
@@ -1779,21 +1798,26 @@ def test_cannot_demote_self(client, fake_redis):
     assert r.json()["detail"] == "cannot_demote_self"
 
 
+# Жертва — валидный UUID: self-guards сравнивают строки, а uuid-валидация
+# (см. Step 4) идёт ПОСЛЕ guards и ДО БД
+VICTIM = "00000000-0000-0000-0000-000000000002"
+
+
 def test_cannot_remove_last_admin(client, fake_redis, monkeypatch):
     from app.routes import users as users_mod
 
     async def fake_get_user(db, user_id):
-        return {"id": "u2", "email": "b@x.io", "role": "admin"}
+        return {"id": VICTIM, "email": "b@x.io", "role": "admin"}
 
     async def fake_count_other_admins(db, user_id):
         return 0  # других админов нет
 
     monkeypatch.setattr(users_mod, "_get_user", fake_get_user)
     monkeypatch.setattr(users_mod, "_count_other_admins", fake_count_other_admins)
-    r = client.delete("/api/users/u2", cookies=_cookie(fake_redis, user_id="u1"))
+    r = client.delete(f"/api/users/{VICTIM}", cookies=_cookie(fake_redis, user_id="u1"))
     assert r.status_code == 403
     assert r.json()["detail"] == "last_admin"
-    r = client.patch("/api/users/u2", cookies=_cookie(fake_redis, user_id="u1"),
+    r = client.patch(f"/api/users/{VICTIM}", cookies=_cookie(fake_redis, user_id="u1"),
                      json={"role": "viewer"})
     assert r.status_code == 403
 
@@ -1802,18 +1826,23 @@ def test_delete_kills_user_sessions(client, fake_redis, monkeypatch):
     from app.routes import users as users_mod
 
     async def fake_get_user(db, user_id):
-        return {"id": "u2", "email": "b@x.io", "role": "viewer"}
+        return {"id": VICTIM, "email": "b@x.io", "role": "viewer"}
 
     async def fake_delete(db, user_id):
         return True
 
     monkeypatch.setattr(users_mod, "_get_user", fake_get_user)
     monkeypatch.setattr(users_mod, "_delete_user", fake_delete)
-    victim = _cookie(fake_redis, role="viewer", user_id="u2", email="b@x.io")
-    r = client.delete("/api/users/u2", cookies=_cookie(fake_redis, user_id="u1"))
+    victim = _cookie(fake_redis, role="viewer", user_id=VICTIM, email="b@x.io")
+    r = client.delete(f"/api/users/{VICTIM}", cookies=_cookie(fake_redis, user_id="u1"))
     assert r.status_code == 204
     me = client.get("/api/user-auth/me", cookies=victim)
     assert me.status_code == 401  # сессии жертвы убиты
+
+
+def test_garbage_user_id_404_not_500(client, fake_redis):
+    r = client.delete("/api/users/not-a-uuid", cookies=_cookie(fake_redis, user_id="u1"))
+    assert r.status_code == 404
 ```
 
 - [ ] **Step 3: прогон** → FAIL.
@@ -1976,14 +2005,15 @@ async def reset_password(user_id: str, db: AsyncSession = Depends(get_db),
     return {"password": password}
 ```
 В `main.py`: импорт + `app.include_router(users.router)`.
-ВНИМАНИЕ: имя модуля `users` не конфликтует с существующим? `routes/` его не содержит — ок. `user_id` в path как `str` (не uuid.UUID) — guards сравнивают с `me.user_id` (строка из сессии); SQL сравнение строк с UUID-колонкой Postgres приводит сам, но в тестах БД замокана; для невалидного UUID SQL бросит — это 500: допустимо? НЕТ — добавить в начало хендлеров:
+
+`user_id` в path — `str` (не `uuid.UUID`): self-guards сравнивают со строковым `me.user_id` из сессии. Чтобы мусорный id не давал 500 на UUID-колонке, в `patch_user`/`delete_user`/`reset_password` СТРОГО в таком порядке: (1) self-guards (`cannot_delete_self`/`cannot_demote_self` — работают на любых строках), затем (2) uuid-валидация:
 ```python
     try:
         uuid.UUID(user_id)
     except ValueError:
         raise HTTPException(status_code=404, detail="user not found")
 ```
-(в patch/delete/reset — после self-guards, чтобы guards тестировались со строковыми id в тестах… НЕТ: тогда невалидные id с self-совпадением дадут 403 — приемлемо и проще; порядок: self-guard → uuid-валидация → БД.)
+затем (3) обращения к БД (last_admin-проверка и мутация). Тесты используют UUID-жертву `VICTIM` — guards и last_admin тестируются ДО и ПОСЛЕ uuid-валидации соответственно (`test_garbage_user_id_404_not_500` фиксирует порядок).
 
 - [ ] **Step 5: прогон** → PASS (+ суита).
 - [ ] **Step 6: commit** — `feat(team): /api/users с guards самовыпила и инвалидацией сессий`
@@ -2132,6 +2162,8 @@ async def change_password(body: ChangePasswordRequest, request: Request,
 ```
 и `create_session(str(row.id), row.email, row.role, employee_name=row.employee_name)`; в ответе логина добавить `"employee_name": row.employee_name`.
 
+Жертвы (ревью) — поправить в этом же шаге `tests/test_user_auth_routes.py`: стаб `_Row` не имеет атрибута `employee_name` (будет AttributeError → 500) — добавить `self.employee_name = None`; ожидания точных dict (ответ логина, /me) расширить новыми полями.
+
 - [ ] **Step 2: зависимости** в `auth_user.py`:
 
 ```python
@@ -2216,16 +2248,17 @@ def test_manager_foreign_stats_403(client, fake_redis):
     assert r.status_code == 403
 
 
-def test_manager_own_name_allowed_404_without_db_data(client, fake_redis, monkeypatch):
-    """Своё имя проходит scope-гейт (дальше — обычные 404 от пустой БД)."""
+def test_manager_own_name_passes_scope_gate(client, fake_redis, monkeypatch):
+    """Своё имя НЕ отбивается 403 (дальше штатный 404 — звонков нет)."""
     from app.routes import managers as managers_mod
 
-    async def fake_sessions_for(db, name, scope):
+    async def fake_all_sessions(db):
         return []
 
-    # если такого хелпера нет — см. Step 4: scoping реализуется в роуте
-    # и тест мокает db-слой аналогично другим файлам
-    ...
+    monkeypatch.setattr(managers_mod, "_all_sessions", fake_all_sessions)
+    r = client.get("/api/managers/Иванов/sessions",
+                   cookies=_cookie(fake_redis, employee="Иванов"))
+    assert r.status_code == 404  # не 403: scope пройден, данных нет
 
 
 def test_manager_unbound_sees_empty(client, fake_redis, monkeypatch):
@@ -2577,7 +2610,7 @@ if (currentUser.impersonated_by && !banner) {
 }
 ```
 
-2. Роутинг: найти hash-роутер (обработчик `#call/<id>` и навигации) и добавить ветки `#team` → `renderTeam()`, `#profile` → `renderProfile()`.
+2. Роутинг: найти hash-роутер (обработчик `#call/<id>` и навигации) и добавить ветки `#team` → `renderTeam()`, `#profile` → `renderProfile()`. Ветку `#team` гейтить как существующую `#template`-ветку (не-админа редиректить на главную, не полагаясь только на серверный 403).
 
 3. Рендеры (стиль и классы — как соседние секции app.js; `api()` и `showToast` — существующие):
 
@@ -2766,7 +2799,8 @@ Expected: миграции зелёные, `employee_name` есть, role=manage
    на старте (journalctl: "[migrate] done").
 3. Бутстрап владельца:
    `cd backend && set -a; source ../.env; set +a; ../.venv/bin/python -m app.platform_admin create --email alex.chechetov@gmail.com`
-   — пароль печатается один раз.
+   — пароль печатается один раз. (provision_tenant теперь тоже печатает
+   сгенерированный пароль админа клиента — изменение вывода CLI.)
 4. Из `.env` удалить `AUTH_USERNAME`, `AUTH_PASSWORD` (Basic выпилен) и
    рестартнуть backend ещё раз.
 5. Проверить Redis ≥ 6.2 (`redis-cli INFO server | grep redis_version`) —
