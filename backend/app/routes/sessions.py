@@ -10,6 +10,9 @@ from pydantic import BaseModel
 from sqlalchemy import select, func, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tenancy.context import get_tenant_slug
+from tenancy.registry import AMOCRM_TENANT_SLUGS
+
 from app.auth_jwt import get_current_broker
 from app.auth_user import require_admin, require_ingestion_auth, require_viewer
 from app.config import settings
@@ -303,7 +306,10 @@ async def link_lead(
     # on the old lead in AmoCRM so the deal doesn't keep a stale
     # evaluation pointing back to a session that no longer references it.
     old_note_ids = [nid for nid in (meta.get("amo_note_id"), meta.get("plan_amo_note_id")) if nid]
-    if old_lead_id and old_note_ids:
+    # Note-cleanup дёргает AmoCRM realestate — гейтим членством тенанта
+    # (находка финального ревью Plan 2): чужой тенант не должен достучаться
+    # до CRM, даже подсунув lead_id/amo_note_id в metadata.
+    if old_lead_id and old_note_ids and get_tenant_slug() in AMOCRM_TENANT_SLUGS:
         try:
             import sys as _sys
             from pathlib import Path as _Path

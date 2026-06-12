@@ -287,11 +287,6 @@ def _get_session_created_at(session_id: str):
         return None
 
 
-def _get_company_id_from_session(session_id: str) -> str | None:
-    """Read company_id from session metadata in DB."""
-    return _get_session_metadata(session_id).get("company_id")
-
-
 def merge_chunks(session_id: str) -> str:
     """Склеивает WebM чанки в один WAV 16kHz mono (формат для Whisper).
 
