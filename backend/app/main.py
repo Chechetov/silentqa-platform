@@ -44,11 +44,11 @@ app.add_middleware(
 )
 
 # Tenant resolution — outermost: unknown hosts 404 before anything else runs
-from app.tenancy_http import TenantRegistry, TenantResolutionMiddleware
+from app.tenancy_http import registry, TenantResolutionMiddleware
 
 app.add_middleware(
     TenantResolutionMiddleware,
-    registry=TenantRegistry(),
+    registry=registry,
     base_domain=settings.BASE_DOMAIN,
     default_tenant=settings.DEFAULT_TENANT,
 )

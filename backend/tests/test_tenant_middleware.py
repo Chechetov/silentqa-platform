@@ -76,10 +76,20 @@ def test_unknown_subdomain_404():
     assert r.status_code == 404
 
 
-def test_suspended_tenant_404():
+def test_suspended_tenant_403():
     c = _app()
     r = c.get("/whoami", headers={"host": "frozen.silentqa.com"})
-    assert r.status_code == 404
+    assert r.status_code == 403
+    assert r.json()["detail"] == "tenant_suspended"
+
+
+def test_registry_invalidate_drops_cache():
+    from app.tenancy_http import TenantRegistry
+    reg = TenantRegistry(ttl_seconds=3600)
+    reg._rows = [{"slug": "x"}]
+    reg._loaded_at = 1e18  # «только что»
+    reg.invalidate()
+    assert reg._loaded_at == 0.0
 
 
 def test_apex_and_admin_are_platform():

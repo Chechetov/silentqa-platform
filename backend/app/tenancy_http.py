@@ -6,7 +6,7 @@ semantics are explicit. Resolution order (spec 3.2):
   2. <slug>.BASE_DOMAIN                  → tenant by slug
   3. apex / admin.BASE_DOMAIN            → platform (no tenant)
   4. anything else → DEFAULT_TENANT if set, else platform
-Unknown slug / suspended tenant → 404.
+Unknown slug → 404. Suspended tenant → 403 tenant_suspended.
 """
 from __future__ import annotations
 
@@ -52,6 +52,10 @@ class TenantRegistry:
             self._loaded_at = time.monotonic()
         return self._rows
 
+    def invalidate(self) -> None:
+        """Сбросить TTL-кэш (вызывается после мутаций shared.tenants)."""
+        self._loaded_at = 0.0
+
 
 class TenantResolutionMiddleware:
     def __init__(self, app, registry, base_domain: str, default_tenant: str = ""):
@@ -73,6 +77,9 @@ class TenantResolutionMiddleware:
         kind, row = await self._resolve(host)
         if kind == "notfound":
             resp = JSONResponse({"detail": "Unknown tenant"}, status_code=404)
+            return await resp(scope, receive, send)
+        if kind == "suspended":
+            resp = JSONResponse({"detail": "tenant_suspended"}, status_code=403)
             return await resp(scope, receive, send)
 
         scope.setdefault("state", {})["tenant"] = dict(row) if row else None
@@ -113,5 +120,10 @@ class TenantResolutionMiddleware:
     @staticmethod
     def _gate(row):
         if row["status"] != "active":
-            return "notfound", None
+            return "suspended", None
         return "tenant", row
+
+
+# Module-level singleton — main.py and tenancy_check.py import this instance;
+# platform admin routes call invalidate() after suspend/rotate/create.
+registry = TenantRegistry()

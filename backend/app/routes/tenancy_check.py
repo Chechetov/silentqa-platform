@@ -10,11 +10,9 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.config import settings
-from app.tenancy_http import TenantRegistry
+from app.tenancy_http import registry as _registry
 
 router = APIRouter(prefix="/api/tenancy", tags=["tenancy"])
-
-_registry = TenantRegistry()
 
 
 @router.get("/domain-check")
