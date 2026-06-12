@@ -12,7 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from app.config import settings
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
-    amocrm, templates, complexes, auth, user_auth,
+    amocrm, templates, complexes, auth, user_auth, tenancy_check,
 )
 
 
@@ -65,6 +65,7 @@ app.include_router(templates.router)
 app.include_router(complexes.router)
 app.include_router(auth.router)
 app.include_router(user_auth.router)
+app.include_router(tenancy_check.router)
 
 
 @app.get("/health")
