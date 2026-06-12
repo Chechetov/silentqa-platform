@@ -93,3 +93,49 @@ def test_provision_result_repr_hides_secrets():
     text = repr(r)
     assert "topsecret" not in text and "sqa_secret" not in text
     assert "acme" in text
+
+
+def test_patch_status_validates(client, fake_redis):
+    r = client.patch("/api/platform/tenants/acme", cookies=_admin_cookie(fake_redis),
+                     json={"status": "bogus"})
+    assert r.status_code == 422
+
+
+def test_patch_status_suspend(client, fake_redis, monkeypatch):
+    from app.routes import platform_tenants as pt
+    calls = {}
+
+    async def fake_set_status(db, slug, status):
+        calls["args"] = (slug, status)
+        return True  # тенант найден
+
+    monkeypatch.setattr(pt, "_set_status", fake_set_status)
+    r = client.patch("/api/platform/tenants/acme", cookies=_admin_cookie(fake_redis),
+                     json={"status": "suspended"})
+    assert r.status_code == 200
+    assert calls["args"] == ("acme", "suspended")
+
+
+def test_rotate_key_returns_new_key_once(client, fake_redis, monkeypatch):
+    from app.routes import platform_tenants as pt
+
+    async def fake_rotate(db, slug):
+        return "sqa_new"  # None — тенант не найден
+
+    monkeypatch.setattr(pt, "_rotate_key", fake_rotate)
+    r = client.post("/api/platform/tenants/acme/rotate-key",
+                    cookies=_admin_cookie(fake_redis))
+    assert r.status_code == 200
+    assert r.json()["api_key"] == "sqa_new"
+
+
+def test_unknown_tenant_404(client, fake_redis, monkeypatch):
+    from app.routes import platform_tenants as pt
+
+    async def fake_set_status(db, slug, status):
+        return False
+
+    monkeypatch.setattr(pt, "_set_status", fake_set_status)
+    r = client.patch("/api/platform/tenants/ghost", cookies=_admin_cookie(fake_redis),
+                     json={"status": "active"})
+    assert r.status_code == 404

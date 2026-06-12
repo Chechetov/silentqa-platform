@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as dt
 import logging
+from typing import Literal
 
 import anyio
 from fastapi import APIRouter, Depends, HTTPException
@@ -14,7 +15,7 @@ from tenancy.identifiers import SCHEMA_RE
 
 from ..auth_platform import require_platform_admin
 from ..database import get_db
-from ..provision_tenant import ProvisionError, provision
+from ..provision_tenant import ProvisionError, generate_api_key, provision
 from ..tenancy_http import registry
 
 logger = logging.getLogger(__name__)
@@ -96,3 +97,44 @@ async def create_tenant(body: CreateTenantBody):
     # Секреты в ответе ОДИН раз — нигде больше не доступны
     return {"slug": res.slug, "admin_email": res.admin_email,
             "admin_password": res.admin_password, "api_key": res.api_key}
+
+
+class PatchTenantBody(BaseModel):
+    status: Literal["active", "suspended"]
+
+
+async def _set_status(db: AsyncSession, slug: str, status: str) -> bool:
+    res = await db.execute(text(
+        "UPDATE shared.tenants SET status = :status WHERE slug = :slug"),
+        {"status": status, "slug": slug})
+    await db.commit()
+    return res.rowcount > 0
+
+
+async def _rotate_key(db: AsyncSession, slug: str) -> str | None:
+    key, digest = generate_api_key()
+    res = await db.execute(text(
+        "UPDATE shared.tenants SET api_key_hash = :h WHERE slug = :slug"),
+        {"h": digest, "slug": slug})
+    await db.commit()
+    return key if res.rowcount > 0 else None
+
+
+@router.patch("/{slug}")
+async def patch_tenant(slug: str, body: PatchTenantBody,
+                       db: AsyncSession = Depends(get_db)):
+    if not await _set_status(db, slug, body.status):
+        raise HTTPException(status_code=404, detail="tenant not found")
+    registry.invalidate()
+    logger.info("tenant %s status -> %s", slug, body.status)
+    return {"slug": slug, "status": body.status}
+
+
+@router.post("/{slug}/rotate-key")
+async def rotate_key(slug: str, db: AsyncSession = Depends(get_db)):
+    key = await _rotate_key(db, slug)
+    if key is None:
+        raise HTTPException(status_code=404, detail="tenant not found")
+    registry.invalidate()
+    logger.info("tenant %s api key rotated", slug)
+    return {"slug": slug, "api_key": key}
