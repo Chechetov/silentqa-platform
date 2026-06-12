@@ -40,6 +40,11 @@ class ProvisionResult:
     admin_password: str
     api_key: str
 
+    def __repr__(self) -> str:
+        return (f"ProvisionResult(slug={self.slug!r}, schema={self.schema!r}, "
+                f"admin_email={self.admin_email!r}, admin_password='***', "
+                f"api_key='***')")
+
 
 def generate_api_key() -> tuple[str, str]:
     key = f"sqa_{secrets.token_urlsafe(32)}"
