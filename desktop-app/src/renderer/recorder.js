@@ -19,6 +19,7 @@ let sessionId = null;
 let serverUrl = '';
 let authHeader = '';
 let brokerToken = '';
+let apiKey = '';
 let chunksUploaded = 0;
 let nextChunkNumber = 0;
 let pendingChunks = 0;
@@ -62,6 +63,7 @@ const MIC_CONSTRAINTS = {
 function buildHeaders(extra = {}, auth = authHeader) {
   const h = { Authorization: auth };
   if (brokerToken) h['X-Broker-Token'] = brokerToken;
+  if (apiKey) h['X-API-Key'] = apiKey;
   return Object.assign(h, extra);
 }
 
@@ -665,5 +667,6 @@ window.Recorder = {
   isRecording,
   recoverPendingChunks,
   setBrokerToken: (token) => { brokerToken = token || ''; },
+  setApiKey: (key) => { apiKey = key || ''; },
 };
 })();

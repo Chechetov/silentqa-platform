@@ -22,6 +22,7 @@ const recorderScreen = document.getElementById('recorderScreen');
 const setupServerUrl = document.getElementById('setupServerUrl');
 const setupUsername = document.getElementById('setupUsername');
 const setupPassword = document.getElementById('setupPassword');
+const setupApiKey = document.getElementById('setupApiKey');
 const btnTestConnection = document.getElementById('btnTestConnection');
 const testConnectionResult = document.getElementById('testConnectionResult');
 const btnSaveSetup = document.getElementById('btnSaveSetup');
@@ -73,6 +74,7 @@ const settingsPanel = document.getElementById('settingsPanel');
 const inputServerUrl = document.getElementById('inputServerUrl');
 const inputUsername = document.getElementById('inputUsername');
 const inputPassword = document.getElementById('inputPassword');
+const inputApiKey = document.getElementById('inputApiKey');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
 const settingsSaved = document.getElementById('settingsSaved');
 
@@ -88,6 +90,7 @@ let currentError = null;
 let serverUrl = '';
 let username = '';
 let password = '';
+let apiKey = '';
 let brokerJwt = '';
 let brokerName = '';
 let brokerEmail = '';
@@ -154,9 +157,12 @@ function showRecorderScreen() {
     hide(brokerInfo);
   }
 
-  // Wire the recorder's broker token now that we have a valid JWT.
+  // Wire the recorder's broker token and API key now that we have a valid JWT.
   if (window.Recorder && typeof window.Recorder.setBrokerToken === 'function') {
     window.Recorder.setBrokerToken(brokerJwt);
+  }
+  if (window.Recorder && typeof window.Recorder.setApiKey === 'function') {
+    window.Recorder.setApiKey(apiKey);
   }
 
   // Recovery only kicks in once we're past auth — see init() comment.
@@ -227,6 +233,7 @@ btnSaveSetup.addEventListener('click', async () => {
     serverUrl = setupServerUrl.value.replace(/\/+$/, '');
     username = setupUsername.value;
     password = setupPassword.value;
+    apiKey = setupApiKey.value;
 
     await persistCredentials();
 
@@ -234,6 +241,7 @@ btnSaveSetup.addEventListener('click', async () => {
     inputServerUrl.value = serverUrl;
     inputUsername.value = username;
     inputPassword.value = password;
+    if (inputApiKey) inputApiKey.value = apiKey;
 
     // Server is reachable, but the broker still needs to log in / activate.
     showLoginScreen();
@@ -251,6 +259,7 @@ async function persistCredentials() {
     serverUrl,
     username,
     password,
+    apiKey,
     brokerJwt,
     brokerName,
     brokerEmail,
@@ -704,6 +713,7 @@ btnSaveSettings.addEventListener('click', async () => {
   serverUrl = inputServerUrl.value.replace(/\/+$/, '');
   username = inputUsername.value;
   password = inputPassword.value;
+  if (inputApiKey) apiKey = inputApiKey.value;
 
   await persistCredentials();
 
@@ -735,12 +745,15 @@ async function init() {
   serverUrl = creds.serverUrl || '';
   username = creds.username || '';
   password = creds.password || '';
+  apiKey = creds.apiKey || '';
   brokerJwt = creds.brokerJwt || '';
   brokerName = creds.brokerName || '';
   brokerEmail = creds.brokerEmail || '';
   inputServerUrl.value = serverUrl;
   inputUsername.value = username;
   inputPassword.value = password;
+  if (inputApiKey) inputApiKey.value = apiKey;
+  if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
 
   if (!brokerJwt) {
     // Setup done, but no broker session — show login.
