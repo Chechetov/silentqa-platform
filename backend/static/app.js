@@ -66,6 +66,11 @@ async function router() {
     await renderComplexes();
   } else if (route.startsWith('complex/')) {
     await renderComplexDetail(route.split('/')[1]);
+  } else if (route === 'team') {
+    if (!isAdmin()) { navigate('#calls'); return; }
+    await renderTeam();
+  } else if (route === 'profile') {
+    await renderProfile();
   } else {
     app.innerHTML = '<div class="empty-state"><p>Страница не найдена</p></div>';
   }
@@ -81,6 +86,17 @@ window.addEventListener('load', () => {
 async function bootAuth() {
   try {
     currentUser = await api('/api/user-auth/me');
+    document.querySelectorAll('[data-admin-only]').forEach(el => {
+      el.style.display = isAdmin() ? '' : 'none';
+    });
+    const banner = document.getElementById('support-banner');
+    if (currentUser.impersonated_by && !banner) {
+      const b = document.createElement('div');
+      b.id = 'support-banner';
+      b.textContent = `Режим поддержки: ${currentUser.impersonated_by}`;
+      b.style.cssText = 'background:#ff8f00;color:#fff;text-align:center;padding:4px;';
+      document.body.prepend(b);
+    }
     return true;
   } catch (e) {
     return false;
@@ -2601,4 +2617,122 @@ async function deleteComplex(id, name) {
   } catch (err) {
     showToast('Ошибка: ' + err.message, 'error');
   }
+}
+
+// ============================================
+// PAGE: Team (admin only)
+// ============================================
+async function renderTeam() {
+  showLoading();
+  const appEl = document.getElementById('app');
+  let users;
+  try {
+    users = await api('/api/users');
+  } catch (err) {
+    appEl.innerHTML = `<div class="empty-state"><p>Ошибка загрузки: ${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+  let knownNames = [];
+  try { knownNames = (await api('/api/managers')).map(m => m.name); } catch (e) {}
+  const options = knownNames.map(n => `<option value="${escapeHtml(n)}">`).join('');
+  appEl.innerHTML = `
+    <h2>Команда</h2>
+    <datalist id="known-employees">${options}</datalist>
+    <table>
+      <tr><th>Email</th><th>Роль</th><th>Сотрудник (из рекордера)</th><th></th></tr>
+      ${users.map(u => `
+        <tr>
+          <td>${escapeHtml(u.email)}</td>
+          <td>
+            <select data-role-for="${u.id}">
+              ${['admin','viewer','manager'].map(r =>
+                `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
+            </select>
+          </td>
+          <td><input list="known-employees" data-emp-for="${u.id}"
+                     value="${escapeHtml(u.employee_name||'')}" placeholder="—"></td>
+          <td>
+            <button data-save="${u.id}">Сохранить</button>
+            <button data-reset="${u.id}">Сбросить пароль</button>
+            <button data-del="${u.id}">Удалить</button>
+          </td>
+        </tr>`).join('')}
+    </table>
+    <h3>Добавить юзера</h3>
+    <form id="team-add">
+      <input type="email" id="team-email" placeholder="Email" required>
+      <select id="team-role">
+        <option value="viewer">viewer</option>
+        <option value="admin">admin</option>
+        <option value="manager">manager</option>
+      </select>
+      <input list="known-employees" id="team-emp" placeholder="Сотрудник (для manager)">
+      <button type="submit">Создать</button>
+    </form>
+    <div id="team-secret"></div>`;
+  appEl.querySelector('#team-add').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { email: appEl.querySelector('#team-email').value,
+                   role: appEl.querySelector('#team-role').value };
+    const emp = appEl.querySelector('#team-emp').value.trim();
+    if (emp) body.employee_name = emp;
+    try {
+      const r = await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+      const newEmail = r.email, newPwd = r.password;
+      await renderTeam();
+      document.getElementById('app').querySelector('#team-secret').innerHTML =
+        `Пароль для ${escapeHtml(newEmail)} (покажем один раз): <code>${escapeHtml(newPwd)}</code>`;
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-save]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.save;
+    try {
+      await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({
+        role: appEl.querySelector(`[data-role-for="${id}"]`).value,
+        employee_name: appEl.querySelector(`[data-emp-for="${id}"]`).value.trim(),
+      })});
+      showToast('Сохранено');
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-reset]').forEach(b => b.onclick = async () => {
+    try {
+      const r = await api(`/api/users/${b.dataset.reset}/reset-password`, { method: 'POST' });
+      appEl.querySelector('#team-secret').innerHTML =
+        `Новый пароль (покажем один раз): <code>${escapeHtml(r.password)}</code>`;
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Удалить юзера?')) return;
+    try { await api(`/api/users/${b.dataset.del}`, { method: 'DELETE' }); await renderTeam(); }
+    catch (e) { showToast(e.message, 'error'); }
+  });
+}
+
+// ============================================
+// PAGE: Profile (all roles)
+// ============================================
+async function renderProfile() {
+  const appEl = document.getElementById('app');
+  appEl.innerHTML = `
+    <h2>Профиль</h2>
+    <div>${escapeHtml(currentUser.email)} (${escapeHtml(currentUser.role)})</div>
+    <h3>Сменить пароль</h3>
+    <form id="pw-form">
+      <input type="password" id="pw-old" placeholder="Текущий пароль" required>
+      <input type="password" id="pw-new" placeholder="Новый пароль (мин. 8)" required minlength="8">
+      <button type="submit">Сменить</button>
+    </form>`;
+  appEl.querySelector('#pw-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      await api('/api/user-auth/change-password', { method: 'POST', body: JSON.stringify({
+        old_password: appEl.querySelector('#pw-old').value,
+        new_password: appEl.querySelector('#pw-new').value,
+      })});
+      showToast('Пароль изменён; остальные сессии разлогинены');
+      ev.target.reset();
+    } catch (e) {
+      showToast(e.message === 'wrong_password' ? 'Неверный текущий пароль' : e.message, 'error');
+    }
+  });
 }
