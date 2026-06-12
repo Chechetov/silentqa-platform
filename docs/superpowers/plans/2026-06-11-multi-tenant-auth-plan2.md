@@ -1,6 +1,6 @@
 # Multi-Tenant Auth (Phase 1 / Plan 2) — Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [x]`) syntax for tracking.
 
 **Goal:** Включить пер-тенант авторизацию: email+пароль логин с Redis-сессиями (`/api/user-auth/*`), роли admin/viewer, enforcement пер-тенант API-ключей с двойной авторизацией ingestion-эндпоинтов, tenant-claim в брокерских JWT с grace-окном, матрица доступа 5.6 (закрытие `/api/companies`, удаление `/api/webhooks`, server-owned `company_id`/`scenario_id`, гейт AmoCRM-push по тенанту), снятие Basic Auth и `DELETE_PASSWORD`, SPA-логин, `X-API-Key` в recorder-клиентах.
 
@@ -36,7 +36,7 @@
 - Modify: `backend/tests/conftest.py`
 - Test: `backend/tests/test_redis_client.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_redis_client.py`:
 
@@ -64,12 +64,12 @@ def test_get_redis_returns_client_with_decoded_responses():
     set_redis_for_tests(None)
 ```
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_redis_client.py -v`
 Expected: FAIL `ModuleNotFoundError: No module named 'app.redis_client'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `backend/app/redis_client.py`:
 
@@ -116,7 +116,7 @@ def set_redis_for_tests(client) -> None:
     BROKER_JWT_TENANT_GRACE_UNTIL: str = ""
 ```
 
-- [ ] **Step 4: Фикстура fake Redis в conftest + тестовый SECRET_KEY**
+- [x] **Step 4: Фикстура fake Redis в conftest + тестовый SECRET_KEY**
 
 В САМОЕ НАЧАЛО `backend/tests/conftest.py` (сразу после docstring, ДО sys.path-блока — инвариант 12) добавить:
 
@@ -170,12 +170,12 @@ def fake_redis():
     set_redis_for_tests(None)
 ```
 
-- [ ] **Step 5: Прогнать — зелёный**
+- [x] **Step 5: Прогнать — зелёный**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests -v`
 Expected: новые 2 теста PASS, остальные без регрессий.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/config.py backend/app/redis_client.py backend/tests/conftest.py backend/tests/test_redis_client.py
@@ -190,7 +190,7 @@ git commit -m "feat(auth): settings + lazy async redis client with test seam"
 - Create: `backend/app/auth_sessions.py`
 - Test: `backend/tests/test_auth_sessions.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_auth_sessions.py`:
 
@@ -264,12 +264,12 @@ def anyio_backend():
 
 (anyio 4.x в venv несёт собственный pytest-плагин — маркер работает без pytest-asyncio, проверено. Фоллбек, если что-то пойдёт не так: синхронные тесты с `asyncio.run(...)` — НЕ `get_event_loop` (инвариант 13).)
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_auth_sessions.py -v`
 Expected: FAIL `ModuleNotFoundError`/`ImportError` на `app.auth_sessions`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `backend/app/auth_sessions.py`:
 
@@ -344,12 +344,12 @@ async def register_login_attempt(ip: str, email: str) -> bool:
     )
 ```
 
-- [ ] **Step 4: Прогнать — зелёный**
+- [x] **Step 4: Прогнать — зелёный**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_auth_sessions.py -v`
 Expected: 3 passed (+ возможно anyio параметризация ×2 — это ок)
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/auth_sessions.py backend/tests/test_auth_sessions.py
@@ -364,7 +364,7 @@ git commit -m "feat(auth): tenant-namespaced redis sessions + login rate limit"
 - Modify: `backend/app/tenancy_http.py`
 - Modify: `backend/tests/test_tenant_middleware.py` (StubRegistry + новый тест)
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 В `backend/tests/test_tenant_middleware.py` НЕТ фикстуры `client` — тесты строятся через модульный хелпер `_app(default_tenant="")`, возвращающий TestClient. Правки:
 
@@ -400,12 +400,12 @@ def test_platform_contour_state_tenant_is_none():
     assert r.json()["api_key_required"] is None
 ```
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_tenant_middleware.py -v`
 Expected: новые тесты FAIL (state.tenant нет), старые PASS
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `backend/app/tenancy_http.py`:
 
@@ -425,12 +425,12 @@ Expected: новые тесты FAIL (state.tenant нет), старые PASS
         scope.setdefault("state", {})["tenant"] = dict(row) if row else None
 ```
 
-- [ ] **Step 4: Прогнать — зелёный**
+- [x] **Step 4: Прогнать — зелёный**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_tenant_middleware.py -v`
 Expected: все PASS
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/tenancy_http.py backend/tests/test_tenant_middleware.py
@@ -445,7 +445,7 @@ git commit -m "feat(tenancy): registry exposes api-key fields; tenant row in req
 - Create: `backend/app/auth_user.py`
 - Test: `backend/tests/test_auth_deps.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_auth_deps.py` — мини-приложение с теми же middleware-паттернами, что в `test_tenant_middleware.py`:
 
@@ -572,12 +572,12 @@ def test_stale_cookie_is_anonymous(fake_redis):
     assert c.get("/me", cookies={SESSION_COOKIE: "ghost"}).json()["user"] is None
 ```
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_auth_deps.py -v`
 Expected: FAIL `ModuleNotFoundError: app.auth_user`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `backend/app/auth_user.py`:
 
@@ -681,12 +681,12 @@ async def require_amocrm_tenant(
     return user
 ```
 
-- [ ] **Step 4: Прогнать — зелёный**
+- [x] **Step 4: Прогнать — зелёный**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_auth_deps.py -v`
 Expected: 5 passed
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/auth_user.py backend/tests/test_auth_deps.py
@@ -702,7 +702,7 @@ git commit -m "feat(auth): viewer/admin/dual-ingestion/amocrm dependencies"
 - Modify: `backend/app/main.py` (import + include_router)
 - Test: `backend/tests/test_user_auth_routes.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_user_auth_routes.py`. БД подменяется через `app.dependency_overrides[get_db]` на StubDB; argon2-хеш считается в тесте:
 
@@ -847,12 +847,12 @@ def _platform_app() -> FastAPI:
     return app
 ```
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_user_auth_routes.py -v`
 Expected: FAIL `ImportError: cannot import name 'user_auth'`
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 `backend/app/routes/user_auth.py`:
 
@@ -975,12 +975,12 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
 app.include_router(user_auth.router)
 ```
 
-- [ ] **Step 4: Прогнать — зелёный + полный suite**
+- [x] **Step 4: Прогнать — зелёный + полный suite**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests -v`
 Expected: новые 6 PASS, без регрессий.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/user_auth.py backend/app/main.py backend/tests/test_user_auth_routes.py
@@ -996,7 +996,7 @@ git commit -m "feat(auth): /api/user-auth login/logout/me with argon2 + rate lim
 - Modify: `backend/app/routes/auth.py` (2 сайта выпуска токена)
 - Test: `backend/tests/test_broker_jwt_tenant.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_broker_jwt_tenant.py`:
 
@@ -1075,12 +1075,12 @@ def test_legacy_token_rejected_for_other_tenant_even_in_grace(acme_ctx, monkeypa
         auth_jwt.check_tenant_claim({})
 ```
 
-- [ ] **Step 2: Прогнать — падает**
+- [x] **Step 2: Прогнать — падает**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_broker_jwt_tenant.py -v`
 Expected: FAIL (`create_token` не принимает tenant; `check_tenant_claim` нет)
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `backend/app/auth_jwt.py`:
 
@@ -1163,12 +1163,12 @@ def check_tenant_claim(payload: dict) -> None:
 
 (импортировать и `get_tenant_slug`).
 
-- [ ] **Step 4: Прогнать — зелёный + оба suite**
+- [x] **Step 4: Прогнать — зелёный + оба suite**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests -v`
 Expected: новые 6 PASS; существующие тесты без регрессий.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/auth_jwt.py backend/app/routes/auth.py backend/tests/test_broker_jwt_tenant.py
@@ -1201,7 +1201,7 @@ git commit -m "feat(auth): tenant claim in broker JWT with 30-day grace window"
 | `GET .../missing-chunks` | `require_ingestion_auth` |
 | `POST .../upload-audio` | `require_ingestion_auth` (дашборд-аплоад идёт по cookie-ветке) |
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_access_matrix.py` — против РЕАЛЬНОГО приложения, инварианты 1, 2, 12:
 
@@ -1329,12 +1329,12 @@ def test_health_open(client):
 
 Примечания: тест включает пути Tasks 8–9, 11–12 — на этом таске прогонять ТОЛЬКО подмножество sessions/chunks (`-k "sessions or chunks or ingestion"` не сработает из-за параметризации — поэтому: пока Tasks 8–12 не сделаны, остальные параметры будут падать; это ожидаемо — здесь и в Tasks 8–12 прогонять файл целиком и фиксировать в отчёте, какие параметры уже зелёные; ПОЛНОСТЬЮ зелёным файл обязан стать после Task 12).
 
-- [ ] **Step 2: Прогнать — соответствующие параметры падают**
+- [x] **Step 2: Прогнать — соответствующие параметры падают**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_access_matrix.py -v`
 Expected: sessions/chunks-параметры FAIL (сейчас эндпоинты открыты → не 401)
 
-- [ ] **Step 3: Реализация sessions.py**
+- [x] **Step 3: Реализация sessions.py**
 
 1. Импорт: `from ..auth_user import require_admin, require_ingestion_auth, require_viewer`
 2. Декораторы (functions: `list_sessions`, `create_session`, `get_session`, `delete_session`, `reprocess_session`, `link_lead`, `get_extraction`, `finish_session`, `update_speaker_map` — сверить имена по файлу):
@@ -1361,16 +1361,16 @@ Expected: sessions/chunks-параметры FAIL (сейчас эндпоинт
 
 3. Удалить из `delete_session`: параметр `x_delete_password`, вызов `_require_delete_password(...)` (строка ~181) и саму функцию `_require_delete_password` (строки ~162–168). Импорт `Header` убрать, если больше не используется.
 
-- [ ] **Step 4: Реализация chunks.py**
+- [x] **Step 4: Реализация chunks.py**
 
 Импорт `from ..auth_user import require_ingestion_auth`; на все три эндпоинта (`upload_chunk`, `missing_chunks`, `upload_audio_file`) добавить `dependencies=[Depends(require_ingestion_auth)]`.
 
-- [ ] **Step 5: Прогнать**
+- [x] **Step 5: Прогнать**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_access_matrix.py -v 2>&1 | tail -20`
 Expected: все sessions/chunks-параметры PASS (transcripts/analysis/managers/templates/complexes/amocrm — ещё FAIL, это план Tasks 8–12); `tests -k "not access_matrix"` — без регрессий.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/sessions.py backend/app/routes/chunks.py backend/tests/test_access_matrix.py
@@ -1386,17 +1386,17 @@ git commit -m "feat(auth): access matrix on sessions + chunks; drop X-Delete-Pas
 - Modify: `backend/app/routes/analysis.py` (4 GET → `require_viewer`; PATCH reassign-speaker → `require_admin`)
 - Modify: `backend/app/routes/managers.py` (2 GET → `require_viewer`)
 
-- [ ] **Step 1: Соответствующие параметры test_access_matrix уже красные** — прогнать и зафиксировать:
+- [x] **Step 1: Соответствующие параметры test_access_matrix уже красные** — прогнать и зафиксировать:
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests/test_access_matrix.py -v 2>&1 | grep -E "transcript|analysis|audio|sentiment|quality|full|managers|reassign"`
 
-- [ ] **Step 2: Реализация** — в каждый файл импорт нужных deps и `dependencies=[Depends(require_viewer)]` на GET-эндпоинты; `dependencies=[Depends(require_admin)]` на `PATCH /{session_id}/reassign-speaker`. ВНИМАНИЕ: transcripts.py и analysis.py не импортируют `Depends` — расширить их fastapi-импорт (`from fastapi import APIRouter, Depends, ...`).
+- [x] **Step 2: Реализация** — в каждый файл импорт нужных deps и `dependencies=[Depends(require_viewer)]` на GET-эндпоинты; `dependencies=[Depends(require_admin)]` на `PATCH /{session_id}/reassign-speaker`. ВНИМАНИЕ: transcripts.py и analysis.py не импортируют `Depends` — расширить их fastapi-импорт (`from fastapi import APIRouter, Depends, ...`).
 
-- [ ] **Step 3: Прогнать — эти параметры зелёные, полный suite без регрессий**
+- [x] **Step 3: Прогнать — эти параметры зелёные, полный suite без регрессий**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests -v 2>&1 | tail -5`
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/transcripts.py backend/app/routes/analysis.py backend/app/routes/managers.py
@@ -1412,17 +1412,17 @@ git commit -m "feat(auth): access matrix on transcripts/analysis/managers"
 - Modify: `backend/app/routes/complexes.py` (GET×2 → viewer; PATCH/DELETE/merge/relink → admin)
 - Modify: `backend/app/main.py` (удалить ветку X-Delete-Password из BasicAuthMiddleware)
 
-- [ ] **Step 1: Зафиксировать красные параметры** (как в Task 8). Сейчас POST/PATCH/DELETE на /api/templates|complexes|extractions отвечают 503/401 ИЗ MIDDLEWARE (ветка PROTECTED_PREFIXES перехватывает до роутинга) — не 403.
+- [x] **Step 1: Зафиксировать красные параметры** (как в Task 8). Сейчас POST/PATCH/DELETE на /api/templates|complexes|extractions отвечают 503/401 ИЗ MIDDLEWARE (ветка PROTECTED_PREFIXES перехватывает до роутинга) — не 403.
 
-- [ ] **Step 2: Реализация роутов** — добавить `dependencies=[...]` по матрице.
+- [x] **Step 2: Реализация роутов** — добавить `dependencies=[...]` по матрице.
 
-- [ ] **Step 3: Снять X-Delete-Password-ветку из middleware**
+- [x] **Step 3: Снять X-Delete-Password-ветку из middleware**
 
 В `backend/app/main.py` из `BasicAuthMiddleware.dispatch` удалить блок PROTECTED_PREFIXES/PROTECTED_METHODS/X-Delete-Password (строки ~29–50: константы и if-ветка) — роуты этих префиксов с этого коммита под `require_admin`, защита не опускается (инвариант 6). Остальной Basic-механизм для UI-роутов пока остаётся (до Task 15).
 
-- [ ] **Step 4: Прогнать** — параметры templates/complexes/extractions в test_access_matrix теперь зелёные (403 от require_admin); полный suite без регрессий.
+- [x] **Step 4: Прогнать** — параметры templates/complexes/extractions в test_access_matrix теперь зелёные (403 от require_admin); полный suite без регрессий.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/templates.py backend/app/routes/complexes.py backend/app/main.py
@@ -1438,7 +1438,7 @@ git commit -m "feat(auth): access matrix on templates/complexes; retire delete-p
 - Modify: `backend/app/routes/companies.py` (router-level dependency)
 - Test: `backend/tests/test_companies_platform.py`
 
-- [ ] **Step 1: Failing-тест**
+- [x] **Step 1: Failing-тест**
 
 `backend/tests/test_companies_platform.py`:
 
@@ -1504,9 +1504,9 @@ def test_companies_ok_on_platform_with_basic(clients):
     assert r.status_code == 200
 ```
 
-- [ ] **Step 2: Прогнать — падает** (сейчас companies открыт на тенант-контуре → не 404).
+- [x] **Step 2: Прогнать — падает** (сейчас companies открыт на тенант-контуре → не 404).
 
-- [ ] **Step 3: Реализация**
+- [x] **Step 3: Реализация**
 
 В `backend/app/auth_user.py` добавить (импортировать `base64`, `settings`):
 
@@ -1552,9 +1552,9 @@ router = APIRouter(prefix="/api/companies", tags=["companies"],
 
 (сохранить существующие prefix/tags как есть; `POST /api/companies` и прочие мутации тем самым тоже закрыты.)
 
-- [ ] **Step 4: Прогнать — зелёный; полный suite.**
+- [x] **Step 4: Прогнать — зелёный; полный suite.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/auth_user.py backend/app/routes/companies.py backend/tests/test_companies_platform.py
@@ -1572,7 +1572,7 @@ git commit -m "feat(auth): /api/companies platform-contour-only with interim bas
 
 Обоснование (спека 5.6 + инвентаризация): глобальный `webhooks.json` без auth и без тенант-скоупа; события никто не отправляет — ни worker, ни pipeline файл не читают. SPA `/api/webhooks` не вызывает.
 
-- [ ] **Step 1: Failing-тест** — в `test_access_matrix.py` добавить:
+- [x] **Step 1: Failing-тест** — в `test_access_matrix.py` добавить:
 
 ```python
 def test_webhooks_surface_removed(client):
@@ -1583,13 +1583,13 @@ def test_webhooks_surface_removed(client):
 
 (главное — не 200: поверхность недоступна.)
 
-- [ ] **Step 2: Прогнать — падает** (сейчас GET отдаёт 200).
+- [x] **Step 2: Прогнать — падает** (сейчас GET отдаёт 200).
 
-- [ ] **Step 3: Реализация** — `git rm backend/app/routes/webhooks.py`; в `main.py` убрать `webhooks` из импорта роутов и строку `app.include_router(webhooks.router)`.
+- [x] **Step 3: Реализация** — `git rm backend/app/routes/webhooks.py`; в `main.py` убрать `webhooks` из импорта роутов и строку `app.include_router(webhooks.router)`.
 
-- [ ] **Step 4: Прогнать — зелёный; полный suite.**
+- [x] **Step 4: Прогнать — зелёный; полный suite.**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add -A backend/app/routes backend/app/main.py backend/tests/test_access_matrix.py
@@ -1604,7 +1604,7 @@ git commit -m "feat(auth): remove dead unauthenticated /api/webhooks surface"
 - Modify: `backend/app/routes/amocrm.py`
 - Test: дополнение в `backend/tests/test_access_matrix.py`
 
-- [ ] **Step 1: Failing-тест** — в `test_access_matrix.py` добавить (admin-сессия для тенанта БЕЗ AmoCRM → 403; viewer уже покрыт в ADMIN_MUTATIONS):
+- [x] **Step 1: Failing-тест** — в `test_access_matrix.py` добавить (admin-сессия для тенанта БЕЗ AmoCRM → 403; viewer уже покрыт в ADMIN_MUTATIONS):
 
 ```python
 def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
@@ -1638,22 +1638,22 @@ def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
     assert r.json()["detail"] == "amocrm_not_enabled"
 ```
 
-- [ ] **Step 2: Прогнать — падает.**
+- [x] **Step 2: Прогнать — падает.**
 
-- [ ] **Step 2b: Вернуть amocrm-пути в матрицу** — в `test_access_matrix.py` в ADMIN_MUTATIONS добавить (теперь безопасно — гейт отработает до handler'а):
+- [x] **Step 2b: Вернуть amocrm-пути в матрицу** — в `test_access_matrix.py` в ADMIN_MUTATIONS добавить (теперь безопасно — гейт отработает до handler'а):
 
 ```python
     ("post", "/api/amocrm/reprocess"),
     ("get", "/api/amocrm/search-leads?q=ab"),
 ```
 
-- [ ] **Step 3: Реализация** — в `backend/app/routes/amocrm.py` импорт `from ..auth_user import require_amocrm_tenant`; обоим эндпоинтам (`reprocess`, `amocrm_search_leads`) добавить `dependencies=[Depends(require_amocrm_tenant)]`. ВНИМАНИЕ: добавить `Depends` в fastapi-импорт файла.
+- [x] **Step 3: Реализация** — в `backend/app/routes/amocrm.py` импорт `from ..auth_user import require_amocrm_tenant`; обоим эндпоинтам (`reprocess`, `amocrm_search_leads`) добавить `dependencies=[Depends(require_amocrm_tenant)]`. ВНИМАНИЕ: добавить `Depends` в fastapi-импорт файла.
 
-- [ ] **Step 4: Прогнать — ВЕСЬ `test_access_matrix.py` теперь зелёный целиком + полный suite.**
+- [x] **Step 4: Прогнать — ВЕСЬ `test_access_matrix.py` теперь зелёный целиком + полный suite.**
 
 Run: `cd /root/projects/meet-mt/backend && ../.venv/bin/python -m pytest tests -v 2>&1 | tail -5`
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/amocrm.py backend/tests/test_access_matrix.py
@@ -1672,7 +1672,7 @@ git commit -m "feat(auth): amocrm routes admin-only and gated to amocrm tenants"
 
 Закрывает маршрут из матрицы 5.6: «чужой тенант шлёт `company_id=realestate` + phone → его звонок уезжает в AmoCRM realestate».
 
-- [ ] **Step 1: Failing-тест backend**
+- [x] **Step 1: Failing-тест backend**
 
 `backend/tests/test_server_owned_metadata.py`:
 
@@ -1689,7 +1689,7 @@ def test_company_and_scenario_are_server_owned():
         assert k in _SERVER_OWNED_METADATA
 ```
 
-- [ ] **Step 2: Failing-тест worker**
+- [x] **Step 2: Failing-тест worker**
 
 `worker/tests/test_company_from_tenant.py`:
 
@@ -1736,9 +1736,9 @@ def test_requires_tenant_context():
         cc.tenant_company_config_id()
 ```
 
-- [ ] **Step 3: Прогнать — оба падают.**
+- [x] **Step 3: Прогнать — оба падают.**
 
-- [ ] **Step 4: Реализация**
+- [x] **Step 4: Реализация**
 
 1. `backend/app/routes/sessions.py`, строка ~98:
 
@@ -1806,11 +1806,11 @@ def tenant_company_config_id() -> str | None:
 
 (клиентские фоллбеки `session_meta.get("company_id")`/`session_meta.get("scenario_id")` убрать; сам `session_meta` оставить — нужен ниже.)
 
-- [ ] **Step 5: Прогнать оба suite целиком**
+- [x] **Step 5: Прогнать оба suite целиком**
 
 Run: worker + backend полные сьюты. Существующие тесты pipeline, монкипатчащие company-резолв, могут потребовать обновления — фиксируй в отчёте, обновляй только их assertions на новый источник (`tenant_company_config_id`), не ослабляя их.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/routes/sessions.py backend/tests/test_server_owned_metadata.py worker/tasks/company_config.py worker/tasks/pipeline.py worker/tests/test_company_from_tenant.py
@@ -1826,7 +1826,7 @@ git commit -m "feat(tenancy): company_id/scenario_id are server-owned; worker re
 - Modify: `worker/tasks/amocrm_sync.py` (`_dashboard_base_url()`, сайт ~строка 743)
 - Test: `worker/tests/test_push_tenant_gate.py`, `worker/tests/test_dashboard_url.py`
 
-- [ ] **Step 1: Failing-тесты**
+- [x] **Step 1: Failing-тесты**
 
 `worker/tests/test_push_tenant_gate.py`:
 
@@ -1914,9 +1914,9 @@ def test_no_tenant_context_uses_env_global():
     assert ams._dashboard_base_url() == ams.DASHBOARD_BASE_URL
 ```
 
-- [ ] **Step 2: Прогнать — падают.**
+- [x] **Step 2: Прогнать — падают.**
 
-- [ ] **Step 3: Реализация pipeline.py**
+- [x] **Step 3: Реализация pipeline.py**
 
 Module-top импорт: `from tenancy.registry import AMOCRM_TENANT_SLUGS` (рядом с другими tenancy-импортами; `require_tenant_slug` там уже импортирован — проверить). КРИТИЧНО (находка ревью): `_push_to_amocrm` зовётся из ТРЁХ сайтов (~536 short-call, ~560 broken-recording, ~739 основной), а ДО push в `_run_pipeline_inner` есть негейченные AmoCRM-вызовы (~676–689: `find_lead_by_phone`, `get_lead_stage`, `fetch_lead_events`) — без гейта чужой тенант дёргает CRM realestate и тащит данные его лидов в свой LLM-промпт.
 
@@ -1944,7 +1944,7 @@ def _push_to_amocrm(session_id, quality_report, session_meta, audio_path, **kwar
         # фактическим кодом ~676–689 и гейтить каждый AmoCRM-вызов
 ```
 
-- [ ] **Step 4: Реализация amocrm_sync.py**
+- [x] **Step 4: Реализация amocrm_sync.py**
 
 Импорты дополнить: `from tenancy.context import get_tenant_slug` и `from tenancy.db import shared_connect`. Глобал `DASHBOARD_BASE_URL` (строка ~25) ОСТАВИТЬ (инвариант 7). Добавить под ним:
 
@@ -1987,9 +1987,9 @@ def _dashboard_base_url() -> str:
 Сайт ссылки (строка ~743): `parts.append(f"Подробнее: {_dashboard_base_url()}/#call/{session_id}")`.
 Затем `grep -n "DASHBOARD_BASE_URL" worker/tasks/*.py` — если ссылки строятся ещё где-то (например, deal_summary.py), перевести те сайты на `_dashboard_base_url()` тоже (импортом из amocrm_sync); прочие использования глобала не трогать.
 
-- [ ] **Step 5: Прогнать полный worker-suite — зелёный.**
+- [x] **Step 5: Прогнать полный worker-suite — зелёный.**
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add worker/tasks/pipeline.py worker/tasks/amocrm_sync.py worker/tests/test_push_tenant_gate.py worker/tests/test_dashboard_url.py
@@ -2008,7 +2008,7 @@ git commit -m "feat(tenancy): gate amocrm push by tenant; per-tenant dashboard l
 
 Предусловие: Tasks 7–12 завершены (инвариант 6).
 
-- [ ] **Step 1: Failing-тест** — в `test_access_matrix.py`:
+- [x] **Step 1: Failing-тест** — в `test_access_matrix.py`:
 
 ```python
 def test_ui_routes_public_no_basic(client):
@@ -2025,9 +2025,9 @@ def test_recorder_route_removed(client):
     # главное: это больше не FileResponse несуществующего файла (раньше — 500)
 ```
 
-- [ ] **Step 2: Прогнать** — `test_ui_routes_public_no_basic` FAIL (сейчас Basic → 401).
+- [x] **Step 2: Прогнать** — `test_ui_routes_public_no_basic` FAIL (сейчас Basic → 401).
 
-- [ ] **Step 3: Реализация** — удаления по списку Files. В `.env.example` удалить строки DELETE_PASSWORD (с комментарием) и добавить в конец:
+- [x] **Step 3: Реализация** — удаления по списку Files. В `.env.example` удалить строки DELETE_PASSWORD (с комментарием) и добавить в конец:
 
 ```
 # Dashboard auth (Plan 2)
@@ -2036,9 +2036,9 @@ def test_recorder_route_removed(client):
 BROKER_JWT_TENANT_GRACE_UNTIL=
 ```
 
-- [ ] **Step 4: Прогнать оба suite — зелёные. Дополнительно глазами:** `grep -rn "DELETE_PASSWORD\|X-Delete-Password" backend/ --include=*.py` → пусто.
+- [x] **Step 4: Прогнать оба suite — зелёные. Дополнительно глазами:** `grep -rn "DELETE_PASSWORD\|X-Delete-Password" backend/ --include=*.py` → пусто.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/app/main.py backend/app/config.py .env.example backend/tests/test_access_matrix.py
@@ -2056,7 +2056,7 @@ git commit -m "feat(auth): retire BasicAuthMiddleware, X-Delete-Password and /re
 
 JS-тестов в проекте нет — приёмка: ручной чек-лист Step 6 + матричные тесты backend уже гарантируют контракт API.
 
-- [ ] **Step 1: Состояние и 401-обработка в `api()`**
+- [x] **Step 1: Состояние и 401-обработка в `api()`**
 
 В `backend/static/app.js` рядом с существующим состоянием (строки ~12–14) добавить:
 
@@ -2080,7 +2080,7 @@ const isAdmin = () => currentUser && currentUser.role === 'admin';
     }
 ```
 
-- [ ] **Step 2: Экран логина + boot-последовательность**
+- [x] **Step 2: Экран логина + boot-последовательность**
 
 Добавить в `app.js` (рядом с router()):
 
@@ -2152,7 +2152,7 @@ window.addEventListener('load', () => {
 
 (проверить фактический контейнер: если в `index.html` корневой элемент не `#app` — использовать его id; посмотреть разметку перед правкой).
 
-- [ ] **Step 3: Кнопка выхода** — в `index.html` в навигацию добавить:
+- [x] **Step 3: Кнопка выхода** — в `index.html` в навигацию добавить:
 
 ```html
 <button class="nav-logout" onclick="logout()" title="Выйти">Выйти</button>
@@ -2160,7 +2160,7 @@ window.addEventListener('load', () => {
 
 и в `styles.css` минимальные стили `.login-screen/.login-card/.login-error/.nav-logout` (центрированная карточка, в духе существующих стилей — посмотреть переменные/классы рядом).
 
-- [ ] **Step 4: Чистка X-Delete-Password + сокрытие admin-действий**
+- [x] **Step 4: Чистка X-Delete-Password + сокрытие admin-действий**
 
 1. Удалить `ensureDeletePassword()` (строки ~90–98) и ВСЕ места, где собирается заголовок `X-Delete-Password` (grep по файлу; фактические сайты: deleteSession ~1545, saveTemplate PATCH/POST ~1922/1928, deleteTemplate ~1960, relinkExtraction ~2491, renameComplex ~2600, deleteComplex ~2620; merge-кнопки в SPA нет) — вызовы остаются, заголовок и prompt убрать.
 2. Сокрытие admin-действий для viewer (`isAdmin()`): обернуть рендер кнопок:
@@ -2171,16 +2171,16 @@ window.addEventListener('load', () => {
 3. `renderCompanies()`: обернуть загрузку в try/catch — при 404 показать `«Раздел доступен только платформенному администратору»` (после Task 10 на тенант-контуре /api/companies отдаёт 404).
 4. Форма ручной загрузки (renderUpload, селекторы `#uploadCompany`/`#uploadScenario` ~строки 1350/1357, запись в metadata ~1458–1470): УДАЛИТЬ селекторы company/scenario и их запись в metadata — после Task 13 сервер вычищает эти ключи, UI стал бы мёртвым и вводящим в заблуждение. Выбор шаблона (template_id) остаётся — он server-owned не является.
 
-- [ ] **Step 5: Синтаксис-смоук**
+- [x] **Step 5: Синтаксис-смоук**
 
 Run: `node --check /root/projects/meet-mt/backend/static/app.js`
 Expected: без ошибок.
 
-- [ ] **Step 6: Ручной чек-лист (записать результаты в отчёт)**
+- [x] **Step 6: Ручной чек-лист (записать результаты в отчёт)**
 
 Поднять backend локально НЕЛЬЗЯ против прод-БД — для смоука достаточно статической проверки: `grep -c "X-Delete-Password" app.js` → 0; `grep -c "ensureDeletePassword" app.js` → 0; login-форма присутствует; `isAdmin()` используется во всех перечисленных render-функциях (grep).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/static/app.js backend/static/index.html backend/static/styles.css
@@ -2200,7 +2200,7 @@ git commit -m "feat(spa): login screen, role-aware UI, drop delete-password prom
 
 Сервер уже принимает `X-API-Key` (Task 4); у realestate `api_key_required=false`, поэтому клиенты без ключа продолжают работать — поле опциональное (спека 6.4).
 
-- [ ] **Step 1: desktop recorder.js**
+- [x] **Step 1: desktop recorder.js**
 
 Рядом с `let brokerToken` (~строка 21): `let apiKey = '';`
 `buildHeaders()` (~62–66):
@@ -2220,14 +2220,14 @@ function buildHeaders(extra = {}, auth = authHeader) {
 function setApiKey(key) { apiKey = key || ''; }
 ```
 
-- [ ] **Step 2: desktop renderer.js**
+- [x] **Step 2: desktop renderer.js**
 
 1. Разметка живёт в `desktop-app/src/renderer/index.html` (НЕ в renderer.js): рядом с `#setupServerUrl` (~строка 40) добавить input `id="setupApiKey"`, placeholder `API-ключ (опционально, sqa_...)`, type=password.
 2. В renderer.js: в обработчике сохранения настроек (~220–235, где читается `setupServerUrl.value`) читать `setupApiKey.value`; `persistCredentials()` (~249–258): включить `apiKey` в сохраняемый объект (значение из поля либо из текущих creds).
 3. `init()` (~726–785): после загрузки creds — `if (window.Recorder.setApiKey) window.Recorder.setApiKey(creds.apiKey);`
 4. Проверить `src/main/index.js` save-credentials (~152–165): если он сохраняет объект целиком — изменений не нужно; если перечисляет поля — добавить `apiKey`.
 
-- [ ] **Step 3: расширения (обе копии: extension/ и extension-yandex/)**
+- [x] **Step 3: расширения (обе копии: extension/ и extension-yandex/)**
 
 1. `background.js` `startRecording()` (~20–43): в `chrome.storage.local.get([...])` добавить `'apiKey'`; включить `apiKey` в сообщение offscreen-документу рядом с serverUrl/authUsername/authPassword.
 2. `offscreen.js`: принять `apiKey` из сообщения (рядом с историей authHeader ~строка 91), и во всех ТРЁХ местах заголовков (~29, 53, 74) добавить:
@@ -2238,12 +2238,12 @@ function setApiKey(key) { apiKey = key || ''; }
 
 (значение задаётся через `chrome.storage.local.set({apiKey: 'sqa_...'})` в консоли расширения; options-страница — Фаза 2.)
 
-- [ ] **Step 4: Смоук**
+- [x] **Step 4: Смоук**
 
 Run: `node --check` на все 6 изменённых js-файлов.
 Expected: без ошибок.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add desktop-app/src extension extension-yandex
@@ -2257,7 +2257,7 @@ git commit -m "feat(recorder): optional X-API-Key in desktop app and extensions"
 **Files:**
 - Modify: `docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md`
 
-- [ ] **Step 1: Дописать в конец ранбука раздел**
+- [x] **Step 1: Дописать в конец ранбука раздел**
 
 ```markdown
 ## Plan 2 (auth) — дополнение к деплою
@@ -2302,7 +2302,7 @@ git commit -m "feat(recorder): optional X-API-Key in desktop app and extensions"
 сессии в Redis истекают сами). После отката вернуть DELETE_PASSWORD в .env.
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 cd /root/projects/meet-mt && git add docs/superpowers/specs/2026-06-10-phase1-deploy-runbook.md
