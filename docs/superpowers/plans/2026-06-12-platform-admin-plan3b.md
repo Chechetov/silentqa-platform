@@ -1296,7 +1296,7 @@ async def rotate_key(slug: str, db: AsyncSession = Depends(get_db)):
 
 Все операции — schema-qualified SQL `t_<slug>.users` (платформенный контур, search_path не установлен). Схему брать ТОЛЬКО из shared.tenants по slug (не конструировать из slug руками).
 
-- [ ] **Step 1: тесты** (мокаем `_schema_for` и data-хелперы; auth-кейсы живьём):
+- [x] **Step 1: тесты** (мокаем `_schema_for` и data-хелперы; auth-кейсы живьём):
 
 ```python
 def test_tenant_users_list(client, fake_redis, monkeypatch):
@@ -1334,9 +1334,9 @@ def test_tenant_user_reset_password_returns_once(client, fake_redis, monkeypatch
     assert len(r.json()["password"]) >= 12
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация** (добавить в `platform_tenants.py`):
+- [x] **Step 3: имплементация** (добавить в `platform_tenants.py`):
 
 ```python
 import uuid
@@ -1470,8 +1470,8 @@ async def tenant_user_reset_password(slug: str, user_id: uuid.UUID,
 ```
 (Платформенная сторона БЕЗ self-guards — админ платформы не юзер тенанта; guards самовыпила живут в Task 14.)
 
-- [ ] **Step 4: прогон** → PASS.
-- [ ] **Step 5: commit** — `feat(platform): управление юзерами клиента из админки`
+- [x] **Step 4: прогон** → PASS.
+- [x] **Step 5: commit** — `feat(platform): управление юзерами клиента из админки`
 
 ---
 
