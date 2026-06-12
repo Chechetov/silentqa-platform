@@ -1709,14 +1709,14 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
 - Modify: `backend/tests/test_companies_platform.py`
 - Modify: `.env.example` (убрать AUTH_*)
 
-- [ ] **Step 1: тест** — переписать `test_companies_platform.py`: вместо Basic-хедеров — платформенная cookie (хелпер `_admin_cookie` как в test_platform_tenants); кейсы: без сессии 401 `platform_auth_required`; с сессией — 200/обычная работа; на тенант-хосте 404 (это уже гейт Task 3 — оставить кейс как регрессию).
+- [x] **Step 1: тест** — переписать `test_companies_platform.py`: вместо Basic-хедеров — платформенная cookie (хелпер `_admin_cookie` как в test_platform_tenants); кейсы: без сессии 401 `platform_auth_required`; с сессией — 200/обычная работа; на тенант-хосте 404 (это уже гейт Task 3 — оставить кейс как регрессию).
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация**: в `companies.py` заменить `dependencies=[Depends(require_platform_admin_basic)]` → `dependencies=[Depends(require_platform_admin)]` (импорт из `..auth_platform`). Удалить `require_platform_admin_basic` из `auth_user.py` (и его импорты `base64`, упоминания settings.AUTH_*). Из `config.py` удалить поля `AUTH_USERNAME`/`AUTH_PASSWORD`; `grep -rn "AUTH_USERNAME\|AUTH_PASSWORD" backend/ worker/ --include="*.py"` — должно остаться пусто. Из `.env.example` убрать строки.
+- [x] **Step 3: имплементация**: в `companies.py` заменить `dependencies=[Depends(require_platform_admin_basic)]` → `dependencies=[Depends(require_platform_admin)]` (импорт из `..auth_platform`). Удалить `require_platform_admin_basic` из `auth_user.py` (и его импорты `base64`, упоминания settings.AUTH_*). Из `config.py` удалить поля `AUTH_USERNAME`/`AUTH_PASSWORD`; `grep -rn "AUTH_USERNAME\|AUTH_PASSWORD" backend/ worker/ --include="*.py"` — должно остаться пусто. Из `.env.example` убрать строки.
 
-- [ ] **Step 4: прогон** → PASS (+ суита).
-- [ ] **Step 5: commit** — `feat(platform): /api/companies под платформенной сессией, Basic выпилен`
+- [x] **Step 4: прогон** → PASS (+ суита).
+- [x] **Step 5: commit** — `feat(platform): /api/companies под платформенной сессией, Basic выпилен`
 
 ---
 
