@@ -23,12 +23,18 @@ def _sess_key(slug: str, sid: str) -> str:
     return f"t:{slug}:sess:{sid}"
 
 
-async def create_session(user_id: str, email: str, role: str) -> str:
+async def create_session(user_id: str, email: str, role: str, *,
+                         employee_name: str | None = None,
+                         impersonated_by: str | None = None,
+                         ttl: int | None = None) -> str:
     sid = secrets.token_urlsafe(32)
     slug = require_tenant_slug()
-    payload = json.dumps({"user_id": user_id, "email": email, "role": role})
+    payload = json.dumps({
+        "user_id": user_id, "email": email, "role": role,
+        "employee_name": employee_name, "impersonated_by": impersonated_by,
+    })
     await get_redis().set(
-        _sess_key(slug, sid), payload, ex=settings.SESSION_TTL_SECONDS
+        _sess_key(slug, sid), payload, ex=ttl or settings.SESSION_TTL_SECONDS
     )
     return sid
 

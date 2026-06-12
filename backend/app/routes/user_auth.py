@@ -5,10 +5,12 @@
 """
 from __future__ import annotations
 
+import json
 import logging
 
 from argon2 import PasswordHasher
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,9 +21,12 @@ from .. import auth_sessions
 from ..auth_user import UserCtx, get_current_user
 from ..config import settings
 from ..database import get_db
+from ..redis_client import get_redis
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/user-auth", tags=["user-auth"])
+
+IMPERSONATION_SESSION_TTL = 7200  # 2 часа (спека §3.4)
 
 _ph = PasswordHasher()
 # Статический argon2-хеш заведомо неверного секрета: verify против него на
@@ -103,8 +108,37 @@ async def logout(request: Request, response: Response):
     return {"ok": True}
 
 
+@router.get("/impersonate")
+async def impersonate_exchange(token: str):
+    """Тенант-контур: сжигаем одноразовый токен (атомарный GETDEL),
+    проверяем slug, выдаём короткую сессию роль admin + impersonated_by."""
+    slug = get_tenant_slug()
+    if slug is None:
+        raise HTTPException(status_code=404, detail="Unknown tenant")
+    raw = await get_redis().getdel(f"platform:imp:{token}")
+    if not raw:
+        raise HTTPException(status_code=401, detail="invalid_token")
+    data = json.loads(raw)
+    if data["slug"] != slug:
+        raise HTTPException(status_code=401, detail="invalid_token")
+    sid = await auth_sessions.create_session(
+        "platform-admin", data["admin_email"], "admin",
+        impersonated_by=data["admin_email"], ttl=IMPERSONATION_SESSION_TTL,
+    )
+    logger.info("impersonation login: %s -> %s", data["admin_email"], slug)
+    resp = RedirectResponse("/", status_code=303)
+    resp.set_cookie(
+        auth_sessions.SESSION_COOKIE, sid,
+        httponly=True, secure=settings.SESSION_COOKIE_SECURE, samesite="lax",
+        max_age=IMPERSONATION_SESSION_TTL, path="/",
+    )
+    return resp
+
+
 @router.get("/me")
 async def me(user: UserCtx | None = Depends(get_current_user)):
     if user is None:
         raise HTTPException(status_code=401, detail="auth_required")
-    return {"email": user.email, "role": user.role}
+    return {"email": user.email, "role": user.role,
+            "employee_name": user.employee_name,
+            "impersonated_by": user.impersonated_by}

@@ -27,7 +27,8 @@ async def test_create_load_destroy_roundtrip(fake_redis, tenant_ctx):
     assert key in fake_redis.store
     assert fake_redis.ttls[key] == settings.SESSION_TTL_SECONDS
     data = await auth_sessions.load_session(sid)
-    assert data == {"user_id": "u1", "email": "a@b.c", "role": "admin"}
+    assert data == {"user_id": "u1", "email": "a@b.c", "role": "admin",
+                    "employee_name": None, "impersonated_by": None}
     await auth_sessions.destroy_session(sid)
     assert await auth_sessions.load_session(sid) is None
 

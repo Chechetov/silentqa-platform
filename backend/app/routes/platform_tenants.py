@@ -2,7 +2,9 @@
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
+import secrets
 import uuid
 from typing import Literal
 
@@ -16,9 +18,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenancy.identifiers import SCHEMA_RE
 
 from ..auth_platform import require_platform_admin
+from ..config import settings
 from ..database import get_db
 from ..provision_tenant import ProvisionError, generate_api_key, generate_password, provision
+from ..redis_client import get_redis
 from ..tenancy_http import registry
+
+IMPERSONATION_TTL = 60            # секунд на переход
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/platform/tenants", tags=["platform-tenants"],
@@ -140,6 +146,24 @@ async def rotate_key(slug: str, db: AsyncSession = Depends(get_db)):
     registry.invalidate()
     logger.info("tenant %s api key rotated", slug)
     return {"slug": slug, "api_key": key}
+
+
+# ── Task 12: impersonation (вход владельца платформы в дашборд клиента) ───────
+
+
+@router.post("/{slug}/impersonate")
+async def impersonate(slug: str, db: AsyncSession = Depends(get_db),
+                      admin=Depends(require_platform_admin)):
+    await _require_schema(db, slug)
+    token = secrets.token_urlsafe(32)
+    await get_redis().set(
+        f"platform:imp:{token}",
+        json.dumps({"slug": slug, "admin_email": admin.email}),
+        ex=IMPERSONATION_TTL,
+    )
+    logger.info("impersonation token issued: %s -> %s", admin.email, slug)
+    return {"url": f"https://{slug}.{settings.BASE_DOMAIN}"
+                   f"/api/user-auth/impersonate?token={token}"}
 
 
 # ── Task 11: управление юзерами клиента ──────────────────────────────────────

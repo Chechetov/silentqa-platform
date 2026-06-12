@@ -30,6 +30,9 @@ class FakeRedis:
     async def get(self, key):
         return self.store.get(key)
 
+    async def getdel(self, key):
+        return self.store.pop(key, None)
+
     async def delete(self, key):
         self.store.pop(key, None)
 

@@ -25,6 +25,8 @@ class UserCtx:
     user_id: str
     email: str
     role: str
+    employee_name: str | None = None
+    impersonated_by: str | None = None
 
 
 async def get_current_user(request: Request) -> UserCtx | None:
@@ -37,7 +39,9 @@ async def get_current_user(request: Request) -> UserCtx | None:
     data = await load_session(sid)
     if not data:
         return None
-    return UserCtx(user_id=data["user_id"], email=data["email"], role=data["role"])
+    return UserCtx(user_id=data["user_id"], email=data["email"], role=data["role"],
+                   employee_name=data.get("employee_name"),
+                   impersonated_by=data.get("impersonated_by"))
 
 
 async def require_viewer(
