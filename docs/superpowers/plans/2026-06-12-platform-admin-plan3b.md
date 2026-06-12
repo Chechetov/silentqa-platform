@@ -852,7 +852,7 @@ async def root_page():
 - Modify: `backend/app/provision_tenant.py`
 - Test: `backend/tests/test_provisioning_unit.py` (создать)
 
-- [ ] **Step 1: тест** (юнит на чистые куски; интеграция с БД — Task 19):
+- [x] **Step 1: тест** (юнит на чистые куски; интеграция с БД — Task 19):
 
 ```python
 def test_generate_api_key_format():
@@ -870,9 +870,9 @@ def test_provision_rejects_bad_slug():
         provision("Bad Slug!", "x", "a@b.c", "pw")  # до любых коннектов
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация.** В `provision_tenant.py`:
+- [x] **Step 3: имплементация.** В `provision_tenant.py`:
 
 ```python
 from dataclasses import dataclass
@@ -972,8 +972,8 @@ def provision(slug: str, name: str, admin_email: str,
 ```
 ВАЖНО: поведение CLI для существующих сценариев не менять (ранбук ссылается на вывод). `getpass`-запрос пароля оставить только в CLI, НЕ в provision().
 
-- [ ] **Step 4: прогон** → PASS (+ суита).
-- [ ] **Step 5: commit** — `refactor(provision): вызываемая provision() + generate_api_key, CLI — тонкая обёртка`
+- [x] **Step 4: прогон** → PASS (+ суита).
+- [x] **Step 5: commit** — `refactor(provision): вызываемая provision() + generate_api_key, CLI — тонкая обёртка`
 
 ---
 
