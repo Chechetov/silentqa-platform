@@ -58,8 +58,12 @@ def test_tenant_user_reset_password_returns_once(client, fake_redis, monkeypatch
     async def fake_reset(db, schema, user_id, pw_hash):
         return True
 
+    async def fake_email(db, schema, uid):
+        return None  # без живой сессии — инвалидация no-op
+
     monkeypatch.setattr(pt, "_schema_for", fake_schema)
     monkeypatch.setattr(pt, "_reset_password", fake_reset)
+    monkeypatch.setattr(pt, "_user_email", fake_email)
     r = client.post("/api/platform/tenants/acme/users/00000000-0000-0000-0000-000000000001/reset-password",
                     cookies=_admin_cookie(fake_redis))
     assert r.status_code == 200
@@ -173,8 +177,12 @@ def test_tenant_user_delete_204(client, fake_redis, monkeypatch):
     async def fake_delete(db, schema, user_id):
         return True
 
+    async def fake_email(db, schema, uid):
+        return None  # без живой сессии — инвалидация no-op
+
     monkeypatch.setattr(pt, "_schema_for", fake_schema)
     monkeypatch.setattr(pt, "_delete_user", fake_delete)
+    monkeypatch.setattr(pt, "_user_email", fake_email)
     r = client.delete("/api/platform/tenants/acme/users/00000000-0000-0000-0000-000000000001",
                       cookies=_admin_cookie(fake_redis))
     assert r.status_code == 204
@@ -189,8 +197,83 @@ def test_tenant_user_delete_404(client, fake_redis, monkeypatch):
     async def fake_delete(db, schema, user_id):
         return False
 
+    async def fake_email(db, schema, uid):
+        return None
+
     monkeypatch.setattr(pt, "_schema_for", fake_schema)
     monkeypatch.setattr(pt, "_delete_user", fake_delete)
+    monkeypatch.setattr(pt, "_user_email", fake_email)
     r = client.delete("/api/platform/tenants/acme/users/00000000-0000-0000-0000-000000000001",
                       cookies=_admin_cookie(fake_redis))
     assert r.status_code == 404
+
+
+# ── §3.3 rescue: платформенное удаление/сброс пароля убивает живую сессию ─────
+
+def test_platform_delete_kills_tenant_user_sessions(client, fake_redis, monkeypatch):
+    from app.routes import platform_tenants as pt
+    from app import auth_sessions
+    from tenancy.context import set_tenant_schema, reset_tenant_schema
+    VICTIM = "00000000-0000-0000-0000-000000000033"
+
+    async def fake_schema(db, slug):
+        return "t_acme"
+
+    async def fake_email(db, schema, uid):
+        return "victim@x.io"
+
+    async def fake_delete(db, schema, uid):
+        return True
+
+    monkeypatch.setattr(pt, "_require_schema", fake_schema)
+    monkeypatch.setattr(pt, "_user_email", fake_email)
+    monkeypatch.setattr(pt, "_delete_user", fake_delete)
+
+    # сессия жертвы под t_acme
+    async def seed():
+        tok = set_tenant_schema("t_acme")
+        try:
+            return await auth_sessions.create_session(VICTIM, "victim@x.io", "viewer")
+        finally:
+            reset_tenant_schema(tok)
+
+    victim_sid = asyncio.run(seed())
+    assert any(k.endswith(victim_sid) for k in fake_redis.store)  # сессия есть
+
+    r = client.delete(f"/api/platform/tenants/acme/users/{VICTIM}",
+                      cookies=_admin_cookie(fake_redis))
+    assert r.status_code == 204
+    assert not any(k.endswith(victim_sid) for k in fake_redis.store)  # убита
+
+
+def test_platform_reset_kills_tenant_user_sessions(client, fake_redis, monkeypatch):
+    from app.routes import platform_tenants as pt
+    from app import auth_sessions
+    from tenancy.context import set_tenant_schema, reset_tenant_schema
+    VICTIM = "00000000-0000-0000-0000-000000000034"
+
+    async def fake_schema(db, slug):
+        return "t_acme"
+
+    async def fake_email(db, schema, uid):
+        return "v2@x.io"
+
+    async def fake_reset(db, schema, uid, pw):
+        return True
+
+    monkeypatch.setattr(pt, "_require_schema", fake_schema)
+    monkeypatch.setattr(pt, "_user_email", fake_email)
+    monkeypatch.setattr(pt, "_reset_password", fake_reset)
+
+    async def seed():
+        tok = set_tenant_schema("t_acme")
+        try:
+            return await auth_sessions.create_session(VICTIM, "v2@x.io", "viewer")
+        finally:
+            reset_tenant_schema(tok)
+
+    victim_sid = asyncio.run(seed())
+    r = client.post(f"/api/platform/tenants/acme/users/{VICTIM}/reset-password",
+                    cookies=_admin_cookie(fake_redis))
+    assert r.status_code == 200
+    assert not any(k.endswith(victim_sid) for k in fake_redis.store)

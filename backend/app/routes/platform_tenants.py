@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenancy.identifiers import SCHEMA_RE
 
 from ..auth_platform import require_platform_admin
+from ..auth_sessions import destroy_user_sessions_for_slug
 from ..config import settings
 from ..database import get_db
 from ..provision_tenant import ProvisionError, generate_api_key, generate_password, provision
@@ -223,6 +224,13 @@ async def _insert_user(db, schema, email, role, employee_name, pw_hash) -> str |
         return None
 
 
+async def _user_email(db: AsyncSession, schema: str, user_id) -> str | None:
+    row = (await db.execute(text(
+        f"SELECT email FROM {schema}.users WHERE id = :id"),
+        {"id": user_id})).first()
+    return row.email if row else None
+
+
 async def _reset_password(db, schema, user_id, pw_hash) -> bool:
     res = await db.execute(text(
         f"UPDATE {schema}.users SET password_hash = :pw WHERE id = :id"),
@@ -280,8 +288,12 @@ async def tenant_user_patch(slug: str, user_id: uuid.UUID, body: PatchUserBody,
 async def tenant_user_delete(slug: str, user_id: uuid.UUID,
                              db: AsyncSession = Depends(get_db)):
     schema = await _require_schema(db, slug)
+    email = await _user_email(db, schema, str(user_id))
     if not await _delete_user(db, schema, str(user_id)):
         raise HTTPException(status_code=404, detail="user not found")
+    # rescue: убить живую cookie-сессию удалённого юзера (асимметрия с тенант-стороной)
+    if email:
+        await destroy_user_sessions_for_slug(slug, email)
 
 
 @router.post("/{slug}/users/{user_id}/reset-password")
@@ -291,4 +303,8 @@ async def tenant_user_reset_password(slug: str, user_id: uuid.UUID,
     password = generate_password()
     if not await _reset_password(db, schema, str(user_id), _ph.hash(password)):
         raise HTTPException(status_code=404, detail="user not found")
+    # rescue: сброс пароля скомпрометированному юзеру должен выкинуть старые сессии
+    email = await _user_email(db, schema, str(user_id))
+    if email:
+        await destroy_user_sessions_for_slug(slug, email)
     return {"password": password}

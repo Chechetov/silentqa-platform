@@ -50,9 +50,10 @@ async def destroy_session(sid: str) -> None:
     await get_redis().delete(_sess_key(slug, sid))
 
 
-async def destroy_user_sessions(email: str, keep_sid: str | None = None) -> None:
-    """Убить все сессии юзера текущего тенанта (кроме keep_sid)."""
-    slug = require_tenant_slug()
+async def destroy_user_sessions_for_slug(slug: str, email: str,
+                                         keep_sid: str | None = None) -> None:
+    """Убить все сессии юзера в тенанте `slug` (кроме keep_sid). Не требует
+    тенант-контекста — slug передаётся явно (для платформенного контура)."""
     r = get_redis()
     async for key in r.scan_iter(match=f"t:{slug}:sess:*"):
         key = key.decode() if isinstance(key, bytes) else key
@@ -61,6 +62,11 @@ async def destroy_user_sessions(email: str, keep_sid: str | None = None) -> None
         raw = await r.get(key)
         if raw and json.loads(raw).get("email", "").lower() == email.lower():
             await r.delete(key)
+
+
+async def destroy_user_sessions(email: str, keep_sid: str | None = None) -> None:
+    """Убить все сессии юзера ТЕКУЩЕГО тенанта (кроме keep_sid)."""
+    await destroy_user_sessions_for_slug(require_tenant_slug(), email, keep_sid)
 
 
 async def _register_attempt(email_key: str, ip_key: str) -> bool:
