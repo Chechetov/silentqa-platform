@@ -58,6 +58,10 @@ class TenantRegistry:
 
 
 class TenantResolutionMiddleware:
+    # Семейства путей, живущие ТОЛЬКО на платформенном контуре (спека §1).
+    # /api/tenancy/* — domain-check — исключение: жив на обоих контурах.
+    PLATFORM_PREFIXES = ("/api/platform", "/api/companies", "/api/tenancy")
+
     def __init__(self, app, registry, base_domain: str, default_tenant: str = ""):
         self.app = app
         self.registry = registry
@@ -86,6 +90,15 @@ class TenantResolutionMiddleware:
 
         token = set_tenant_schema(row["schema_name"] if row else None)
         try:
+            # Гейт контуров (спека §1): пути чужого контура → 404 ДО auth/роута.
+            path = scope.get("path", "")
+            if path.startswith("/api/"):
+                is_platform_path = path.startswith(self.PLATFORM_PREFIXES)
+                on_platform = row is None
+                if is_platform_path != on_platform and not path.startswith("/api/tenancy"):
+                    # /api/tenancy (domain-check) жив на обоих контурах
+                    resp = JSONResponse({"detail": "Not found"}, status_code=404)
+                    return await resp(scope, receive, send)
             await self.app(scope, receive, send)
         finally:
             reset_tenant_schema(token)
