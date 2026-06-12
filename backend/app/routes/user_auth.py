@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tenancy.context import get_tenant_slug
 
 from .. import auth_sessions
-from ..auth_user import UserCtx, get_current_user
+from ..auth_user import UserCtx, get_current_user, require_viewer
 from ..config import settings
 from ..database import get_db
 from ..redis_client import get_redis
@@ -142,3 +142,36 @@ async def me(user: UserCtx | None = Depends(get_current_user)):
     return {"email": user.email, "role": user.role,
             "employee_name": user.employee_name,
             "impersonated_by": user.impersonated_by}
+
+
+class ChangePasswordRequest(BaseModel):
+    old_password: str
+    new_password: str
+
+
+async def _get_password_hash(db: AsyncSession, user_id: str) -> str | None:
+    row = (await db.execute(text(
+        "SELECT password_hash FROM users WHERE id = :id"), {"id": user_id})).first()
+    return row.password_hash if row else None
+
+
+async def _set_password_hash(db: AsyncSession, user_id: str, new_hash: str) -> None:
+    await db.execute(text(
+        "UPDATE users SET password_hash = :pw WHERE id = :id"),
+        {"pw": new_hash, "id": user_id})
+    await db.commit()
+
+
+@router.post("/change-password")
+async def change_password(body: ChangePasswordRequest, request: Request,
+                          db: AsyncSession = Depends(get_db),
+                          user: UserCtx = Depends(require_viewer)):
+    if len(body.new_password) < 8:
+        raise HTTPException(status_code=422, detail="password_too_short")
+    stored = await _get_password_hash(db, user.user_id)
+    if stored is None or not _verify(stored, body.old_password):
+        raise HTTPException(status_code=403, detail="wrong_password")
+    await _set_password_hash(db, user.user_id, _ph.hash(body.new_password))
+    keep = request.cookies.get(auth_sessions.SESSION_COOKIE)
+    await auth_sessions.destroy_user_sessions(user.email, keep_sid=keep)
+    return {"ok": True}
