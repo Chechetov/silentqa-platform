@@ -436,7 +436,7 @@ async def register_platform_login_attempt(ip: str, email: str) -> bool:
 - Create: `backend/app/auth_platform.py`
 - Test: `backend/tests/test_auth_platform.py` (создать)
 
-- [ ] **Step 1: тест**:
+- [x] **Step 1: тест**:
 
 ```python
 import asyncio
@@ -486,9 +486,9 @@ def test_platform_admin_none_on_tenant_contour(fake_redis):
     asyncio.run(flow())
 ```
 
-- [ ] **Step 2: прогон** → FAIL.
+- [x] **Step 2: прогон** → FAIL.
 
-- [ ] **Step 3: имплементация** `auth_platform.py`:
+- [x] **Step 3: имплементация** `auth_platform.py`:
 
 ```python
 """Auth-зависимости платформенного контура (спека §2)."""
@@ -531,8 +531,8 @@ async def require_platform_admin(
     return admin
 ```
 
-- [ ] **Step 4: прогон** → PASS.
-- [ ] **Step 5: commit** — `feat(auth): зависимости платформенного админа`
+- [x] **Step 4: прогон** → PASS.
+- [x] **Step 5: commit** — `feat(auth): зависимости платформенного админа`
 
 ---
 
