@@ -2153,7 +2153,7 @@ async def change_password(body: ChangePasswordRequest, request: Request,
 - Modify: `backend/app/routes/transcripts.py`, `analysis.py` (ownership на файловых GET)
 - Test: `backend/tests/test_manager_scope.py` (создать)
 
-- [ ] **Step 1: login → employee_name.** В `user_auth.login` SELECT добавить `employee_name`:
+- [x] **Step 1: login → employee_name.** В `user_auth.login` SELECT добавить `employee_name`:
 ```python
             text(
                 "SELECT id, email, password_hash, role, employee_name FROM users "
@@ -2164,7 +2164,7 @@ async def change_password(body: ChangePasswordRequest, request: Request,
 
 Жертвы (ревью) — поправить в этом же шаге `tests/test_user_auth_routes.py`: стаб `_Row` не имеет атрибута `employee_name` (будет AttributeError → 500) — добавить `self.employee_name = None`; ожидания точных dict (ответ логина, /me) расширить новыми полями.
 
-- [ ] **Step 2: зависимости** в `auth_user.py`:
+- [x] **Step 2: зависимости** в `auth_user.py`:
 
 ```python
 # Сентинел «менеджер без привязки»: фильтр не совпадёт ни с одним
@@ -2202,7 +2202,7 @@ async def require_session_access(
 ```
 Импорт `uuid` в auth_user.py.
 
-- [ ] **Step 3: тест** `tests/test_manager_scope.py`:
+- [x] **Step 3: тест** `tests/test_manager_scope.py`:
 
 ```python
 import asyncio
@@ -2284,7 +2284,7 @@ def test_manager_management_403(client, fake_redis):
     assert client.get("/api/users", cookies=c).status_code == 403
 ```
 
-- [ ] **Step 4: прогон** → FAIL; затем имплементация по роутам:
+- [x] **Step 4: прогон** → FAIL; затем имплементация по роутам:
 
 `managers.py` — выделить data-хелпер и применить scope (заодно НЕ переписываем на SQL — это Task плана 3c; только scoping):
 ```python
@@ -2322,8 +2322,8 @@ async def _all_sessions(db):
 
 `transcripts.py` (оба GET) и `analysis.py` (5 viewer-GET: audio/sentiment/quality/full + transcript-роуты): заменить `dependencies=[Depends(require_viewer)]` → `dependencies=[Depends(require_session_access)]` (имя path-параметра session_id совпадает — FastAPI подставит).
 
-- [ ] **Step 5: прогон** — файл PASS + ВСЯ суита (особо: test_access_matrix VIEWER_GETS — require_session_access для viewer-роли не должен изменить 200/401-семантику).
-- [ ] **Step 6: commit** — `feat(rbac): роль manager видит только свои звонки`
+- [x] **Step 5: прогон** — файл PASS + ВСЯ суита (особо: test_access_matrix VIEWER_GETS — require_session_access для viewer-роли не должен изменить 200/401-семантику).
+- [x] **Step 6: commit** — `feat(rbac): роль manager видит только свои звонки`
 
 ---
 
