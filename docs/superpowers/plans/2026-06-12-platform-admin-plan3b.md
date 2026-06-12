@@ -52,7 +52,7 @@
 - Create: `backend/alembic_shared/versions/s003_platform_admin_totp.py`
 - Create: `backend/alembic/versions/013_manager_role_employee_name.py`
 
-- [ ] **Step 1: написать обе миграции**
+- [x] **Step 1: написать обе миграции**
 
 `s003_platform_admin_totp.py`:
 ```python
@@ -120,7 +120,7 @@ def downgrade() -> None:
     )
 ```
 
-- [ ] **Step 2: прогон на скретч-БД**
+- [x] **Step 2: прогон на скретч-БД**
 
 ```bash
 sudo -u postgres createdb plan3b_scratch 2>/dev/null || sudo -u postgres dropdb plan3b_scratch && sudo -u postgres createdb plan3b_scratch
@@ -135,7 +135,7 @@ sudo -u postgres psql plan3b_scratch -c "\d shared.platform_admins" | grep totp_
 ```
 Expected: строка `totp_secret | text`. (Тенант-трек 013 проверится в Task 19 через provision на скретч.)
 
-- [ ] **Step 3: commit**
+- [x] **Step 3: commit**
 
 ```bash
 cd /root/projects/meet-mt && git add backend/alembic_shared backend/alembic && git commit -m "feat(db): S003 totp_secret + 013 роль manager, employee_name, индекс employee"
