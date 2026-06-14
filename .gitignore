@@ -26,3 +26,4 @@ screenshots/
 # Celery beat scheduler state file (binary, regenerated at startup)
 worker/celerybeat-schedule
 data/
+backend/static/download/dl/

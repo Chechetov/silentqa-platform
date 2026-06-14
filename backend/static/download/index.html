@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Скачать рекордер — SilentQA</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --bg: #0f172a; --surface: #1e293b; --surface2: #243248; --border: #334155;
+      --text: #e2e8f0; --text2: #94a3b8; --text3: #64748b;
+      --green: #10b981; --radius: 12px;
+    }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg); color: var(--text); min-height: 100dvh;
+      display: flex; align-items: center; justify-content: center; padding: 24px;
+    }
+    .container { width: 100%; max-width: 760px; }
+    .header { text-align: center; margin-bottom: 8px; }
+    .header h1 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+    .header p { font-size: 14px; color: var(--text2); }
+    .setup {
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 18px 20px; margin: 22px 0 8px;
+    }
+    .setup h2 { font-size: 14px; font-weight: 600; margin-bottom: 12px; }
+    .setup ol { margin: 8px 0 0 18px; }
+    .setup li { font-size: 13px; color: var(--text2); line-height: 1.7; }
+    .field {
+      display: flex; align-items: center; gap: 8px; margin: 6px 0;
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      padding: 8px 12px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 13px;
+    }
+    .field .k { color: var(--text3); } .field .v { color: var(--green); font-weight: 600; word-break: break-all; }
+    .field button {
+      margin-left: auto; background: var(--surface2); color: var(--text2);
+      border: 1px solid var(--border); border-radius: 6px; padding: 4px 10px; font-size: 12px; cursor: pointer;
+    }
+    .field button:hover { color: var(--green); border-color: var(--green); }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 18px; }
+    .card {
+      background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+      padding: 22px 18px; text-decoration: none; color: inherit;
+      display: flex; flex-direction: column; align-items: center; text-align: center; gap: 10px;
+      transition: border-color .15s, background .15s, transform .15s;
+    }
+    .card:hover { border-color: var(--green); background: var(--surface2); transform: translateY(-2px); }
+    .card.suggested { border-color: var(--green); box-shadow: 0 0 0 1px var(--green); }
+    .card.soon { opacity: .45; pointer-events: none; }
+    .card .ico { width: 40px; height: 40px; color: var(--text); }
+    .card .name { font-size: 15px; font-weight: 600; }
+    .card .meta { font-size: 12px; color: var(--text3); line-height: 1.5; }
+    .card .cta { margin-top: 4px; font-size: 13px; color: var(--green); font-weight: 500; }
+    .section-label {
+      display: flex; align-items: center; gap: 12px; margin: 28px 0 4px;
+      color: var(--text3); font-size: 12px; text-transform: uppercase; letter-spacing: .06em;
+    }
+    .section-label::before, .section-label::after { content: ""; flex: 1; height: 1px; background: var(--border); }
+    .grid.ext { grid-template-columns: repeat(2, 1fr); max-width: 480px; margin: 16px auto 0; }
+    .note {
+      font-size: 12px; color: var(--text3); line-height: 1.6;
+      background: var(--surface); border: 1px solid var(--border);
+      border-radius: 8px; padding: 12px 16px; margin-top: 16px;
+    }
+    .note b { color: var(--text2); }
+    .footer { text-align: center; margin-top: 24px; font-size: 12px; color: var(--text3); }
+    @media (max-width: 560px) { .grid, .grid.ext { grid-template-columns: 1fr; } }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>Рекордер звонков</h1>
+      <p>Установите приложение и при первом запуске впишите ваш сервер и ключ</p>
+    </div>
+
+    <div class="setup">
+      <h2>Что ввести при первом запуске:</h2>
+      <div class="field">
+        <span class="k">Сервер:</span>
+        <span class="v" id="serverUrl">—</span>
+        <button onclick="copyVal('serverUrl')">копировать</button>
+      </div>
+      <div class="field">
+        <span class="k">API-ключ:</span>
+        <span class="v">sqa_… — выдаёт администратор</span>
+      </div>
+      <ol>
+        <li>Установите приложение для вашей системы ниже.</li>
+        <li>На первом экране вставьте <b>Сервер</b> (адрес выше) и ваш <b>API-ключ</b>.</li>
+        <li>Записывайте звонки — они появятся в дашборде на этом же адресе.</li>
+      </ol>
+    </div>
+
+    <div class="grid">
+      <a class="card soon" data-os="mac">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M16.365 1.43c0 1.14-.493 2.27-1.177 3.08-.744.9-1.99 1.57-2.987 1.57-.12 0-.23-.02-.3-.03-.01-.06-.04-.22-.04-.39 0-1.15.572-2.27 1.206-2.98.804-.94 2.142-1.64 3.248-1.68.03.13.05.28.05.43zm4.565 15.71c-.03.07-.463 1.58-1.518 3.12-.945 1.34-1.94 2.71-3.43 2.71-1.517 0-1.9-.88-3.63-.88-1.698 0-2.302.91-3.67.91-1.377 0-2.332-1.26-3.428-2.8-1.287-1.82-2.323-4.63-2.323-7.28 0-4.28 2.797-6.55 5.552-6.55 1.448 0 2.675.95 3.6.95.865 0 2.222-1.01 3.902-1.01.613 0 2.886.06 4.374 2.19-.13.09-2.383 1.37-2.383 4.19 0 3.26 2.854 4.42 2.955 4.45z"/></svg>
+        <div class="name">macOS</div>
+        <div class="meta">Intel и Apple Silicon<br>скоро</div>
+        <div class="cta">Скоро</div>
+      </a>
+      <a class="card" id="card-windows" href="/download/dl/SilentQA-Recorder-Setup-4.0.0.exe" data-os="windows">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M3 5.1L10.3 4v7.3H3V5.1zm0 13.8l7.3 1.1v-7.2H3v6.1zM11.2 3.9L21 2.5v8.8h-9.8V3.9zm0 16.2L21 21.5v-8.7h-9.8v7.3z"/></svg>
+        <div class="name">Windows</div>
+        <div class="meta">Windows 10 / 11<br>установщик ~75 МБ</div>
+        <div class="cta">Скачать .exe →</div>
+      </a>
+      <a class="card" id="card-linux" href="/download/dl/SilentQA-Recorder-4.0.0.AppImage" data-os="linux">
+        <svg class="ico" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2C9 2 8 5 8 7c0 2 .5 3-1 5s-3 4-3 6c0 1.5 1 2 2 2 .5 1 2 2 6 2s5.5-1 6-2c1 0 2-.5 2-2 0-2-1.5-4-3-6s-1-3-1-5c0-2-1-5-4-5z"/></svg>
+        <div class="name">Linux</div>
+        <div class="meta">AppImage ~102 МБ</div>
+        <div class="cta">Скачать →</div>
+      </a>
+    </div>
+
+    <div class="note" id="winNote">
+      <b>Windows:</b> приложение пока без цифровой подписи — при запуске установщика появится синее окно «Windows защитила ваш компьютер». Нажмите <b>«Подробнее» → «Выполнить в любом случае»</b>.
+    </div>
+
+    <div class="section-label">Расширения для браузера</div>
+    <div class="grid ext">
+      <a class="card" href="/download/dl/silentqa-recorder-chrome.zip" data-os="">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>
+        <div class="name">Chrome</div>
+        <div class="meta">для звонков в браузере</div>
+        <div class="cta">Скачать .zip →</div>
+      </a>
+      <a class="card" href="/download/dl/silentqa-recorder-yandex.zip" data-os="">
+        <svg class="ico" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="4"/><line x1="21.17" y1="8" x2="12" y2="8"/><line x1="3.95" y1="6.06" x2="8.54" y2="14"/><line x1="10.88" y1="21.94" x2="15.46" y2="14"/></svg>
+        <div class="name">Яндекс.Браузер</div>
+        <div class="meta">для звонков в браузере</div>
+        <div class="cta">Скачать .zip →</div>
+      </a>
+    </div>
+    <div class="note">
+      <b>Установка расширения:</b> распакуйте zip → откройте <b>браузер → Расширения → включите «Режим разработчика» → «Загрузить распакованное»</b> и выберите папку. Затем в настройках расширения впишите Сервер и API-ключ.
+    </div>
+
+    <div class="footer">SilentQA · запись и аналитика звонков</div>
+  </div>
+
+  <script>
+    document.getElementById('serverUrl').textContent = location.origin;
+    function copyVal(id){ navigator.clipboard.writeText(document.getElementById(id).textContent).catch(function(){}); }
+    (function(){
+      try {
+        var ua=(navigator.userAgent||'').toLowerCase();
+        var os=/mac/.test(ua)?'mac':(/win/.test(ua)?'windows':(/linux/.test(ua)?'linux':null));
+        if(os) document.querySelectorAll('.card[data-os="'+os+'"]').forEach(function(c){c.classList.add('suggested');});
+        if(os!=='windows'){ var n=document.getElementById('winNote'); if(n) n.style.display='none'; }
+      } catch(e){}
+    })();
+  </script>
+</body>
+</html>
