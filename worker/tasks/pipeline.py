@@ -287,6 +287,25 @@ def _get_session_created_at(session_id: str):
         return None
 
 
+def _merge_kb_keyterms(word_boost: list[str]) -> list[str]:
+    """Union config word_boost with KB feeds_asr keyterms; dedup; survive KB errors."""
+    try:
+        from tasks.knowledge_base import cap_keyterms, kb_keyterms
+        return cap_keyterms(list(word_boost or []) + kb_keyterms())
+    except Exception:
+        logger.exception("kb keyterms merge failed; using config word_boost only")
+        return list(word_boost or [])
+
+
+def _kb_glossary_safe() -> str:
+    try:
+        from tasks.knowledge_base import kb_glossary
+        return kb_glossary()
+    except Exception:
+        logger.exception("kb glossary failed; using empty")
+        return ""
+
+
 def merge_chunks(session_id: str) -> str:
     """Склеивает WebM чанки в один WAV 16kHz mono (формат для Whisper).
 
@@ -588,6 +607,7 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     else:
         task.update_state(state="PROGRESS", meta={"step": "transcribing", "progress": 15})
         word_boost = get_word_boost(company_config)
+        word_boost = _merge_kb_keyterms(word_boost)        # KB layer-2 (best-effort)
         engine_override = get_asr_engine(company_config)
         logger.info(f"[{session_id}] Step 2: Transcribing (word_boost: {len(word_boost)} terms)...")
         transcript = transcribe_audio(audio_path, word_boost=word_boost, engine_override=engine_override)
@@ -609,7 +629,20 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         logger.info(f"[{session_id}] Step 4: Merging transcript with speakers...")
         transcript_with_speakers = merge_transcript_with_speakers(transcript, diarization)
 
-    save_results(session_id, "transcript", transcript_with_speakers)
+    # KB layer-1: engine-agnostic correction + tagging. Idempotent → safe for reprocess.
+    try:
+        from tasks.knowledge_base import kb_build_matcher, normalize_transcript
+        matcher = kb_build_matcher()
+        transcript_with_speakers, _kb_hits = normalize_transcript(transcript_with_speakers, matcher)
+    except Exception:
+        logger.exception(f"[{session_id}] KB normalize failed; transcript unmodified")
+        _kb_hits = []
+    save_results(session_id, "transcript", transcript_with_speakers)  # normalized on disk
+    try:
+        from tasks.knowledge_base import kb_record_mentions
+        kb_record_mentions(session_id, _kb_hits)
+    except Exception:
+        logger.exception(f"[{session_id}] KB record_mentions failed")
 
     # === Branch: extraction template skips quality+sentiment+amocrm ===
     template_id_meta = (session_meta or {}).get("template_id")
@@ -623,7 +656,8 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         try:
             with eng.connect() as conn:
                 with _DbSession(bind=conn, expire_on_commit=False) as db:
-                    run_extraction(db, session_id, template_id)
+                    from tasks.knowledge_base import kb_glossary
+                    run_extraction(db, session_id, template_id, glossary=kb_glossary())
             logger.info(f"[{session_id}] Extraction completed")
         finally:
             eng.dispose()
@@ -710,6 +744,7 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         use_extended_schema=use_extended,
         prior_context=prior_context,
         template_driven=template_driven,
+        glossary=_kb_glossary_safe(),
     )
     save_results(session_id, "quality", quality_report)
 
