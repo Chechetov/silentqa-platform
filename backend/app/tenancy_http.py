@@ -34,7 +34,7 @@ class TenantRegistry:
                 res = await db.execute(
                     text(
                         "SELECT slug, schema_name, status, custom_domains, "
-                        "api_key_hash, api_key_required "
+                        "api_key_hash, api_key_required, modules "
                         "FROM shared.tenants"
                     )
                 )
@@ -46,6 +46,7 @@ class TenantRegistry:
                         "custom_domains": list(r.custom_domains or []),
                         "api_key_hash": r.api_key_hash,
                         "api_key_required": r.api_key_required,
+                        "modules": dict(r.modules or {}),
                     }
                     for r in res
                 ]

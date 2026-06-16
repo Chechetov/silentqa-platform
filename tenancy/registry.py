@@ -16,11 +16,12 @@ def iter_active_tenants() -> list[dict]:
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT slug, schema_name FROM shared.tenants "
+                "SELECT slug, schema_name, modules FROM shared.tenants "
                 "WHERE status = 'active' ORDER BY slug"
             )
             return [
-                {"slug": r[0], "schema_name": r[1]} for r in cur.fetchall()
+                {"slug": r[0], "schema_name": r[1], "modules": dict(r[2] or {})}
+                for r in cur.fetchall()
             ]
     finally:
         conn.close()
