@@ -7,7 +7,7 @@ from pathlib import Path
 from celery import Celery
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, table, column
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tenancy.context import get_tenant_slug
@@ -27,6 +27,7 @@ from app.auth_user import (
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
+from app.modules import require_module
 from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
 from tenancy.context import require_tenant_slug
 from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
@@ -37,6 +38,9 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 celery_app = Celery("voiceqa", broker=settings.REDIS_URL)
 
+# Lightweight table handle for the kb_tag filter subquery (no ORM model needed).
+_kb_mentions = table("kb_entry_mentions", column("session_id"), column("entry_id"))
+
 
 @router.get("", dependencies=[Depends(require_viewer)])
 async def list_sessions(
@@ -45,6 +49,7 @@ async def list_sessions(
     source: str | None = None,
     phone: str | None = None,
     template_id: str | None = None,
+    kb_tag: str | None = None,
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(employee_scope),
 ):
@@ -69,6 +74,11 @@ async def list_sessions(
 
     if scope is not None:
         filters.append(Session.metadata_["employee"].astext == scope)
+
+    if kb_tag:
+        filters.append(Session.id.in_(
+            select(_kb_mentions.c.session_id).where(_kb_mentions.c.entry_id == kb_tag)
+        ))
 
     count_q = select(func.count()).select_from(Session)
     list_q = select(Session).order_by(Session.created_at.desc())
@@ -386,7 +396,8 @@ async def link_lead(
     return _to_response(sess, chunks_count or 0)
 
 
-@router.get("/{session_id}/extraction", dependencies=[Depends(require_session_access)])
+@router.get("/{session_id}/extraction",
+            dependencies=[Depends(require_session_access), Depends(require_module("complexes"))])
 async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Return the latest extraction for the session, or 404 if none exists."""
     row = (await db.execute(text("""
@@ -404,6 +415,18 @@ async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depen
         "complex_id": str(row[2]) if row[2] else None,
         "template": {"id": str(row[3]), "name": row[4], "json_schema": row[5]},
     }
+
+
+@router.get("/{session_id}/tags", dependencies=[Depends(require_session_access)])
+async def get_session_tags(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text("""
+        SELECT e.id, e.term, c.name, m.count
+        FROM kb_entry_mentions m
+        JOIN kb_entries e ON e.id = m.entry_id
+        JOIN kb_categories c ON c.id = e.category_id
+        WHERE m.session_id = :sid ORDER BY m.count DESC
+    """), {"sid": session_id})).all()
+    return [{"entry_id": str(r[0]), "term": r[1], "category": r[2], "count": r[3]} for r in rows]
 
 
 @router.post("/{session_id}/finish", response_model=SessionResponse,
