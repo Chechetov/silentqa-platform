@@ -20,3 +20,23 @@ def test_registry_row_exposes_modules(monkeypatch):
     reg = TenantRegistry(ttl_seconds=0)
     rows = asyncio.run(reg.all_tenants())
     assert rows[0]["modules"] == {"knowledge_base": True, "complexes": False}
+
+
+from app.modules import MODULE_DEFAULTS, module_enabled
+
+
+def test_default_semantics():
+    # knowledge_base absent → ON; complexes/amocrm absent → OFF
+    assert module_enabled({}, "knowledge_base") is True
+    assert module_enabled({}, "complexes") is False
+    assert module_enabled({}, "amocrm") is False
+
+
+def test_explicit_overrides_default():
+    assert module_enabled({"knowledge_base": False}, "knowledge_base") is False
+    assert module_enabled({"complexes": True}, "complexes") is True
+
+
+def test_unknown_module_defaults_off():
+    assert module_enabled({}, "nonexistent") is False
+    assert "knowledge_base" in MODULE_DEFAULTS
