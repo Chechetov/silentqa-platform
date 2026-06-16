@@ -102,9 +102,10 @@ def provision(
             cur.execute(f"CREATE SCHEMA {schema}")
             cur.execute(
                 "INSERT INTO shared.tenants "
-                "(slug, schema_name, display_name, status) "
-                "VALUES (%s, %s, %s, 'active')",
-                (slug, schema, name or slug),
+                "(slug, schema_name, display_name, status, modules) "
+                "VALUES (%s, %s, %s, 'active', %s::jsonb)",
+                (slug, schema, name or slug,
+                 '{"knowledge_base": true, "complexes": false, "amocrm": false}'),
             )
         conn.commit()
         from app.migrate import run_tenant
