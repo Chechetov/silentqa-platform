@@ -65,6 +65,15 @@ def _seed_admin(conn, schema: str, email: str, password: str) -> None:
         )
 
 
+def _seed_kb_category(conn, schema: str) -> None:
+    """Find-or-create the default 'Термины' KB category (feeds_asr + feeds_llm)."""
+    with conn.cursor() as cur:
+        cur.execute(
+            f"INSERT INTO {schema}.kb_categories (name, slug, feeds_asr, feeds_llm) "
+            "VALUES ('Термины', 'terms', true, true) ON CONFLICT (slug) DO NOTHING"
+        )
+
+
 def _set_api_key(conn, slug: str) -> str:
     key, digest = generate_api_key()
     with conn.cursor() as cur:
@@ -111,6 +120,7 @@ def provision(
         from app.migrate import run_tenant
 
         run_tenant(schema)
+        _seed_kb_category(conn, schema)
         _seed_admin(conn, schema, admin_email, password)
         key = _set_api_key(conn, slug)
         conn.commit()
