@@ -111,3 +111,88 @@ def format_glossary(categories: list[dict], max_tokens: int = GLOSSARY_MAX_TOKEN
     if omitted:
         lines.append(f"… ещё {omitted} записей опущено")
     return "\n".join(lines)
+
+
+# --- DB wrappers: own their connection via tenant ctx; degrade to empty on error ---
+from tenancy.db import tenant_connect  # noqa: E402
+
+
+def _fetch_entries(feeds_col: str) -> list[dict]:
+    """Rows for matcher/keyterms/glossary from categories where the given flag is true."""
+    conn = tenant_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT e.id::text, e.term, e.aliases, e.description, c.name "
+                f"FROM kb_entries e JOIN kb_categories c ON c.id = e.category_id "
+                f"WHERE c.{feeds_col} = true ORDER BY c.created_at, e.created_at"
+            )
+            return [{"entry_id": r[0], "term": r[1], "aliases": r[2] or [],
+                     "description": r[3], "category": r[4]} for r in cur.fetchall()]
+    finally:
+        conn.close()
+
+
+def kb_build_matcher() -> Matcher:
+    """Matcher from feeds_asr + is_taxonomy entries (correction + tagging)."""
+    try:
+        conn = tenant_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT e.id::text, e.term, e.aliases FROM kb_entries e "
+                    "JOIN kb_categories c ON c.id = e.category_id "
+                    "WHERE c.feeds_asr = true OR c.is_taxonomy = true"
+                )
+                rows = [{"entry_id": r[0], "term": r[1], "aliases": r[2] or []} for r in cur.fetchall()]
+        finally:
+            conn.close()
+        return build_matcher(rows)
+    except Exception:
+        logger.exception("kb_build_matcher failed; using empty matcher")
+        return build_matcher([])
+
+
+def kb_keyterms() -> list[str]:
+    try:
+        rows = _fetch_entries("feeds_asr")
+        terms = [r["term"] for r in rows] + [a for r in rows for a in r["aliases"]]
+        return cap_keyterms(terms)
+    except Exception:
+        logger.exception("kb_keyterms failed; returning []")
+        return []
+
+
+def kb_glossary() -> str:
+    try:
+        rows = _fetch_entries("feeds_llm")
+        by_cat: dict[str, dict] = {}
+        for r in rows:
+            by_cat.setdefault(r["category"], {"name": r["category"], "entries": []})
+            by_cat[r["category"]]["entries"].append(r)
+        return format_glossary(list(by_cat.values()))
+    except Exception:
+        logger.exception("kb_glossary failed; returning ''")
+        return ""
+
+
+def kb_record_mentions(session_id, hits: list[tuple[str, int]]) -> None:
+    if not hits:
+        return
+    try:
+        conn = tenant_connect()
+        try:
+            with conn.cursor() as cur:
+                for entry_id, count in hits:
+                    cur.execute(
+                        "INSERT INTO kb_entry_mentions (entry_id, session_id, count) "
+                        "VALUES (%s, %s, %s) "
+                        "ON CONFLICT (entry_id, session_id) "
+                        "DO UPDATE SET count = EXCLUDED.count, updated_at = now()",
+                        (entry_id, str(session_id), count),
+                    )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("kb_record_mentions failed; skipping tags for %s", session_id)
