@@ -41,3 +41,11 @@ def test_extraction_403_when_complexes_off(monkeypatch, fake_redis):
 def test_tags_endpoint_requires_session(monkeypatch, fake_redis):
     c = _client(monkeypatch, fake_redis, {"knowledge_base": True})
     assert c.get("/api/sessions/00000000-0000-0000-0000-000000000001/tags").status_code == 401
+
+
+def test_kb_tag_invalid_uuid_422(monkeypatch, fake_redis):
+    # kb_tag is typed uuid.UUID → a non-UUID value is rejected at the route
+    # boundary (422), never reaching the DB as a `uuid = text` comparison (500).
+    c = _client(monkeypatch, fake_redis, {"knowledge_base": True})
+    r = c.get("/api/sessions?kb_tag=notauuid", cookies=_viewer())
+    assert r.status_code == 422

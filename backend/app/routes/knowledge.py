@@ -141,7 +141,7 @@ async def delete_entry(entry_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
 async def import_entries(body: ImportRequest, request: Request, db: AsyncSession = Depends(get_db)):
     """Bulk insert; dedup on (category_id, term) via ON CONFLICT DO NOTHING."""
     cl = request.headers.get("content-length")
-    if cl and int(cl) > IMPORT_MAX_BYTES:
+    if cl and cl.isdigit() and int(cl) > IMPORT_MAX_BYTES:
         raise HTTPException(status_code=413, detail="import body too large (max 1 MiB)")
     inserted = 0
     for row in body.rows:

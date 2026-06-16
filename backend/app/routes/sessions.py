@@ -8,6 +8,7 @@ from celery import Celery
 from fastapi import APIRouter, Depends, HTTPException, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, text, table, column
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tenancy.context import get_tenant_slug
@@ -39,7 +40,11 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 celery_app = Celery("voiceqa", broker=settings.REDIS_URL)
 
 # Lightweight table handle for the kb_tag filter subquery (no ORM model needed).
-_kb_mentions = table("kb_entry_mentions", column("session_id"), column("entry_id"))
+_kb_mentions = table(
+    "kb_entry_mentions",
+    column("session_id", PGUUID(as_uuid=True)),
+    column("entry_id", PGUUID(as_uuid=True)),
+)
 
 
 @router.get("", dependencies=[Depends(require_viewer)])
@@ -49,7 +54,7 @@ async def list_sessions(
     source: str | None = None,
     phone: str | None = None,
     template_id: str | None = None,
-    kb_tag: str | None = None,
+    kb_tag: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
     scope: str | None = Depends(employee_scope),
 ):

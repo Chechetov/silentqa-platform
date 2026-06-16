@@ -37,3 +37,11 @@ def test_cap_keyterms_dedup_and_limit():
     terms = ["a", "a", "b"] + [f"t{i}" for i in range(2000)]
     out = cap_keyterms(terms, limit=1000)
     assert len(out) == 1000 and len(set(out)) == 1000
+
+
+def test_normalize_survives_unicode_casefold_edge():
+    # U+0130 (İ) IGNORECASE-matches 'i' but casefolds to a 2-char sequence;
+    # _sub must not KeyError — it should pass the text through unchanged.
+    m = build_matcher([{"entry_id": "e1", "term": "Istanbul", "aliases": ["istanbul"]}])
+    out, hits = normalize_transcript([{"text": "İstanbul тур"}], m)
+    assert isinstance(out[0]["text"], str)  # no crash

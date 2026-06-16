@@ -30,7 +30,11 @@ class Matcher:
 
         def _sub(mobj):
             alias = mobj.group(0)
-            term, entry_id = self._lookup[alias.casefold()]
+            hit = self._lookup.get(alias.casefold())
+            if hit is None:
+                # casefold/IGNORECASE edge (e.g. U+0130 İ folds to 2 chars) — leave as-is
+                return alias
+            term, entry_id = hit
             hits[entry_id] = hits.get(entry_id, 0) + 1
             return term
 
