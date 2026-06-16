@@ -1112,6 +1112,7 @@ def assess_quality(
     use_extended_schema: bool = False,
     prior_context: dict | None = None,
     template_driven: bool = False,
+    glossary: str | None = None,
 ) -> dict:
     """
     Оценивает качество разговора через OpenAI GPT-5.4 API.
@@ -1164,11 +1165,13 @@ def assess_quality(
             use_extended_schema=use_extended_schema,
             prior_context=prior_context,
             template_driven=template_driven,
+            glossary=glossary,
         )
     except Exception as e:
         logger.warning(f"Structured output failed ({e}), falling back to legacy prompt")
         result = _assess_with_legacy_prompt(
-            client, transcript_text, sentiment_json, protocol, custom_instructions
+            client, transcript_text, sentiment_json, protocol, custom_instructions,
+            glossary=glossary,
         )
 
     logger.info(f"Quality assessment complete. Overall score: {result.get('overall_score')}")
@@ -1178,7 +1181,7 @@ def assess_quality(
 def _assess_with_structured_output(
     client, transcript_text, sentiment_json, protocol, custom_instructions,
     criteria_instructions="", use_extended_schema=False,
-    prior_context=None, template_driven=False,
+    prior_context=None, template_driven=False, glossary=None,
 ):
     """Assess using structured output (JSON schema) via GPT-5.4 Responses API."""
     if not criteria_instructions:
@@ -1206,13 +1209,16 @@ def _assess_with_structured_output(
         schema_name = "quality_assessment"
         version = 2
 
-    user_parts = [
+    user_parts = []
+    if glossary:
+        user_parts.append(glossary + "\n")
+    user_parts.append(
         USER_PROMPT.format(
             protocol=protocol or DEFAULT_PROTOCOL,
             transcript=transcript_text,
             sentiment_summary=sentiment_json,
         )
-    ]
+    )
     if prior_context is not None:
         user_parts.append("\n## Prior context\n" + json.dumps(prior_context, ensure_ascii=False, indent=2))
     user = "\n".join(user_parts)
@@ -1246,7 +1252,7 @@ def _assess_with_structured_output(
 
 
 def _assess_with_legacy_prompt(
-    client, transcript_text, sentiment_json, protocol, custom_instructions
+    client, transcript_text, sentiment_json, protocol, custom_instructions, glossary=None
 ):
     """Fallback: legacy single-prompt approach via Chat Completions."""
     prompt = ASSESSMENT_PROMPT.format(
@@ -1255,6 +1261,8 @@ def _assess_with_legacy_prompt(
         sentiment_summary=sentiment_json,
         custom_instructions=custom_instructions,
     )
+    if glossary:
+        prompt = glossary + "\n\n" + prompt
 
     logger.info("Sending transcript to GPT-5.4 for quality assessment (legacy)...")
     response = client.chat.completions.create(

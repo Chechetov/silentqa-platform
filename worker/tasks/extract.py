@@ -48,7 +48,7 @@ def _flatten_transcript(transcript) -> str:
     return "\n".join(parts)
 
 
-def run_extraction(db: DbSession, session_id, template_id) -> dict:
+def run_extraction(db: DbSession, session_id, template_id, glossary: str | None = None) -> dict:
     """Run the LLM extraction step. Returns the extracted dict.
 
     Raises RuntimeError on safety-cap breach, missing transcript, or LLM error —
@@ -77,11 +77,12 @@ def run_extraction(db: DbSession, session_id, template_id) -> dict:
 
     client = OpenAI()
     logger.info("Running extraction with template '%s' for session %s", template.name, session_id)
+    user_content = (glossary + "\n\n" if glossary else "") + f"Транскрипт:\n\n{flat}"
     resp = client.responses.create(
         model="gpt-5.4",
         input=[
             {"role": "system", "content": template.prompt},
-            {"role": "user", "content": f"Транскрипт:\n\n{flat}"},
+            {"role": "user", "content": user_content},
         ],
         text={
             "format": {
