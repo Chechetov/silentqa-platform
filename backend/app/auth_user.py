@@ -127,11 +127,17 @@ async def require_ingestion_auth(
 
 
 async def require_amocrm_tenant(
+    request: Request,
     user: UserCtx = Depends(require_admin),
 ) -> UserCtx:
-    """/api/amocrm/*: admin + только тенант с AmoCRM-интеграцией (спека 5.6)."""
-    from tenancy.registry import AMOCRM_TENANT_SLUGS
+    """/api/amocrm/*: admin + tenant with the amocrm module enabled (spec §5.3).
 
-    if get_tenant_slug() not in AMOCRM_TENANT_SLUGS:
-        raise HTTPException(status_code=403, detail="amocrm_not_enabled")
+    Single source of truth = tenants.modules. AMOCRM_TENANT_SLUGS остаётся для
+    внутренних RE-путей пайплайна (spec §9 — будущая полная унификация).
+    """
+    from app.modules import module_enabled
+
+    modules = (getattr(request.state, "tenant", None) or {}).get("modules")
+    if not module_enabled(modules, "amocrm"):
+        raise HTTPException(status_code=403, detail="module_disabled")
     return user

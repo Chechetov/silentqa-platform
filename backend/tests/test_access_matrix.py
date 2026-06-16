@@ -14,6 +14,7 @@ from app.auth_sessions import SESSION_COOKIE
 ROWS = [{
     "slug": "realestate", "schema_name": "t_realestate", "status": "active",
     "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+    "modules": {"complexes": True, "amocrm": True, "knowledge_base": True},
 }]
 
 
@@ -259,4 +260,4 @@ def test_amocrm_admin_of_non_amocrm_tenant_403(monkeypatch, fake_redis):
     r = c.post("/api/amocrm/reprocess", cookies={SESSION_COOKIE: sid},
                json={"lead_id": 1})
     assert r.status_code == 403
-    assert r.json()["detail"] == "amocrm_not_enabled"
+    assert r.json()["detail"] == "module_disabled"

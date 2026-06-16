@@ -22,7 +22,7 @@ def test_path_layouts():
 
 
 def test_iter_active_tenants(monkeypatch):
-    rows = [("realestate", "t_realestate"), ("acme", "t_acme")]
+    rows = [("realestate", "t_realestate", {"amocrm": True}), ("acme", "t_acme", {})]
 
     class _Cur:
         def execute(self, sql, params=None):
@@ -48,6 +48,6 @@ def test_iter_active_tenants(monkeypatch):
     tenants = treg.iter_active_tenants()
     assert [t["slug"] for t in tenants] == ["realestate", "acme"]
     assert tenants[0]["schema_name"] == "t_realestate"
-    # Phase 1: AmoCRM integration is hardcoded to realestate
+    # AmoCRM gated by modules.amocrm (realestate has it on)
     amo = treg.iter_amocrm_tenants()
     assert [t["slug"] for t in amo] == ["realestate"]

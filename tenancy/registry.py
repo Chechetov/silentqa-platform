@@ -28,6 +28,9 @@ def iter_active_tenants() -> list[dict]:
 
 
 def iter_amocrm_tenants() -> list[dict]:
+    # Single source of truth = tenants.modules.amocrm (inline default OFF; keeps
+    # tenancy/ app-independent so the worker doesn't import app.modules).
     return [
-        t for t in iter_active_tenants() if t["slug"] in AMOCRM_TENANT_SLUGS
+        t for t in iter_active_tenants()
+        if bool((t.get("modules") or {}).get("amocrm", False))
     ]

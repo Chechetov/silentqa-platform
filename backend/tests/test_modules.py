@@ -40,3 +40,43 @@ def test_explicit_overrides_default():
 def test_unknown_module_defaults_off():
     assert module_enabled({}, "nonexistent") is False
     assert "knowledge_base" in MODULE_DEFAULTS
+
+
+import asyncio
+
+from starlette.testclient import TestClient
+
+from app.auth_sessions import SESSION_COOKIE
+
+
+async def _coro(v):
+    return v
+
+
+def _admin_cookie(schema):
+    from app import auth_sessions
+    from tenancy.context import reset_tenant_schema, set_tenant_schema
+
+    async def seed():
+        token = set_tenant_schema(schema)
+        try:
+            return await auth_sessions.create_session("u1", "a@t.io", "admin")
+        finally:
+            reset_tenant_schema(token)
+
+    return {SESSION_COOKIE: asyncio.run(seed())}
+
+
+def test_amocrm_blocked_when_module_off(monkeypatch, fake_redis):
+    from app.tenancy_http import TenantRegistry
+
+    rows = [{"slug": "acme", "schema_name": "t_acme", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {"amocrm": False}}]
+    monkeypatch.setattr(TenantRegistry, "all_tenants", lambda self: _coro(rows))
+    from app.main import app
+
+    c = TestClient(app, base_url="https://acme.silentqa.com")
+    r = c.post("/api/amocrm/reprocess", cookies=_admin_cookie("t_acme"), json={"lead_id": 1})
+    assert r.status_code == 403
+    assert r.json()["detail"] == "module_disabled"
