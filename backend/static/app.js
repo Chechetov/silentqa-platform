@@ -469,7 +469,9 @@ async function renderCallDetail(id) {
     let sentiment = null;
     try { sentiment = await api(`/api/sessions/${id}/sentiment`); } catch {}
     let extraction = null;
-    try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {}
+    if (moduleOn('complexes')) { try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {} }
+    let kbTags = [];
+    if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
@@ -566,6 +568,12 @@ async function renderCallDetail(id) {
       </div>
       ` : ''}
     `;
+
+    if (kbTags.length) {
+      html += `<div class="kb-tags-section" style="margin-bottom:16px"><h2>Теги базы знаний</h2>` +
+        kbTags.map(t => `<span class="badge" style="margin-right:6px">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
+        `</div>`;
+    }
 
     if (!extraction) {
     // Sentiment timeline
@@ -1429,7 +1437,7 @@ async function renderUpload() {
           <option value="">— Без шаблона (legacy-протокол) —</option>
           ${templates.map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)} (${escapeHtml(t.kind)})</option>`).join('')}
         </select>
-        <p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>
+        ${moduleOn('complexes') ? '<p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>' : ''}
       </div>
       <div class="form-group">
         <label>Сотрудник / врач</label>
