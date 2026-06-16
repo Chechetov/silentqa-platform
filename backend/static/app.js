@@ -64,6 +64,8 @@ async function router() {
   } else if (route.startsWith('template/')) {
     if (!isAdmin()) { navigate('#templates'); return; }
     await renderTemplateEdit(route.split('/')[1]);
+  } else if (route === 'knowledge') {
+    await renderKnowledge();
   } else if (route === 'complexes') {
     await renderComplexes();
   } else if (route.startsWith('complex/')) {
@@ -1830,6 +1832,188 @@ async function renderReprocess() {
 
 // ============================================
 // PAGE: Templates
+// ============================================
+// База знаний (#knowledge)
+// ============================================
+async function renderKnowledge() {
+  showLoading();
+  try {
+    const cats = await api('/api/knowledge/categories?include_entries=true');
+    let html = `
+      <div class="page-header">
+        <div>
+          <h1>База знаний</h1>
+          <p>Термины, бренды, сущности: коррекция транскрипта, глоссарий для LLM, теги звонков</p>
+        </div>
+        ${isAdmin() ? `<button class="btn btn-primary" onclick="kbNewCategory()">+ Категория</button>` : ''}
+      </div>`;
+    html += cats.length
+      ? cats.map(c => kbCategoryCard(c)).join('')
+      : `<div class="empty-state"><p>Пока нет категорий${isAdmin() ? ' — создайте первую' : ''}</p></div>`;
+    app.innerHTML = html;
+  } catch (err) {
+    app.innerHTML = `<div class="empty-state"><p>Ошибка: ${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+function kbFlagBadge(cat, key, label) {
+  const on = !!cat[key];
+  const attr = isAdmin()
+    ? `onclick="kbToggleFlag('${cat.id}','${key}',${!on})" style="cursor:pointer"`
+    : '';
+  return `<span class="badge ${on ? 'badge-completed' : ''}" ${attr} title="${label}">${label}: ${on ? 'да' : 'нет'}</span>`;
+}
+
+function kbCategoryCard(cat) {
+  const entries = cat.entries || [];
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <h3 style="margin:0">${escapeHtml(cat.name)} <span class="muted" style="font-weight:400">(${escapeHtml(cat.slug)})</span></h3>
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" onclick="kbDeleteCategory('${cat.id}', ${JSON.stringify(cat.name)})">✕</button>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
+        ${kbFlagBadge(cat, 'feeds_asr', 'ASR')}
+        ${kbFlagBadge(cat, 'feeds_llm', 'Глоссарий')}
+        ${kbFlagBadge(cat, 'is_taxonomy', 'Теги')}
+      </div>
+      ${cat.description ? `<p class="muted">${escapeHtml(cat.description)}</p>` : ''}
+      <table class="data-table" style="width:100%;margin-top:8px">
+        <thead><tr><th>Термин</th><th>Синонимы</th><th>Описание</th><th></th></tr></thead>
+        <tbody>
+          ${entries.length ? entries.map(e => `
+            <tr>
+              <td>${escapeHtml(e.term)}</td>
+              <td>${escapeHtml((e.aliases || []).join(', '))}</td>
+              <td>${escapeHtml(e.description || '')}</td>
+              <td style="white-space:nowrap;text-align:right">
+                <button class="btn btn-secondary btn-sm" onclick="kbShowMentions('${e.id}', ${JSON.stringify(e.term)})">Упоминания</button>
+                ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="kbDeleteEntry('${e.id}', ${JSON.stringify(e.term)})">✕</button>` : ''}
+              </td>
+            </tr>`).join('') : `<tr><td colspan="4" class="muted">Записей пока нет</td></tr>`}
+        </tbody>
+      </table>
+      ${isAdmin() ? `
+        <form onsubmit="event.preventDefault(); kbAddEntry('${cat.id}', this)" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <input type="text" name="term" placeholder="термин" required style="flex:1;min-width:120px">
+          <input type="text" name="aliases" placeholder="синонимы через запятую" style="flex:1;min-width:120px">
+          <input type="text" name="description" placeholder="описание" style="flex:2;min-width:120px">
+          <button type="submit" class="btn btn-secondary btn-sm">+ Запись</button>
+        </form>
+        <details style="margin-top:8px">
+          <summary class="muted" style="cursor:pointer">Импорт списком</summary>
+          <form onsubmit="event.preventDefault(); kbImport('${cat.id}', this)" style="margin-top:8px">
+            <textarea name="rows" rows="5" placeholder="Один термин на строку, синонимы после двоеточия: Эталон: etalon, эталон" style="width:100%"></textarea>
+            <button type="submit" class="btn btn-secondary btn-sm" style="margin-top:6px">Импортировать</button>
+          </form>
+        </details>
+      ` : ''}
+    </div>`;
+}
+
+async function kbNewCategory() {
+  const name = prompt('Название категории (например, «Бренды»):');
+  if (!name) return;
+  const slug = (prompt('Slug (латиница, напр. brands):', '') || '').trim();
+  if (!slug) return;
+  try {
+    await api('/api/knowledge/categories', {
+      method: 'POST',
+      body: JSON.stringify({ name: name.trim(), slug }),
+    });
+    showToast('Категория создана');
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось создать: ' + err.message, 'error');
+  }
+}
+
+async function kbToggleFlag(catId, key, value) {
+  try {
+    await api(`/api/knowledge/categories/${catId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ [key]: value }),
+    });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось изменить: ' + err.message, 'error');
+  }
+}
+
+async function kbDeleteCategory(catId, name) {
+  if (!confirm(`Удалить категорию "${name}" со всеми записями?`)) return;
+  try {
+    await api(`/api/knowledge/categories/${catId}`, { method: 'DELETE' });
+    showToast('Категория удалена');
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось удалить: ' + err.message, 'error');
+  }
+}
+
+async function kbAddEntry(catId, form) {
+  const aliases = form.aliases.value.split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('/api/knowledge/entries', {
+      method: 'POST',
+      body: JSON.stringify({
+        category_id: catId,
+        term: form.term.value.trim(),
+        aliases,
+        description: form.description.value.trim() || null,
+      }),
+    });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось добавить: ' + err.message, 'error');
+  }
+}
+
+async function kbDeleteEntry(entryId, term) {
+  if (!confirm(`Удалить запись "${term}"?`)) return;
+  try {
+    await api(`/api/knowledge/entries/${entryId}`, { method: 'DELETE' });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось удалить: ' + err.message, 'error');
+  }
+}
+
+async function kbImport(catId, form) {
+  const rows = form.rows.value.split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return null;
+    const idx = t.indexOf(':');
+    const term = (idx >= 0 ? t.slice(0, idx) : t).trim();
+    const aliases = idx >= 0 ? t.slice(idx + 1).split(',').map(s => s.trim()).filter(Boolean) : [];
+    return term ? { term, aliases } : null;
+  }).filter(Boolean);
+  if (!rows.length) return;
+  try {
+    const res = await api('/api/knowledge/import', {
+      method: 'POST',
+      body: JSON.stringify({ category_id: catId, rows }),
+    });
+    showToast(`Импортировано: ${res.inserted} из ${res.received}`);
+    renderKnowledge();
+  } catch (err) {
+    showToast('Импорт не удался: ' + err.message, 'error');
+  }
+}
+
+async function kbShowMentions(entryId, term) {
+  try {
+    const rows = await api(`/api/knowledge/entries/${entryId}/mentions`);
+    if (!rows.length) { showToast(`«${term}»: упоминаний нет`); return; }
+    const total = rows.reduce((s, r) => s + (r.count || 0), 0);
+    const lines = rows.map(r => `${formatDate(r.created_at)} — ${r.count}`).join('\n');
+    alert(`«${term}»: ${total} упоминаний в ${rows.length} звонках\n\n${lines}`);
+  } catch (err) {
+    showToast('Не удалось загрузить упоминания: ' + err.message, 'error');
+  }
+}
+
+
 // ============================================
 function _kindLabel(kind) {
   if (kind === 'extraction') return 'Извлечение фактов';
