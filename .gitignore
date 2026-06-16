@@ -4,6 +4,11 @@ __pycache__/
 venv/
 *.egg-info/
 .env
+# Deployment secrets — API keys / admin passwords (per-tenant), MUST never enter git
+.deploy-secrets
+*.deploy-secrets
+.deploy-secrets.*
+.pid.*
 *.log
 .DS_Store
 
