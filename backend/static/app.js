@@ -16,6 +16,7 @@ let currentUser = null; // {email, role} после логина
 let features = {}; // module-флаги из /api/tenancy/features
 const isAdmin = () => currentUser && currentUser.role === 'admin';
 const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
+const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // tenant-configurable (Phase 2)
 
 // ---- Router ----
 function navigate(hash) {
@@ -2471,7 +2472,7 @@ async function linkLeadModal(sessionId) {
           <p class="modal-hint">Вставьте ссылку на сделку (https://…amocrm.ru/leads/detail/12345) или ищите по имени / телефону / email. После привязки оценка будет пересчитана с учётом истории по клиенту, а в карточку сделки уйдут заметки со ссылкой, выжимкой и планом.</p>
           ${currentLeadId ? `
             <div class="link-current">
-              Текущая привязка: <a href="https://rogovestate.amocrm.ru/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>
+              Текущая привязка: ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
               <button type="button" id="leadUnlink" class="link-action">Отвязать</button>
             </div>
           ` : ''}
@@ -2518,7 +2519,7 @@ async function linkLeadModal(sessionId) {
           </div>
           <div class="lead-result-sub">
             <span>Открыть в AmoCRM:&nbsp;</span>
-            <a href="https://rogovestate.amocrm.ru/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://rogovestate.amocrm.ru/leads/detail/${leadId}</a>
+            ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
           </div>
         </button>`;
       results.querySelector('.lead-result').addEventListener('click', () => linkAndClose(leadId, `сделке #${leadId}`));
