@@ -13,7 +13,9 @@ let sessionsCache = null;
 let _currentCallData = null; // {session, transcript, analysis} for export
 let _currentCompanyData = null; // company config for editing
 let currentUser = null; // {email, role} после логина
+let features = {}; // module-флаги из /api/tenancy/features
 const isAdmin = () => currentUser && currentUser.role === 'admin';
+const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
 
 // ---- Router ----
 function navigate(hash) {
@@ -86,6 +88,11 @@ window.addEventListener('load', () => {
 async function bootAuth() {
   try {
     currentUser = await api('/api/user-auth/me');
+    try { features = await api('/api/tenancy/features'); } catch (e) { features = {}; }
+    document.querySelectorAll('[data-module]').forEach(el => {
+      const li = el.closest('li') || el;
+      if (features[el.dataset.module] === false) li.style.display = 'none';
+    });
     document.querySelectorAll('[data-admin-only]').forEach(el => {
       el.style.display = isAdmin() ? '' : 'none';
     });
