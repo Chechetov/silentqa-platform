@@ -473,9 +473,12 @@ async function renderCallDetail(id) {
     if (moduleOn('complexes')) { try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {} }
     let kbTags = [];
     if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
+    let card = null;
+    try { card = await api(`/api/sessions/${id}/card`); } catch {}
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
+    const _currentCardLabel = 'Карта приёма';
     const meta = session.metadata || {};
     const rawScore = analysis && analysis.overall_score != null ? analysis.overall_score : null;
     const overallScore = rawScore != null ? normalizeScore(rawScore, analysis) : null;
@@ -577,6 +580,7 @@ async function renderCallDetail(id) {
     }
 
     if (!extraction) {
+      html += renderCard(card, _currentCardLabel);
     // Sentiment timeline
     if (sentiments.length > 0) {
       html += `
@@ -2412,6 +2416,42 @@ function renderComplexProfile(data) {
     return '<p class="muted">Информация ещё не извлечена. Обработай презентацию через шаблон «Презентация ЖК».</p>';
   }
   return html;
+}
+
+function renderCard(card, label) {
+  if (!card) return '';
+  const esc = escapeHtml;
+  const list = (a) => (a && a.length) ? a.map(esc).join(', ') : '—';
+  const cl = card; // card.json IS the clinical object
+  const p = cl.patient || {};
+  const an = cl.anamnesis || {};
+  const tp = cl.treatment_plan || {};
+  const teeth = (cl.dental_status || []).map(t =>
+    `<tr><td>${esc(t.tooth)}</td><td>${esc(t.status)}</td><td>${esc(t.note || '—')}</td></tr>`).join('');
+  const stages = (tp.stages || []).map(s =>
+    `<tr><td>${esc(s.procedure)}</td><td>${esc(s.teeth || '—')}</td><td>${esc(s.priority)}</td><td>${esc(s.timeline || '—')}</td><td>${esc(s.price || '—')}</td></tr>`).join('');
+  const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+  return `
+    <div class="card">
+      <h3>🦷 ${esc(label || 'Карта приёма')}</h3>
+      <dl class="card-dl">
+        ${row('Пациент', `${esc(p.gender || '—')}; имя ${esc(p.name || '—')}; возраст ${esc(p.age || '—')}; тел. ${esc(p.phone || '—')}`)}
+        ${row('Повод', esc(cl.chief_complaint || '—'))}
+        ${row('Жалобы', list(an.complaints))}
+        ${row('Анамнез', esc(an.history || '—'))}
+        ${row('Хронические', list(an.chronic_conditions))}
+        ${row('Аллергии', list(an.allergies))}
+        ${row('Препараты', list(an.medications))}
+        ${row('Осмотр', list(cl.examination))}
+        ${row('Диагноз', list(cl.diagnosis))}
+      </dl>
+      ${teeth ? `<h4>Зубная формула</h4><table class="card-table"><tr><th>Зуб</th><th>Статус</th><th>Заметка</th></tr>${teeth}</table>` : ''}
+      ${stages ? `<h4>План лечения</h4><table class="card-table"><tr><th>Процедура</th><th>Зубы</th><th>Приоритет</th><th>Срок</th><th>Цена</th></tr>${stages}</table>
+        <p><b>Итого:</b> ${esc(tp.total_cost || '—')} · <b>Оплата:</b> ${list(tp.payment_options)}</p>` : '<h4>План лечения</h4><p>—</p>'}
+      ${(cl.recommendations && cl.recommendations.length) ? `<h4>Рекомендации</h4><ul>${cl.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      ${cl.visit_outcome ? `<p><b>Итог визита:</b> ${esc(cl.visit_outcome.result)} — ${esc(cl.visit_outcome.next_step || '—')}</p>` : ''}
+      ${cl.summary ? `<blockquote>${esc(cl.summary)}</blockquote>` : ''}
+    </div>`;
 }
 
 async function reprocessSession(sessionId) {
