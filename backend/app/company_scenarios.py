@@ -43,6 +43,16 @@ def _scenarios_for_config(config_id: str) -> frozenset[str]:
     return frozenset(sid for sid, _ in _scenario_list_for_config(config_id))
 
 
+def clear_scenario_caches() -> None:
+    """Invalidate all scenario caches. Call after any company-config write.
+
+    Единая точка инвалидации: чистит КАЖДЫЙ scenario-кеш модуля. Если добавляешь
+    ещё один lru_cache по сценариям — сбрасывай его здесь же, иначе сайт записи
+    конфига (routes/companies.py:_write_config) снова рассинхронизируется."""
+    _scenario_list_for_config.cache_clear()
+    _scenarios_for_config.cache_clear()
+
+
 def scenarios_for(config_id: str | None) -> list[dict]:
     """Сценарии конфига как [{"id":..., "name":...}] (name → id, если отсутствует).
 
