@@ -31,7 +31,7 @@ from tasks.diarize import diarize_audio
 from tasks.sentiment import analyze_sentiment
 from tasks.quality import assess_quality, plan_next_call
 from tasks.prior_context import build_prior_context_for_session
-from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario, tenant_company_config_id
+from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario, get_default_scenario_id, tenant_company_config_id
 from tasks.amocrm_sync import find_lead_by_phone, create_enriched_note, update_note, format_enriched_note, tag_lead, format_next_call_plan, create_plain_note
 from tasks.deal_summary import build_deal_summary, push_deal_summary
 from tasks.lead_lock import lead_lock
@@ -748,6 +748,13 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     )
     save_results(session_id, "quality", quality_report)
 
+    # === 6b. Structured card (config-gated, generic; clinical only — QA above) ===
+    from tasks.card import run_card_extraction
+    card = run_card_extraction(transcript_with_speakers, company_config)
+    if card is not None:
+        save_results(session_id, "card", card)
+        logger.info(f"[{session_id}] Card extraction saved")
+
     # === 7. Auto-save speaker roles ===
     speaker_roles = quality_report.get("speaker_roles")
     if speaker_roles:
@@ -805,7 +812,7 @@ def _process_session_body(task, session_id: str, config: dict | None = None):
     company_id = config.get("company_id") or tenant_company_config_id()
     scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id)
+    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
     logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
@@ -870,7 +877,7 @@ def _process_session_from_file_body(task, session_id: str, audio_path: str, conf
     company_id = config.get("company_id") or tenant_company_config_id()
     scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id)
+    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
     logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
