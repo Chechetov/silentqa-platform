@@ -23,6 +23,7 @@ const setupServerUrl = document.getElementById('setupServerUrl');
 const setupUsername = document.getElementById('setupUsername');
 const setupPassword = document.getElementById('setupPassword');
 const setupApiKey = document.getElementById('setupApiKey');
+const setupEmployee = document.getElementById('setupEmployee');
 const btnTestConnection = document.getElementById('btnTestConnection');
 const testConnectionResult = document.getElementById('testConnectionResult');
 const btnSaveSetup = document.getElementById('btnSaveSetup');
@@ -75,6 +76,7 @@ const inputServerUrl = document.getElementById('inputServerUrl');
 const inputUsername = document.getElementById('inputUsername');
 const inputPassword = document.getElementById('inputPassword');
 const inputApiKey = document.getElementById('inputApiKey');
+const inputEmployee = document.getElementById('inputEmployee');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
 const settingsSaved = document.getElementById('settingsSaved');
 
@@ -91,6 +93,7 @@ let serverUrl = '';
 let username = '';
 let password = '';
 let apiKey = '';
+let employee = '';
 let brokerJwt = '';
 let brokerName = '';
 let brokerEmail = '';
@@ -101,6 +104,18 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function basicAuthHeader() {
   return username ? 'Basic ' + btoa(username + ':' + password) : '';
+}
+
+// API-key mode: тенант без AmoCRM-брокеров (fulldent) — ключ есть, broker-логин
+// не нужен. realestate вводит username/password → broker-mode, поток не меняется.
+// Реализация живёт в mode.js (подключается <script> перед renderer.js) и
+// разделяется с Node-юнитом; здесь — тонкая обёртка с резервом на случай,
+// если mode.js не загрузился.
+function isApiKeyMode(c) {
+  if (typeof window !== 'undefined' && typeof window.isApiKeyMode === 'function') {
+    return window.isApiKeyMode(c);
+  }
+  return !!(c && c.apiKey && !c.username);
 }
 
 function showInlineError(el, msg) {
@@ -139,6 +154,32 @@ function showRecorderScreen() {
   hide(setupScreen);
   hide(loginScreen);
   show(recorderScreen);
+
+  // API-key mode (fulldent и пр.): нет брокера — показываем «Сотрудник» вместо
+  // «Брокер», шлём API-ключ + имя сотрудника, broker-токен очищаем.
+  if (isApiKeyMode({ apiKey, username })) {
+    hide(brokerInfo);
+    if (employee) {
+      brokerInfo.innerHTML = '';
+      const label = document.createElement('span');
+      label.textContent = 'Сотрудник: ';
+      const b = document.createElement('b');
+      b.textContent = employee;
+      brokerInfo.appendChild(label);
+      brokerInfo.appendChild(b);
+      show(brokerInfo);
+    }
+    if (window.Recorder && window.Recorder.setBrokerToken) window.Recorder.setBrokerToken('');
+    if (window.Recorder && window.Recorder.setEmployee) window.Recorder.setEmployee(employee);
+    if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
+    if (btnLogout) hide(btnLogout);
+    if (!recoveryStarted) {
+      recoveryStarted = true;
+      runRecovery().catch(() => {});
+    }
+    return;
+  }
+
   if (brokerName) {
     brokerInfo.innerHTML = '';
     const label = document.createElement('span');
@@ -234,6 +275,7 @@ btnSaveSetup.addEventListener('click', async () => {
     username = setupUsername.value;
     password = setupPassword.value;
     apiKey = setupApiKey.value;
+    if (setupEmployee) employee = setupEmployee.value;
 
     await persistCredentials();
 
@@ -242,9 +284,15 @@ btnSaveSetup.addEventListener('click', async () => {
     inputUsername.value = username;
     inputPassword.value = password;
     if (inputApiKey) inputApiKey.value = apiKey;
+    if (inputEmployee) inputEmployee.value = employee;
 
-    // Server is reachable, but the broker still needs to log in / activate.
-    showLoginScreen();
+    if (isApiKeyMode({ apiKey, username })) {
+      // API-key mode: брокер не нужен — сразу к записи.
+      showRecorderScreen();
+    } else {
+      // Server is reachable, but the broker still needs to log in / activate.
+      showLoginScreen();
+    }
   } catch (err) {
     testConnectionResult.textContent = 'Save error: ' + err.message;
     testConnectionResult.className = 'test-result error';
@@ -260,6 +308,7 @@ async function persistCredentials() {
     username,
     password,
     apiKey,
+    employee,
     brokerJwt,
     brokerName,
     brokerEmail,
@@ -714,6 +763,7 @@ btnSaveSettings.addEventListener('click', async () => {
   username = inputUsername.value;
   password = inputPassword.value;
   if (inputApiKey) apiKey = inputApiKey.value;
+  if (inputEmployee) employee = inputEmployee.value;
 
   await persistCredentials();
 
@@ -736,7 +786,14 @@ document.addEventListener('click', (e) => {
 async function init() {
   const creds = await window.electronAPI.credentials.get();
 
-  if (!creds || !creds.serverUrl || !creds.username || !creds.password) {
+  // Достаточны ли креды для запуска? Два режима:
+  //  • broker-mode (realestate): serverUrl + username + password;
+  //  • API-key mode (fulldent): serverUrl + apiKey (username пуст).
+  // Иначе (первый запуск / частичные креды) — экран настройки.
+  const hasServer = !!(creds && creds.serverUrl);
+  const hasBrokerCreds = !!(creds && creds.username && creds.password);
+  const hasApiKeyCreds = !!(creds && isApiKeyMode(creds));
+  if (!hasServer || (!hasBrokerCreds && !hasApiKeyCreds)) {
     // First launch (or partial creds) — show setup screen
     showSetupScreen();
     return;
@@ -746,6 +803,7 @@ async function init() {
   username = creds.username || '';
   password = creds.password || '';
   apiKey = creds.apiKey || '';
+  employee = creds.employee || '';
   brokerJwt = creds.brokerJwt || '';
   brokerName = creds.brokerName || '';
   brokerEmail = creds.brokerEmail || '';
@@ -753,7 +811,15 @@ async function init() {
   inputUsername.value = username;
   inputPassword.value = password;
   if (inputApiKey) inputApiKey.value = apiKey;
+  if (inputEmployee) inputEmployee.value = employee;
   if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
+
+  // API-key mode (fulldent): нет брокера — пропускаем broker-JWT-гейт и
+  // /api/auth/me, сразу к записи. realestate (с username/password) идёт ниже.
+  if (isApiKeyMode(creds)) {
+    showRecorderScreen();
+    return;
+  }
 
   if (!brokerJwt) {
     // Setup done, but no broker session — show login.

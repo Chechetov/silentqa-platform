@@ -51,6 +51,10 @@
       <label>API Key (optional)</label>
       <input type="password" id="setupApiKey" placeholder="API-ключ (опционально, sqa_...)">
     </div>
+    <div class="settings-field">
+      <label>Сотрудник (имя для атрибуции записей)</label>
+      <input type="text" id="setupEmployee" placeholder="Напр. Иванова А.А.">
+    </div>
     <button class="btn btn-test-connection" id="btnTestConnection">Test Connection</button>
     <div id="testConnectionResult" style="display:none" class="test-result"></div>
     <button class="btn btn-record" id="btnSaveSetup" style="display:none; margin-top:8px">
@@ -230,12 +234,17 @@
         <label>API Key (optional)</label>
         <input type="password" id="inputApiKey" placeholder="API-ключ (опционально, sqa_...)">
       </div>
+      <div class="settings-field">
+        <label>Сотрудник</label>
+        <input type="text" id="inputEmployee" placeholder="имя сотрудника">
+      </div>
       <button class="btn-save-settings" id="btnSaveSettings">Save</button>
       <div class="settings-saved" id="settingsSaved">Settings saved</div>
       <a href="#" class="logout-link" id="btnLogout">Выйти из аккаунта брокера</a>
     </div>
   </div>
 
+  <script src="mode.js"></script>
   <script src="recorder.js"></script>
   <script src="renderer.js"></script>
 </body>
