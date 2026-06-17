@@ -98,3 +98,13 @@ def get_scenario(company_config: dict, scenario_id: str | None) -> dict | None:
         if s.get("id") == scenario_id:
             return s
     return None
+
+
+def get_card_extraction(company_config: dict) -> dict | None:
+    """Generic structured-card config block ({label, prompt, json_schema}) or None."""
+    return company_config.get("card_extraction")
+
+
+def get_default_scenario_id(company_config: dict) -> str | None:
+    """Tenant's default evaluation scenario id (used when the session has none)."""
+    return company_config.get("default_scenario_id")
