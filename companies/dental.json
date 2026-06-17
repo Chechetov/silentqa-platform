@@ -1,0 +1,85 @@
+{
+  "id": "dental",
+  "name": "FullDent",
+  "language": "ru",
+  "default_scenario_id": "consultation",
+  "asr": {
+    "engine": "elevenlabs",
+    "word_boost": [
+      "имплант", "имплантация", "коронка", "винир", "протез", "мост", "пульпит",
+      "периодонтит", "кариес", "пародонтит", "пародонтоз", "гингивит", "эндодонтия",
+      "чистка", "гигиена", "Air Flow", "отбеливание", "реставрация", "удаление",
+      "зуб мудрости", "ретинированный", "снимок", "КТ", "ОПТГ", "рентген", "анестезия",
+      "брекеты", "элайнеры", "ортодонт", "прикус", "десна", "слизистая", "синус-лифтинг",
+      "абатмент", "формирователь", "пломба", "композит", "цирконий", "металлокерамика",
+      "E-max", "план лечения", "консультация", "осмотр", "рассрочка", "стоимость",
+      "гарантия", "доктор", "стоматолог", "ортопед", "хирург", "терапевт", "слюнокаменная"
+    ]
+  },
+  "quality": {
+    "protocol": "Регламент очной консультации стоматолога:\n1. Приветствие, контакт\n2. Сбор анамнеза (жалобы, история, противопоказания)\n3. Осмотр и диагностика\n4. Объяснение диагноза понятным языком\n5. Презентация вариантов лечения с плюсами/минусами\n6. Прозрачность стоимости и вариантов оплаты\n7. Ответы на вопросы, без давления\n8. Фиксация следующего шага",
+    "prompt": null
+  },
+  "scenarios": [
+    {
+      "id": "consultation",
+      "name": "Очная консультация",
+      "type": "in_person",
+      "description": "Первичная/повторная консультация врача с пациентом в кабинете",
+      "protocol": "1. Приветствие и контакт\n2. Сбор анамнеза: жалобы, история, аллергии, хронические заболевания\n3. Осмотр и диагностика\n4. Объяснение диагноза понятным языком\n5. Варианты лечения с плюсами/минусами\n6. Прозрачность стоимости, варианты оплаты\n7. Ответы на вопросы, без давления\n8. Фиксация следующего шага",
+      "criteria": [
+        {"id": "greeting", "name": "Приветствие и контакт", "description": "Врач представился, создал комфортную атмосферу"},
+        {"id": "anamnesis", "name": "Сбор анамнеза", "description": "Подробно расспросил о жалобах, истории, противопоказаниях"},
+        {"id": "diagnosis_explanation", "name": "Объяснение диагноза", "description": "Понятно объяснил проблему без избыточной терминологии"},
+        {"id": "treatment_options", "name": "Варианты лечения", "description": "Представил варианты с объяснением плюсов/минусов"},
+        {"id": "cost_transparency", "name": "Прозрачность стоимости", "description": "Честно озвучил стоимость, предложил варианты оплаты/рассрочки"},
+        {"id": "patient_questions", "name": "Работа с вопросами", "description": "Терпеливо ответил на вопросы, не торопил пациента"},
+        {"id": "consent_and_next", "name": "Согласие и следующий шаг", "description": "Зафиксировал решение пациента, записал на следующий этап"}
+      ]
+    },
+    {
+      "id": "treatment_plan",
+      "name": "Презентация плана лечения",
+      "type": "in_person",
+      "description": "Врач/координатор представляет пациенту план лечения",
+      "protocol": "1. Контекст и результаты диагностики\n2. Общая картина: что и зачем\n3. Поэтапный план\n4. Приоритезация (срочно/можно отложить)\n5. Полная стоимость и по этапам\n6. Варианты оплаты\n7. Работа с сомнениями без давления\n8. Фиксация решения",
+      "criteria": [
+        {"id": "context_setting", "name": "Контекст и мотивация", "description": "Напомнил результаты диагностики, объяснил зачем лечение"},
+        {"id": "plan_clarity", "name": "Понятность плана", "description": "Объяснил этапы простым языком"},
+        {"id": "prioritization", "name": "Приоритезация", "description": "Объяснил что срочно, что можно отложить"},
+        {"id": "cost_transparency", "name": "Прозрачность стоимости", "description": "Озвучил полную стоимость и по этапам"},
+        {"id": "payment_options", "name": "Варианты оплаты", "description": "Предложил рассрочку/поэтапную оплату"},
+        {"id": "objection_handling", "name": "Работа с сомнениями", "description": "Не давил, дал время, ответил на вопросы"},
+        {"id": "closing", "name": "Фиксация решения", "description": "Зафиксировал решение, записал на следующий шаг"}
+      ]
+    }
+  ],
+  "card_extraction": {
+    "label": "Карта приёма",
+    "prompt": "Ты — ассистент стоматолога. На входе транскрипт приёма со спикерами. Извлеки структурную КАРТУ ПРИЁМА строго по схеме: пациент (имя/возраст/пол/телефон, если прозвучали); повод обращения; анамнез (жалобы, история, аллергии, хронические заболевания, препараты); данные осмотра; зубная формула dental_status (номер зуба в той нотации, что звучит — FDI/универсальная — + статус: здоров/кариес/пломба/коронка/имплант/удалён/в лечении и т.п. + заметка); диагноз(ы); план лечения (этапы: процедура, зубы, приоритет, срок, цена; итоговая стоимость; варианты оплаты); рекомендации; итог визита. ВАЖНО: ничего не выдумывай — если данных нет, ставь null или пустой список. Всё на русском.",
+    "json_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["patient", "chief_complaint", "anamnesis", "examination", "dental_status", "diagnosis", "treatment_plan", "recommendations", "visit_outcome", "summary"],
+      "properties": {
+        "patient": {"type": "object", "additionalProperties": false, "required": ["name", "age", "gender", "phone"],
+          "properties": {"name": {"type": ["string", "null"]}, "age": {"type": ["string", "null"]}, "gender": {"type": ["string", "null"]}, "phone": {"type": ["string", "null"]}}},
+        "chief_complaint": {"type": ["string", "null"]},
+        "anamnesis": {"type": "object", "additionalProperties": false, "required": ["complaints", "history", "allergies", "chronic_conditions", "medications"],
+          "properties": {"complaints": {"type": "array", "items": {"type": "string"}}, "history": {"type": ["string", "null"]}, "allergies": {"type": "array", "items": {"type": "string"}}, "chronic_conditions": {"type": "array", "items": {"type": "string"}}, "medications": {"type": "array", "items": {"type": "string"}}}},
+        "examination": {"type": "array", "items": {"type": "string"}},
+        "dental_status": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["tooth", "status", "note"],
+          "properties": {"tooth": {"type": "string"}, "status": {"type": "string"}, "note": {"type": ["string", "null"]}}}},
+        "diagnosis": {"type": "array", "items": {"type": "string"}},
+        "treatment_plan": {"type": "object", "additionalProperties": false, "required": ["stages", "total_cost", "payment_options"],
+          "properties": {"stages": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["procedure", "teeth", "priority", "timeline", "price"],
+            "properties": {"procedure": {"type": "string"}, "teeth": {"type": ["string", "null"]}, "priority": {"type": "string", "enum": ["срочно", "планово", "по желанию", "не указано"]}, "timeline": {"type": ["string", "null"]}, "price": {"type": ["string", "null"]}}}},
+            "total_cost": {"type": ["string", "null"]}, "payment_options": {"type": "array", "items": {"type": "string"}}}},
+        "recommendations": {"type": "array", "items": {"type": "string"}},
+        "visit_outcome": {"type": "object", "additionalProperties": false, "required": ["result", "next_step"],
+          "properties": {"result": {"type": "string", "enum": ["согласие на лечение", "думает", "повторный приём", "направление", "отказ", "не указано"]}, "next_step": {"type": ["string", "null"]}}},
+        "summary": {"type": "string"}
+      }
+    }
+  }
+}
