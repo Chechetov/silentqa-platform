@@ -51,6 +51,8 @@ const btnClaimBack = document.getElementById('btnClaimBack');
 const claimCompleteError = document.getElementById('claimCompleteError');
 const brokerInfo = document.getElementById('brokerInfo');
 const btnLogout = document.getElementById('btnLogout');
+const appointmentTypeRow = document.getElementById('appointmentTypeRow');
+const appointmentType = document.getElementById('appointmentType');
 
 // --- Recorder screen elements ---
 const btnStart = document.getElementById('btnStart');
@@ -173,6 +175,9 @@ function showRecorderScreen() {
     if (window.Recorder && window.Recorder.setEmployee) window.Recorder.setEmployee(employee);
     if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
     if (btnLogout) hide(btnLogout);
+    // Per-recording appointment-type chooser — populated from the tenant's
+    // scenarios. Failure-safe: never blocks recording.
+    loadAppointmentTypes().catch(() => {});
     if (!recoveryStarted) {
       recoveryStarted = true;
       runRecovery().catch(() => {});
@@ -211,6 +216,53 @@ function showRecorderScreen() {
     recoveryStarted = true;
     runRecovery().catch((err) => console.warn('[recovery] failed:', err));
   }
+}
+
+// Populate the per-recording appointment-type chooser from the tenant's
+// scenarios. Generic — scenario ids/names come entirely from the server
+// (GET /api/tenancy/features, resolved by Host, no auth). Called only in
+// API-key mode. Failure-safe: any error / missing scenarios leaves the row
+// hidden and sets no appointment type (backend falls back to default
+// scenario — RE-safe, unchanged behavior).
+async function loadAppointmentTypes() {
+  if (!appointmentTypeRow || !appointmentType || !serverUrl) return;
+  let scenarios = null;
+  try {
+    const resp = await fetch(serverUrl + '/api/tenancy/features');
+    if (!resp.ok) return;
+    const features = await resp.json();
+    scenarios = features && features.scenarios;
+  } catch (_) {
+    // Network error / server down — leave row hidden, record without a type.
+    return;
+  }
+  if (!Array.isArray(scenarios) || scenarios.length === 0) return;
+
+  appointmentType.innerHTML = '';
+  for (const s of scenarios) {
+    if (!s || !s.id) continue;
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name || s.id;
+    appointmentType.appendChild(opt);
+  }
+  if (appointmentType.options.length === 0) return;
+
+  show(appointmentTypeRow);
+  appointmentType.value = appointmentType.options[0].value;
+  if (window.Recorder && window.Recorder.setAppointmentType) {
+    window.Recorder.setAppointmentType(appointmentType.value);
+  }
+}
+
+// Bound once (not inside loadAppointmentTypes) so re-entry can't stack
+// duplicate listeners.
+if (appointmentType) {
+  appointmentType.addEventListener('change', () => {
+    if (window.Recorder && window.Recorder.setAppointmentType) {
+      window.Recorder.setAppointmentType(appointmentType.value);
+    }
+  });
 }
 
 // Test Connection — direct fetch from renderer (no IPC, avoids main process issues)

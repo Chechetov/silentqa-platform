@@ -163,6 +163,14 @@
 
     <div class="broker-info" id="brokerInfo" style="display:none"></div>
 
+    <!-- Appointment-type chooser — populated dynamically from the tenant's
+         scenarios (API-key mode only). Hidden by default; shown only when the
+         tenant exposes scenarios via /api/tenancy/features. -->
+    <div class="settings-field" id="appointmentTypeRow" style="display:none">
+      <label for="appointmentType">Тип приёма</label>
+      <select id="appointmentType"></select>
+    </div>
+
     <div class="status-badge status-idle" id="statusBadge">
       <span class="dot"></span>
       <span id="statusLabel">Ready</span>

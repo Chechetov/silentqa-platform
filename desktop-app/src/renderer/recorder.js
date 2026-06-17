@@ -21,6 +21,7 @@ let authHeader = '';
 let brokerToken = '';
 let apiKey = '';
 let employee = '';
+let appointmentType = '';
 let chunksUploaded = 0;
 let nextChunkNumber = 0;
 let pendingChunks = 0;
@@ -88,6 +89,7 @@ async function createSession() {
     recordedAt: new Date().toISOString(),
   };
   if (employee) metadata.employee = employee;
+  if (appointmentType) metadata.appointment_type = appointmentType;
   const resp = await fetchWithRetry(`${serverUrl}/api/sessions`, {
     method: 'POST',
     headers: buildHeaders({ 'Content-Type': 'application/json' }),
@@ -670,5 +672,6 @@ window.Recorder = {
   setBrokerToken: (token) => { brokerToken = token || ''; },
   setApiKey: (key) => { apiKey = key || ''; },
   setEmployee: (v) => { employee = (v || '').trim(); },
+  setAppointmentType: (v) => { appointmentType = (v || '').trim(); },
 };
 })();
