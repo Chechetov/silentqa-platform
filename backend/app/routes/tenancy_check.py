@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
+from app.company_scenarios import scenarios_for
 from app.config import settings
 from app.modules import MODULE_DEFAULTS, module_enabled
 from app.tenancy_http import registry as _registry
@@ -47,4 +48,7 @@ async def get_features(request: Request):
     result = {name: module_enabled(modules, name) for name in MODULE_DEFAULTS}
     if tenant.get("display_name"):
         result["display_name"] = tenant["display_name"]
+    scenarios = scenarios_for(tenant.get("company_config_id"))
+    if scenarios:
+        result["scenarios"] = scenarios
     return result

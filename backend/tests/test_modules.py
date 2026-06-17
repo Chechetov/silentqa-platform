@@ -8,6 +8,7 @@ def test_registry_row_exposes_modules(monkeypatch):
         custom_domains = []; api_key_hash = None; api_key_required = True
         modules = {"knowledge_base": True, "complexes": False}
         display_name = "Acme"
+        company_config_id = None
 
     class FakeRes:
         def __iter__(self): return iter([FakeRow()])

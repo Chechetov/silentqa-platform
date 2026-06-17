@@ -18,15 +18,38 @@ def _companies_root() -> Path:
 
 
 @lru_cache(maxsize=64)
-def _scenarios_for_config(config_id: str) -> frozenset[str]:
+def _scenario_list_for_config(config_id: str) -> tuple[tuple[str, str], ...]:
+    """Сценарии конфига как кортеж (id, name) — hashable для lru_cache.
+
+    name → id, если в конфиге не задан. Толерантен к отсутствию файла / битому JSON → ().
+    """
     path = _companies_root() / f"{config_id}.json"
     if not path.exists():
-        return frozenset()
+        return ()
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return frozenset()
-    return frozenset(s["id"] for s in data.get("scenarios", []) if s.get("id"))
+        return ()
+    out = []
+    for s in data.get("scenarios", []):
+        sid = s.get("id")
+        if sid:
+            out.append((sid, s.get("name") or sid))
+    return tuple(out)
+
+
+@lru_cache(maxsize=64)
+def _scenarios_for_config(config_id: str) -> frozenset[str]:
+    return frozenset(sid for sid, _ in _scenario_list_for_config(config_id))
+
+
+def scenarios_for(config_id: str | None) -> list[dict]:
+    """Сценарии конфига как [{"id":..., "name":...}] (name → id, если отсутствует).
+
+    Для рендеринга списка типов приёмов/звонков в рекордере (через /features)."""
+    if not config_id:
+        return []
+    return [{"id": sid, "name": name} for sid, name in _scenario_list_for_config(config_id)]
 
 
 def valid_scenario(config_id: str | None, scenario_id: str | None) -> str | None:

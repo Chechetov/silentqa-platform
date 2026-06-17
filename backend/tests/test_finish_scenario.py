@@ -13,12 +13,16 @@ import pytest
 def companies_dir(tmp_path, monkeypatch):
     (tmp_path / "dental.json").write_text(json.dumps({
         "id": "dental",
-        "scenarios": [{"id": "consultation"}, {"id": "treatment_plan"}],
+        "scenarios": [
+            {"id": "consultation", "name": "Консультация"},
+            {"id": "treatment_plan"},
+        ],
     }), encoding="utf-8")
     monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
-    # хелпер кеширует через lru_cache — сбросить между тестами (env поменялся)
+    # хелперы кешируют через lru_cache — сбросить между тестами (env поменялся)
     import app.company_scenarios as cs
     cs._scenarios_for_config.cache_clear()
+    cs._scenario_list_for_config.cache_clear()
     return tmp_path
 
 
@@ -34,3 +38,17 @@ def test_valid_scenario_rejects_unknown(companies_dir):
     assert valid_scenario("dental", None) is None
     assert valid_scenario(None, "consultation") is None
     assert valid_scenario("nonexistent_cfg", "consultation") is None
+
+
+def test_scenarios_for_returns_id_and_name(companies_dir):
+    from app.company_scenarios import scenarios_for
+    assert scenarios_for("dental") == [
+        {"id": "consultation", "name": "Консультация"},
+        {"id": "treatment_plan", "name": "treatment_plan"},  # name → id when absent
+    ]
+
+
+def test_scenarios_for_tolerant_of_missing(companies_dir):
+    from app.company_scenarios import scenarios_for
+    assert scenarios_for("nonexistent_cfg") == []
+    assert scenarios_for(None) == []
