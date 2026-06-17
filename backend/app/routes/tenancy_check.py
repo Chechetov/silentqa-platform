@@ -44,4 +44,7 @@ async def get_features(request: Request):
     if tenant is None:
         raise HTTPException(status_code=404, detail="Unknown tenant")
     modules = tenant.get("modules") or {}
-    return {name: module_enabled(modules, name) for name in MODULE_DEFAULTS}
+    result = {name: module_enabled(modules, name) for name in MODULE_DEFAULTS}
+    if tenant.get("display_name"):
+        result["display_name"] = tenant["display_name"]
+    return result

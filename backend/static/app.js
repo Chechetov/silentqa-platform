@@ -92,6 +92,11 @@ async function bootAuth() {
   try {
     currentUser = await api('/api/user-auth/me');
     try { features = await api('/api/tenancy/features'); } catch (e) { features = {}; }
+    if (features && features.display_name) {
+      document.title = features.display_name;
+      const logoText = document.querySelector('.logo-text');
+      if (logoText) logoText.textContent = features.display_name;
+    }
     document.querySelectorAll('[data-module]').forEach(el => {
       const li = el.closest('li') || el;
       if (features[el.dataset.module] === false) li.style.display = 'none';
