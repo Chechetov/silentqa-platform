@@ -7,6 +7,7 @@ NOT from a DB template, and there is NO complex matching. Degrades to None on an
 error so it never fails the pipeline. QA scoring is handled separately in quality.py."""
 from __future__ import annotations
 
+import json
 import logging
 
 from openai import OpenAI
@@ -40,7 +41,6 @@ def run_card_extraction(transcript: list[dict], company_config: dict) -> dict | 
             text={"format": {"type": "json_schema", "name": "card",
                              "strict": True, "schema": cfg["json_schema"]}},
         )
-        import json
         return json.loads(resp.output_text)
     except Exception:
         logger.exception("card extraction failed; skipping card")
