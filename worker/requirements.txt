@@ -21,6 +21,9 @@ sentencepiece==0.2.0
 # --- LLM: Anthropic Claude API ---
 anthropic>=0.49.0
 
+# --- LLM: OpenAI (quality scoring + card extraction) ---
+openai>=2.26.0
+
 # --- Audio processing ---
 soundfile==0.12.1
 librosa==0.10.2.post1
