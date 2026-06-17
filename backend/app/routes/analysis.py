@@ -48,6 +48,12 @@ async def get_quality(session_id: uuid.UUID):
     return _read_result_file(session_id, "quality.json")
 
 
+@router.get("/{session_id}/card", dependencies=[Depends(require_session_access)])
+async def get_card(session_id: uuid.UUID):
+    """Structured «Карта приёма» (card.json). 404 if this tenant produces none."""
+    return _read_result_file(session_id, "card.json")
+
+
 @router.get("/{session_id}/full", dependencies=[Depends(require_session_access)])
 async def get_full_result(session_id: uuid.UUID):
     transcript = _read_result_file(session_id, "transcript.json")
