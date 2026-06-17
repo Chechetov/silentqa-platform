@@ -189,11 +189,13 @@ async def create_session(
 ):
     meta = build_session_metadata(body.metadata, broker)
 
-    # Desktop-app recordings are Zoom meetings (presentation), not outbound
-    # calls — auto-apply the Zoom-meeting evaluation template so the protocol
-    # used by the LLM matches the genre. Client may override by passing an
-    # explicit template_id.
-    if meta.get("source") == "desktop-app" and not meta.get("template_id"):
+    # Desktop-app recordings on AmoCRM-tenants (realestate) are Zoom presentations —
+    # авто-применяем Zoom-evaluation-шаблон, чтобы протокол LLM совпадал с жанром.
+    # Для не-AmoCRM тенантов (fulldent и пр.) этого НЕ делаем: их desktop-приёмы
+    # оцениваются сценарием company-config, а realestate-протокол «презентация ЖК»
+    # перебил бы его (pipeline.py:685-707). Клиент может явно задать template_id.
+    if (meta.get("source") == "desktop-app" and not meta.get("template_id")
+            and get_tenant_slug() in AMOCRM_TENANT_SLUGS):
         tid = await _resolve_default_desktop_template_id(db)
         if tid:
             meta["template_id"] = tid
