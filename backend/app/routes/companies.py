@@ -58,6 +58,10 @@ def _write_config(company_id: str, config: dict) -> None:
     config_path = COMPANIES_DIR / f"{company_id}.json"
     with open(config_path, "w", encoding="utf-8") as f:
         json.dump(config, f, ensure_ascii=False, indent=2)
+    # Сбрасываем кеш scenario-id, чтобы только что отредактированные сценарии
+    # сразу принимались finish_session (см. app.company_scenarios.valid_scenario).
+    from app.company_scenarios import _scenarios_for_config
+    _scenarios_for_config.cache_clear()
 
 
 # ---------------------------------------------------------------------------
