@@ -15,6 +15,7 @@ from tenancy.context import get_tenant_slug
 from tenancy.registry import AMOCRM_TENANT_SLUGS
 
 from app.auth_jwt import get_current_broker
+from app.company_scenarios import valid_scenario
 from app.auth_user import (
     UserCtx,
     _NO_EMPLOYEE,
@@ -469,6 +470,24 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     if session.status not in (SessionStatus.created, SessionStatus.uploading):
         raise HTTPException(status_code=400, detail=f"Cannot finish session in status '{session.status}'")
 
+    # Санкционирование клиентского appointment_type → scenario_id (RE-safe):
+    # appointment_type — валидное клиентское поле (НЕ server-owned), доживает из
+    # create_session. Если оно есть И валидно для сценариев company-config тенанта —
+    # передаём config={"scenario_id": ...} в pipeline. Нет/невалид → config=None →
+    # дефолтный сценарий (поведение realestate не меняется).
+    meta = session.metadata_ or {}
+    appt = meta.get("appointment_type")
+    config: dict | None = None
+    if appt:
+        row = (await db.execute(
+            text("SELECT company_config_id FROM shared.tenants WHERE slug = :slug"),
+            {"slug": require_tenant_slug()},
+        )).first()
+        cfg_id = row[0] if row else None
+        scen = valid_scenario(cfg_id, appt)
+        if scen:
+            config = {"scenario_id": scen}
+
     session.status = SessionStatus.processing
     await db.commit()
     await db.refresh(session)
@@ -481,7 +500,7 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
         lambda: celery_app.send_task(
             "pipeline.process_session",
             args=[str(session_id)],
-            kwargs={"tenant_schema": tenant_schema},
+            kwargs={"tenant_schema": tenant_schema, "config": config},
             queue="transcription",
         ),
     )
