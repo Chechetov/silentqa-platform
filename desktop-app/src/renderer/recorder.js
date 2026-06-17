@@ -20,6 +20,7 @@ let serverUrl = '';
 let authHeader = '';
 let brokerToken = '';
 let apiKey = '';
+let employee = '';
 let chunksUploaded = 0;
 let nextChunkNumber = 0;
 let pendingChunks = 0;
@@ -81,16 +82,16 @@ function sendStatus(status, extra = {}) {
 }
 
 async function createSession() {
+  const metadata = {
+    source: 'desktop-app',
+    platform: window.electronAPI.platform,
+    recordedAt: new Date().toISOString(),
+  };
+  if (employee) metadata.employee = employee;
   const resp = await fetchWithRetry(`${serverUrl}/api/sessions`, {
     method: 'POST',
     headers: buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      metadata: {
-        source: 'desktop-app',
-        platform: window.electronAPI.platform,
-        recordedAt: new Date().toISOString(),
-      },
-    }),
+    body: JSON.stringify({ metadata }),
   });
   if (!resp.ok) throw new Error(`Failed to create session: ${resp.status}`);
   const data = await resp.json();
@@ -668,5 +669,6 @@ window.Recorder = {
   recoverPendingChunks,
   setBrokerToken: (token) => { brokerToken = token || ''; },
   setApiKey: (key) => { apiKey = key || ''; },
+  setEmployee: (v) => { employee = (v || '').trim(); },
 };
 })();
