@@ -137,6 +137,40 @@ _SERVER_OWNED_METADATA = (
 # which are Zoom meetings (not outbound calls).
 _DEFAULT_DESKTOP_TEMPLATE_NAME = "Zoom-встреча брокера (презентация ЖК)"
 
+_EMPLOYEE_MAX_LEN = 120
+
+
+def build_session_metadata(raw_meta: dict | None, broker: "BrokerInfo | None") -> dict:
+    """Собрать метаданные сессии (без БД): вычистить server-owned, санкционировать
+    клиентский `employee` (атрибуция для recorder-only тенантов), проставить
+    broker_* при наличии брокера. Чистая функция — юнит-тестируется без БД."""
+    meta = dict(raw_meta or {})
+    # Strip any server-owned keys the client tried to supply.
+    for k in _SERVER_OWNED_METADATA:
+        meta.pop(k, None)
+
+    # Санкционированный `employee`: только непустая строка, обрезаем до лимита.
+    # Намеренно НЕ в _SERVER_OWNED_METADATA — это легитимная клиентская атрибуция
+    # (десктоп по API-ключу проставляет имя сотрудника; AmoCRM-потоки его не шлют).
+    emp = meta.get("employee")
+    if isinstance(emp, str):
+        emp = emp.strip()[:_EMPLOYEE_MAX_LEN]
+        if emp:
+            meta["employee"] = emp
+        else:
+            meta.pop("employee", None)
+    else:
+        meta.pop("employee", None)
+
+    if broker is not None:
+        # Auto-attribute to the authenticated broker (authoritative).
+        meta["broker_id"] = str(broker.id)
+        meta["amocrm_user_id"] = broker.amocrm_user_id
+        meta["broker_name"] = broker.name
+        meta["responsible_user_id"] = broker.amocrm_user_id
+
+    return meta
+
 
 async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
     row = (await db.execute(
@@ -153,19 +187,7 @@ async def create_session(
     db: AsyncSession = Depends(get_db),
     broker: BrokerInfo | None = Depends(get_current_broker),
 ):
-    meta = dict(body.metadata or {})
-    # Strip any server-owned keys the client tried to supply.
-    for k in _SERVER_OWNED_METADATA:
-        meta.pop(k, None)
-
-    if broker is not None:
-        # Auto-attribute the session to the authenticated broker. Authoritative
-        # — overwrite any (now-cleared) values from the client.
-        meta["broker_id"] = str(broker.id)
-        meta["amocrm_user_id"] = broker.amocrm_user_id
-        meta["broker_name"] = broker.name
-        # Mirror to responsible_user_id so existing AmoCRM name resolution works.
-        meta["responsible_user_id"] = broker.amocrm_user_id
+    meta = build_session_metadata(body.metadata, broker)
 
     # Desktop-app recordings are Zoom meetings (presentation), not outbound
     # calls — auto-apply the Zoom-meeting evaluation template so the protocol
