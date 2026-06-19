@@ -1,4 +1,4 @@
-// UI controller for Call Recorder Desktop
+// UI controller for SilentQA Recorder Desktop
 
 // --- Global error handlers — show errors on screen ---
 window.onerror = (msg, src, line) => {

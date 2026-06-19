@@ -1,5 +1,5 @@
-appId: com.callrecorder.desktop
-productName: Call Recorder
+appId: com.silentqa.recorder
+productName: SilentQA Recorder
 copyright: Copyright © 2026
 
 directories:
@@ -35,8 +35,8 @@ mac:
   entitlements: build/entitlements.mac.plist
   entitlementsInherit: build/entitlements.mac.plist
   extendInfo:
-    NSMicrophoneUsageDescription: "Call Recorder needs microphone access to record your voice during calls."
-    NSScreenCaptureUsageDescription: "Call Recorder needs Screen Recording permission to capture system audio. No video is recorded."
+    NSMicrophoneUsageDescription: "SilentQA Recorder needs microphone access to record your voice during calls."
+    NSScreenCaptureUsageDescription: "SilentQA Recorder needs Screen Recording permission to capture system audio. No video is recorded."
 
 dmg:
   contents:

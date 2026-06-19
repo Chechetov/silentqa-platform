@@ -28,7 +28,7 @@ function createWindow() {
     resizable: true,
     backgroundColor: '#111827',
     show: false,
-    title: 'Call Recorder',
+    title: 'SilentQA Recorder',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -94,7 +94,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('Call Recorder');
+  tray.setToolTip('SilentQA Recorder');
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {

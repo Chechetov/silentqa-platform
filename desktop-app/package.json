@@ -1,5 +1,5 @@
 {
-  "name": "call-recorder",
+  "name": "silentqa-recorder",
   "version": "4.0.0",
   "description": "Desktop audio recorder — captures system audio + microphone and uploads to server",
   "main": "src/main/index.js",
