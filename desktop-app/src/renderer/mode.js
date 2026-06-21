@@ -10,12 +10,24 @@ function isApiKeyMode(c) {
   return !!(c && c.apiKey && !c.username);
 }
 
+// Нормализация адреса сервера: добавляет https:// если схема не указана и срезает
+// хвостовые слэши. Без этого fetch(url + '/api/...') при URL без схемы (напр.
+// "host.com") резолвится относительно file:// и падает с "failed to fetch".
+function normalizeServerUrl(raw) {
+  let s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  s = s.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  return s;
+}
+
 // Браузер (Electron renderer): кладём в window для использования из renderer.js.
 if (typeof window !== 'undefined') {
   window.isApiKeyMode = isApiKeyMode;
+  window.normalizeServerUrl = normalizeServerUrl;
 }
 
 // Node (юнит-тест): экспортируем через CommonJS.
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { isApiKeyMode };
+  module.exports = { isApiKeyMode, normalizeServerUrl };
 }

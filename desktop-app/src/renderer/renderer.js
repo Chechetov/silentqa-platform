@@ -113,10 +113,11 @@ function basicAuthHeader() {
 // Реализация живёт в mode.js (подключается <script> перед renderer.js) и
 // разделяется с Node-юнитом; здесь — тонкая обёртка с резервом на случай,
 // если mode.js не загрузился.
+// API-key mode = ключ есть И username пуст. Чистая логика (дублирует mode.js, где
+// юнит-тестируется) — БЕЗ window-делегирования: иначе в общем global scope это
+// объявление перезаписывает window.isApiKeyMode и обёртка рекурсирует (см.
+// normalizeServerUrl ниже). isApiKeyMode на критическом пути онбординга.
 function isApiKeyMode(c) {
-  if (typeof window !== 'undefined' && typeof window.isApiKeyMode === 'function') {
-    return window.isApiKeyMode(c);
-  }
   return !!(c && c.apiKey && !c.username);
 }
 
@@ -265,65 +266,114 @@ if (appointmentType) {
   });
 }
 
+// Нормализация адреса сервера: добавляет https:// если схема не указана и срезает
+// хвостовые слэши. Чистая логика (дублирует mode.js, где юнит-тестируется) — БЕЗ
+// делегирования в window: в этом приложении (contextIsolation, классические скрипты
+// в ОБЩЕМ global scope) это function-объявление перезаписывает window.normalizeServerUrl
+// от mode.js, поэтому обёртка `return window.normalizeServerUrl(...)` ушла бы в
+// бесконечную рекурсию (Maximum call stack size exceeded).
+function normalizeServerUrl(raw) {
+  let s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  s = s.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  return s;
+}
+
 // Test Connection — direct fetch from renderer (no IPC, avoids main process issues)
 btnTestConnection.addEventListener('click', async () => {
+  const setResult = (msg, ok) => {
+    testConnectionResult.textContent = msg;
+    testConnectionResult.className = 'test-result ' + (ok ? 'success' : 'error');
+    show(testConnectionResult);
+  };
+  const resetBtn = () => {
+    btnTestConnection.disabled = false;
+    btnTestConnection.textContent = 'Test Connection';
+  };
   try {
-    const url = setupServerUrl.value.replace(/\/+$/, '');
+    const url = normalizeServerUrl(setupServerUrl.value);
     const user = setupUsername.value;
     const pass = setupPassword.value;
+    const key = setupApiKey.value.trim();
 
     if (!url) {
-      testConnectionResult.textContent = 'Please enter a server URL';
-      testConnectionResult.className = 'test-result error';
-      show(testConnectionResult);
+      setResult('Please enter a server URL', false);
       return;
     }
+    setupServerUrl.value = url; // отражаем нормализованный URL (с https://) обратно в поле
 
     btnTestConnection.disabled = true;
     btnTestConnection.textContent = 'Testing...';
     hide(testConnectionResult);
     hide(btnSaveSetup);
 
-    const authHeader = user ? 'Basic ' + btoa(user + ':' + pass) : '';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
+    // API-key mode (fulldent и пр.): ключ задан, username пуст — broker-логина нет.
+    // Валидируем без побочных эффектов: (1) тенант резолвится по /features,
+    // (2) ключ принимается ingestion-эндпоинтом — GET несуществующей сессии даёт
+    //     404 при валидном ключе (auth прошла) и 401/403 при неверном; сессия НЕ
+    //     создаётся (в отличие от POST /api/sessions).
+    if (key && !user) {
+      const fResp = await fetch(url + '/api/tenancy/features', { signal: controller.signal });
+      if (!fResp.ok) {
+        clearTimeout(timeout);
+        resetBtn();
+        setResult(fResp.status === 404
+          ? 'Тенант не найден — проверьте адрес сервера'
+          : 'Сервер недоступен (HTTP ' + fResp.status + ')', false);
+        return;
+      }
+      const probeId = '00000000-0000-4000-8000-000000000000';
+      const kResp = await fetch(url + '/api/sessions/' + probeId, {
+        method: 'GET',
+        headers: { 'X-API-Key': key },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      resetBtn();
+      if (kResp.status === 404 || kResp.ok) {
+        setResult('Connection successful (API key)!', true);
+        show(btnSaveSetup);
+      } else if (kResp.status === 401 || kResp.status === 403) {
+        setResult('Invalid API key (HTTP ' + kResp.status + ')', false);
+      } else {
+        setResult('Server returned HTTP ' + kResp.status, false);
+      }
+      return;
+    }
+
+    // Broker mode (realestate): Basic-auth → GET /api/sessions.
+    const authHeader = user ? 'Basic ' + btoa(user + ':' + pass) : '';
     const resp = await fetch(url + '/api/sessions', {
       method: 'GET',
       headers: { Authorization: authHeader },
       signal: controller.signal,
     });
     clearTimeout(timeout);
-
-    btnTestConnection.disabled = false;
-    btnTestConnection.textContent = 'Test Connection';
+    resetBtn();
 
     if (resp.ok) {
-      testConnectionResult.textContent = 'Connection successful!';
-      testConnectionResult.className = 'test-result success';
+      setResult('Connection successful!', true);
       show(btnSaveSetup);
     } else if (resp.status === 401 || resp.status === 403) {
-      testConnectionResult.textContent = 'Invalid credentials (HTTP ' + resp.status + ')';
-      testConnectionResult.className = 'test-result error';
+      setResult('Invalid credentials (HTTP ' + resp.status + ')', false);
     } else {
-      testConnectionResult.textContent = 'Server returned HTTP ' + resp.status;
-      testConnectionResult.className = 'test-result error';
+      setResult('Server returned HTTP ' + resp.status, false);
     }
-    show(testConnectionResult);
 
   } catch (err) {
-    btnTestConnection.disabled = false;
-    btnTestConnection.textContent = 'Test Connection';
-    testConnectionResult.textContent = 'Error: ' + (err.name === 'AbortError' ? 'Connection timeout (10s)' : err.message);
-    testConnectionResult.className = 'test-result error';
-    show(testConnectionResult);
+    resetBtn();
+    setResult('Error: ' + (err.name === 'AbortError' ? 'Connection timeout (10s)' : err.message), false);
   }
 });
 
 // Save & Start
 btnSaveSetup.addEventListener('click', async () => {
   try {
-    serverUrl = setupServerUrl.value.replace(/\/+$/, '');
+    serverUrl = normalizeServerUrl(setupServerUrl.value);
     username = setupUsername.value;
     password = setupPassword.value;
     apiKey = setupApiKey.value;
@@ -811,7 +861,8 @@ settingsToggle.addEventListener('click', () => {
 });
 
 btnSaveSettings.addEventListener('click', async () => {
-  serverUrl = inputServerUrl.value.replace(/\/+$/, '');
+  serverUrl = normalizeServerUrl(inputServerUrl.value);
+  inputServerUrl.value = serverUrl;
   username = inputUsername.value;
   password = inputPassword.value;
   if (inputApiKey) apiKey = inputApiKey.value;
