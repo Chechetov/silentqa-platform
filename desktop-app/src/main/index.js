@@ -70,8 +70,12 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // Open DevTools automatically for debugging
-  mainWindow.webContents.openDevTools({ mode: 'detach' });
+  // DevTools: auto-open only in dev (npm start). In a packaged .dmg it is NEVER
+  // auto-opened for end users — still reachable on demand via the shortcut below.
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+  // (on-demand F12 / Cmd+Opt+I toggle handler already exists below)
 
   // System-audio capture: auto-answer getDisplayMedia with the screen + 'loopback'
   // audio (no picker dialog shown to the user). This ACTIVE handler overrides the
