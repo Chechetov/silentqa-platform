@@ -4,6 +4,7 @@ copyright: Copyright © 2026
 
 directories:
   output: build
+  buildResources: build-resources
 
 files:
   - src/**/*
@@ -32,8 +33,10 @@ mac:
         - arm64
   icon: src/assets/icon.png
   category: public.app-category.utilities
-  entitlements: build/entitlements.mac.plist
-  entitlementsInherit: build/entitlements.mac.plist
+  entitlements: build-resources/entitlements.mac.plist
+  entitlementsInherit: build-resources/entitlements.mac.plist
+  notarize:
+    teamId: "63MTAWPF36"
   extendInfo:
     NSMicrophoneUsageDescription: "SilentQA Recorder needs microphone access to record your voice during calls."
     NSScreenCaptureUsageDescription: "SilentQA Recorder needs Screen Recording permission to capture system audio. No video is recorded."
