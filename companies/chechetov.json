@@ -1,0 +1,83 @@
+{
+  "id": "chechetov",
+  "name": "Chechetov",
+  "language": "ru",
+  "default_scenario_id": "general",
+  "asr": {
+    "engine": "elevenlabs",
+    "word_boost": []
+  },
+  "quality": {
+    "protocol": "Регламент рабочего созвона / переговоров:\n1. Постановка цели встречи\n2. Выявление позиций и потребностей сторон\n3. Обсуждение по существу (аргументы, факты)\n4. Работа с возражениями и сомнениями (если идёт продажа/переговоры)\n5. Фиксация договорённостей\n6. Согласование следующих шагов и ответственных\n\nКритерии:\n- Ясность цели и повестки\n- Активное слушание, не перебивает\n- Конкретные ответы и аргументы\n- Отработка возражений\n- Чёткая фиксация договорённостей и следующих шагов"
+  },
+  "scenarios": [
+    { "id": "general", "name": "Созвон" }
+  ],
+  "card_extraction": {
+    "label": "Итоги созвона",
+    "prompt": "Ты — ассистент, который из транскрипта рабочего созвона (с разметкой по спикерам) извлекает СТРУКТУРНЫЙ ИТОГ строго по схеме. Извлекай только то, что реально прозвучало — ничего не выдумывай; если данных нет, ставь null или пустой массив.\n\n- summary: 2–4 предложения сути разговора.\n- participants: кто участвовал — ярлык спикера (speaker, напр. «A»/«B»), имя (name, если прозвучало), роль (role — напр. «клиент», «менеджер», «руководитель», если ясно из контекста, иначе null).\n- topics: основные темы разговора; для каждой темы — краткие тезисы points (о чём именно говорили).\n- agreements: конкретные договорённости (о чём договорились). Пустой массив, если не договорились ни о чём.\n- next_steps: следующие шаги — действие (action), ответственный (owner, если назван), срок (due, если назван).\n- objections: ТОЛЬКО если в разговоре шла продажа/переговоры и звучали возражения или сомнения. Для каждого: текст возражения (objection), кто высказал (raised_by), было ли отработано (handled: true/false), как именно отработали (handling), и как можно было бы отработать лучше/убедительнее (improvement — твоя рекомендация). Если продажи/переговоров не было или возражений не звучало — пустой массив.\n- sale_context: краткая пометка о коммерческом контексте, если он был (что продавали/обсуждали по деньгам); иначе null.\n\nОтвечай строго по схеме, текст — на русском.",
+    "json_schema": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["summary", "participants", "topics", "agreements", "next_steps", "objections", "sale_context"],
+      "properties": {
+        "summary": { "type": ["string", "null"] },
+        "participants": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["speaker", "name", "role"],
+            "properties": {
+              "speaker": { "type": ["string", "null"] },
+              "name": { "type": ["string", "null"] },
+              "role": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "topics": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["topic", "points"],
+            "properties": {
+              "topic": { "type": ["string", "null"] },
+              "points": { "type": "array", "items": { "type": "string" } }
+            }
+          }
+        },
+        "agreements": { "type": "array", "items": { "type": "string" } },
+        "next_steps": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["action", "owner", "due"],
+            "properties": {
+              "action": { "type": ["string", "null"] },
+              "owner": { "type": ["string", "null"] },
+              "due": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "objections": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["objection", "raised_by", "handled", "handling", "improvement"],
+            "properties": {
+              "objection": { "type": ["string", "null"] },
+              "raised_by": { "type": ["string", "null"] },
+              "handled": { "type": ["boolean", "null"] },
+              "handling": { "type": ["string", "null"] },
+              "improvement": { "type": ["string", "null"] }
+            }
+          }
+        },
+        "sale_context": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

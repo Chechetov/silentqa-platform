@@ -2423,7 +2423,64 @@ function renderComplexProfile(data) {
   return html;
 }
 
+// Dispatcher: dental cards keep their bespoke layout; everything else (e.g.
+// chechetov «Итоги созвона») renders through the generic key/value renderer.
 function renderCard(card, label) {
+  if (!card) return '';
+  const isDental = card.dental_status !== undefined ||
+    (card.patient && typeof card.patient === 'object');
+  return isDental ? renderDentalCard(card, label) : renderGenericCard(card, label);
+}
+
+// --- Generic card renderer (domain-agnostic) -------------------------------
+const _CARD_LABELS = {
+  summary: 'Итог', participants: 'Участники', topics: 'Темы', points: 'Тезисы',
+  agreements: 'Договорённости', next_steps: 'Следующие шаги', action: 'Действие',
+  owner: 'Ответственный', due: 'Срок', objections: 'Возражения',
+  objection: 'Возражение', raised_by: 'Кто высказал', handled: 'Отработано',
+  handling: 'Как отработано', improvement: 'Как можно лучше',
+  sale_context: 'Контекст продажи', speaker: 'Спикер', name: 'Имя',
+  role: 'Роль', topic: 'Тема',
+};
+function _cardLabel(k) {
+  return _CARD_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+function _cardObjInline(o) {
+  return Object.entries(o)
+    .filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `<b>${escapeHtml(_cardLabel(k))}:</b> ${_cardVal(v)}`)
+    .join(' · ') || '—';
+}
+function _cardVal(v) {
+  const esc = escapeHtml;
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'да' : 'нет';
+  if (typeof v === 'string' || typeof v === 'number') return esc(String(v));
+  if (Array.isArray(v)) {
+    if (!v.length) return '—';
+    const items = v.map((x) =>
+      (x && typeof x === 'object') ? _cardObjInline(x) : esc(String(x)));
+    return `<ul class="card-ul">${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+  }
+  if (typeof v === 'object') return _cardObjInline(v);
+  return esc(String(v));
+}
+function renderGenericCard(card, label) {
+  const esc = escapeHtml;
+  const rows = Object.entries(card)
+    .filter(([k]) => k !== 'summary')
+    .map(([k, v]) => `<dt>${esc(_cardLabel(k))}</dt><dd>${_cardVal(v)}</dd>`)
+    .join('');
+  return `
+    <div class="card">
+      <h3>📋 ${esc(label || 'Итоги')}</h3>
+      <dl class="card-dl">${rows}</dl>
+      ${card.summary ? `<blockquote>${esc(card.summary)}</blockquote>` : ''}
+    </div>`;
+}
+
+// --- Dental card renderer (unchanged) --------------------------------------
+function renderDentalCard(card, label) {
   if (!card) return '';
   const esc = escapeHtml;
   const list = (a) => (a && a.length) ? a.map(esc).join(', ') : '—';
