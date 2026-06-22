@@ -26,10 +26,10 @@
 ## Очередь оставшихся под-задач (порядок: безопасное/ценное первым)
 
 - [x] **B1** — Gate `/api/complexes/*` router за `require_module('complexes')`. Реальный пропуск (был доступен любому тенанту). TDD: `test_complexes_blocked_when_module_off`. → коммит `498cc75`, бэкенд-сьют 225 зелёных, запушено.
-- [ ] **F1** — `#reprocess` nav → `data-module="amocrm"` (index.html:34). 1 строка, zero-risk.
-- [ ] **F3** — Нейтральный дефолт title/logo «Meeting Recorder»→«SilentQA» (index.html:6,14); display_name перекрывает на boot.
-- [ ] **F4** — Гейт кнопки «Привязать к лиду AmoCRM» + модалки linkLeadModal за `moduleOn('amocrm')` (app.js:530, 2794).
-- [ ] **F2** — Генерализовать/гейтить «Презентация ЖК»-плейсхолдеры в редакторе шаблонов (app.js:2116,2121; также 2438,3070).
+- [x] **F1** — `#reprocess` nav → `data-module="amocrm"` (index.html:34). → коммит `f02943e`.
+- [x] **F3** — Нейтральный дефолт title/logo/icon «Meeting Recorder»→«SilentQA» (index.html). display_name перекрывает на boot. → коммит `f02943e`.
+- [x] **F4** — Кнопка «Привязать к лиду AmoCRM» (app.js:530) за `moduleOn('amocrm')` + early-guard в linkLeadModal (app.js:2795). → коммит `a5e8871`.
+- [x] **F2** — RE-примеры в редакторе шаблонов генерализованы (app.js:2116/2121/2122) + extraction empty-state (app.js:2438). Намеренно ОСТАВЛЕНО: страница #complexes («База ЖК», app.js:3062/3071 — собственная страница RE-модуля, gated) и коммент 2234. → коммит `a5e8871`. `node --check app.js` OK.
 - [ ] **B2** — Десктоп Zoom-ЖК автотемплейт: гейт `AMOCRM_TENANT_SLUGS`→`module_enabled(...,'complexes')` (sessions.py:199). TDD-able.
 - [ ] **B6+F5** — `/api/tenancy/features` отдаёт `amocrm_subdomain` (из tenant/company config) → `amoBase()` (app.js:19) перестаёт быть мёртвой веткой. TDD-able (features-тест).
 - [ ] **F6** — `kb_tag`-фильтр UI в `#calls` (callsFilters+params app.js:308-311, контрол в баре 355-366, ссылка с KB-бейджа 588-589 → отфильтрованный список). Бэкенд готов.
@@ -40,3 +40,4 @@
 
 ## Лог итераций
 - **Итерация 1:** загрузил план+спеку; 2 аудит-агента (backend+frontend) → карта done/remaining; составил очередь; сделал B1 (TDD, коммит+пуш `498cc75`); создал этот файл.
+- **Итерация 2:** фронтенд-кластер F1/F3/F4/F2 — гейтинг `#reprocess` + AmoCRM lead-link за `moduleOn('amocrm')`, нейтральный бренд SilentQA, generic-примеры шаблонов. `node --check app.js` OK; Python не затронут (только `static/`). Коммиты `f02943e`, `a5e8871`, запушено. **Дальше: B2** (десктоп Zoom-template gate → module_enabled(complexes), TDD-able).
