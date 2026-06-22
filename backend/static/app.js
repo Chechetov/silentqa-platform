@@ -527,7 +527,7 @@ async function renderCallDetail(id) {
       <div class="export-buttons" style="display:flex;gap:8px;margin-bottom:12px;justify-content:flex-end">
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
-        <button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>
+        ${moduleOn('amocrm') ? `<button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="compareEnginesModal('${id}')">Сравнить движки ASR…</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
@@ -2113,13 +2113,13 @@ async function renderTemplateEdit(id) {
           <h3>Основное</h3>
           <div class="form-group">
             <label>Название</label>
-            <input type="text" id="tplName" value="${escapeHtml(tpl.name)}" placeholder="например: Презентация ЖК" required>
+            <input type="text" id="tplName" value="${escapeHtml(tpl.name)}" placeholder="например: Извлечение структуры" required>
           </div>
           <div class="form-group">
             <label>Тип шаблона</label>
             <select id="tplKind"${id ? ' disabled' : ''}>
-              <option value="extraction"${tpl.kind === 'extraction' ? ' selected' : ''}>Извлечение фактов (например, презентация ЖК → структура)</option>
-              <option value="evaluation"${tpl.kind === 'evaluation' ? ' selected' : ''}>Оценка звонка (например, звонок брокера → скрипт + критерии)</option>
+              <option value="extraction"${tpl.kind === 'extraction' ? ' selected' : ''}>Извлечение фактов (транскрипт → структура)</option>
+              <option value="evaluation"${tpl.kind === 'evaluation' ? ' selected' : ''}>Оценка звонка (звонок → скрипт + критерии)</option>
             </select>
             ${id ? '<p class="form-hint">Тип нельзя менять у существующего шаблона</p>' : ''}
           </div>
@@ -2435,7 +2435,7 @@ function renderComplexProfile(data) {
   }
 
   if (!html) {
-    return '<p class="muted">Информация ещё не извлечена. Обработай презентацию через шаблон «Презентация ЖК».</p>';
+    return '<p class="muted">Информация ещё не извлечена. Обработай звонок через шаблон извлечения.</p>';
   }
   return html;
 }
@@ -2792,6 +2792,7 @@ async function _postLinkLead(sessionId, leadId) {
 }
 
 async function linkLeadModal(sessionId) {
+  if (!moduleOn('amocrm')) return;  // AmoCRM-only; кнопка скрыта при выключенном модуле (defense-in-depth)
   // Look up current lead from cached call data, if any.
   let currentLeadId = null;
   if (_currentCallData && _currentCallData.session && _currentCallData.session.id === sessionId) {
