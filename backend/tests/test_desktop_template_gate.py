@@ -62,12 +62,12 @@ class _FakeDB:
         return _FakeResult(0)
 
 
-def _client(monkeypatch, fake_redis, slug, host):
+def _client(monkeypatch, fake_redis, slug, host, modules=None):
     """TestClient с реестром-строкой тенанта (api_key_required=False) и фейковым get_db."""
     from app.tenancy_http import TenantRegistry
     rows = [{"slug": slug, "schema_name": f"t_{slug}", "status": "active",
              "custom_domains": [], "api_key_hash": None,
-             "api_key_required": False, "modules": {}}]
+             "api_key_required": False, "modules": modules or {}}]
 
     async def fake_all(self):
         return rows
@@ -91,7 +91,7 @@ def _clear_overrides():
 
 
 def test_fulldent_desktop_session_no_zoom_template(monkeypatch, fake_redis):
-    # AMOCRM_TENANT_SLUGS не содержит fulldent → шаблон НЕ ставится.
+    # fulldent без модуля complexes (modules={}) → шаблон НЕ ставится.
     # Резолвер шаблона патчим «взрывом»: на fulldent он не должен даже вызываться.
     from app.routes import sessions as sess_mod
 
@@ -109,14 +109,32 @@ def test_fulldent_desktop_session_no_zoom_template(monkeypatch, fake_redis):
 
 
 def test_realestate_desktop_session_gets_zoom_template(monkeypatch, fake_redis):
-    # realestate ∈ AMOCRM_TENANT_SLUGS → шаблон ставится (резолвер запатчен).
+    # realestate имеет модуль complexes → шаблон ставится (резолвер запатчен).
     from app.routes import sessions as sess_mod
 
     async def fake_resolve(db):
         return "tpl-zoom-id"
     monkeypatch.setattr(sess_mod, "_resolve_default_desktop_template_id", fake_resolve)
 
-    c, fake = _client(monkeypatch, fake_redis, "realestate", "https://realestate.silentqa.com")
+    c, fake = _client(monkeypatch, fake_redis, "realestate", "https://realestate.silentqa.com",
+                      modules={"complexes": True})
+    r = c.post("/api/sessions",
+               json={"metadata": {"source": "desktop-app"}})
+    assert r.status_code == 201, r.text
+    assert (fake.added[-1].metadata_ or {}).get("template_id") == "tpl-zoom-id"
+
+
+def test_complexes_tenant_without_amocrm_gets_zoom_template(monkeypatch, fake_redis):
+    # Гейт по МОДУЛЮ complexes, не по слугу: тенант с complexes:true, но НЕ входящий
+    # в AMOCRM_TENANT_SLUGS, всё равно получает Zoom-шаблон. До фикса (слуг-гейт) — падает.
+    from app.routes import sessions as sess_mod
+
+    async def fake_resolve(db):
+        return "tpl-zoom-id"
+    monkeypatch.setattr(sess_mod, "_resolve_default_desktop_template_id", fake_resolve)
+
+    c, fake = _client(monkeypatch, fake_redis, "acme", "https://acme.silentqa.com",
+                      modules={"complexes": True})
     r = c.post("/api/sessions",
                json={"metadata": {"source": "desktop-app"}})
     assert r.status_code == 201, r.text

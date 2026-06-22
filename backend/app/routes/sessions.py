@@ -5,7 +5,7 @@ import uuid
 from pathlib import Path
 
 from celery import Celery
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 from sqlalchemy import select, func, text, table, column
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
@@ -28,6 +28,7 @@ from app.auth_user import (
 )
 from app.config import settings
 from app.database import get_db
+from app.modules import module_enabled
 from app.models import Chunk, Session, SessionStatus
 from app.modules import require_module
 from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
@@ -184,19 +185,22 @@ async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
 @router.post("", response_model=SessionResponse, status_code=201,
              dependencies=[Depends(require_ingestion_auth)])
 async def create_session(
+    request: Request,
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
     broker: BrokerInfo | None = Depends(get_current_broker),
 ):
     meta = build_session_metadata(body.metadata, broker)
 
-    # Desktop-app recordings on AmoCRM-tenants (realestate) are Zoom presentations —
+    # Desktop-app recordings на тенантах с модулем complexes (RE «презентация ЖК») —
     # авто-применяем Zoom-evaluation-шаблон, чтобы протокол LLM совпадал с жанром.
-    # Для не-AmoCRM тенантов (fulldent и пр.) этого НЕ делаем: их desktop-приёмы
+    # Тенанты без complexes (fulldent и пр.) этого НЕ получают: их desktop-приёмы
     # оцениваются сценарием company-config, а realestate-протокол «презентация ЖК»
-    # перебил бы его (pipeline.py:685-707). Клиент может явно задать template_id.
+    # перебил бы его (pipeline.py:685-707). Гейт по МОДУЛЮ, не по слугу (спека §4.3).
+    # Клиент может явно задать template_id.
+    modules = (getattr(request.state, "tenant", None) or {}).get("modules")
     if (meta.get("source") == "desktop-app" and not meta.get("template_id")
-            and get_tenant_slug() in AMOCRM_TENANT_SLUGS):
+            and module_enabled(modules, "complexes")):
         tid = await _resolve_default_desktop_template_id(db)
         if tid:
             meta["template_id"] = tid
