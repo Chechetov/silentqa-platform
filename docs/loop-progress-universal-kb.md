@@ -1,0 +1,42 @@
+# Loop progress — universal-knowledge-base: де-realestate-ификация за module-флаги
+
+> **Это рабочий трекер автономного лупа.** Источник истины о прогрессе — этот файл + git-история (НЕ чекбоксы в плане `2026-06-16-universal-knowledge-base.md`: они устарели, работа шла коммитами). Цель/спека: `docs/superpowers/specs/2026-06-16-universal-knowledge-base-design.md` (§4.3 «Гейтинг RE-утечки», §9 «полная чистка RE-строк»).
+
+## Конфиг лупа
+- **Цель:** доделать universal-knowledge-base — вычистить остатки realestate-хардкода за module-флаги.
+- **Режим:** self-paced (dynamic /loop, без интервала).
+- **Автономность (выбор пользователя):** работаем прямо в ветке `multi-tenant-core-phase1`, **коммит + пуш по каждой под-задаче**.
+- **Железное правило проекта:** каждое изменение = generic + config-gated + бэкенд-сьют зелёный (`cd backend && /root/projects/silentqa/.venv/bin/python -m pytest tests/ -q`). Воркер-сьют (`cd worker && /root/projects/silentqa/.venv/bin/python -m pytest -q`) — для задач, трогающих `worker/`.
+- **Python/venv:** dev-venv нет; используем прод-venv `/root/projects/silentqa/.venv/bin/python`.
+- **Фронтенд:** vanilla-JS, тест-харнесса нет → верифицируется инспекцией/рассуждением, не pytest.
+
+## Базовая линия (аудит 2 агентов, 2026-06-22) — УЖЕ СДЕЛАНО, не трогать
+Фазы 0–4 плана + бо́льшая часть §4 дашборда уже приземлились 06-16:
+- s004 (modules jsonb + RE-backfill), tenant-014 (kb_categories/kb_entries/kb_entry_mentions).
+- `app/modules.py` (module_enabled + require_module, дефолты KB=on/complexes=off/amocrm=off).
+- Реестры тянут `modules` (tenancy_http.py + tenancy/registry.py).
+- `GET /api/tenancy/features` (флаги + display_name + scenarios; impersonation-correct).
+- AmoCRM-гейт = require_module('amocrm') (auth_user.py + iter_amocrm_tenants по modules).
+- `/api/sessions/{id}/extraction` за require_module('complexes'); `/{id}/tags` + `kb_tag`-фильтр (бэкенд).
+- provision пишет явные modules + сидит категорию «Термины» (НЕ ставит company_config_id).
+- `/api/knowledge` router (gated knowledge_base) + `worker/scripts/seed_realestate_kb.py`.
+- Фронт: `#knowledge` страница (gated nav), features-boot (display/module/admin gating), KB-теги в карточке звонка, «Профиль ЖК»/«Презентация ЖК»-хинт загрузки/#complexes-nav — gated.
+- Бэкенд чист от `rogovestate.amocrm.ru` / `amocrm_subdomain`.
+
+## Очередь оставшихся под-задач (порядок: безопасное/ценное первым)
+
+- [x] **B1** — Gate `/api/complexes/*` router за `require_module('complexes')`. Реальный пропуск (был доступен любому тенанту). TDD: `test_complexes_blocked_when_module_off`. → коммит `498cc75`, бэкенд-сьют 225 зелёных, запушено.
+- [ ] **F1** — `#reprocess` nav → `data-module="amocrm"` (index.html:34). 1 строка, zero-risk.
+- [ ] **F3** — Нейтральный дефолт title/logo «Meeting Recorder»→«SilentQA» (index.html:6,14); display_name перекрывает на boot.
+- [ ] **F4** — Гейт кнопки «Привязать к лиду AmoCRM» + модалки linkLeadModal за `moduleOn('amocrm')` (app.js:530, 2794).
+- [ ] **F2** — Генерализовать/гейтить «Презентация ЖК»-плейсхолдеры в редакторе шаблонов (app.js:2116,2121; также 2438,3070).
+- [ ] **B2** — Десктоп Zoom-ЖК автотемплейт: гейт `AMOCRM_TENANT_SLUGS`→`module_enabled(...,'complexes')` (sessions.py:199). TDD-able.
+- [ ] **B6+F5** — `/api/tenancy/features` отдаёт `amocrm_subdomain` (из tenant/company config) → `amoBase()` (app.js:19) перестаёт быть мёртвой веткой. TDD-able (features-тест).
+- [ ] **F6** — `kb_tag`-фильтр UI в `#calls` (callsFilters+params app.js:308-311, контрол в баре 355-366, ссылка с KB-бейджа 588-589 → отфильтрованный список). Бэкенд готов.
+- [ ] **B4** — Ретайр `AMOCRM_TENANT_SLUGS` как гейт внутренних RE-путей (sessions.py:428, worker/tasks/pipeline.py:459,736) → `modules.amocrm`; удалить константу registry.py:11. Средний риск, трогает worker.
+- [ ] **B3** — Не сидить Zoom-ЖК шаблон миграцией 008 в не-complexes схемы (008_seed_zoom_meeting_template.py фанится на все). Высокий риск (миграции). Осторожно/в конце.
+- [ ] **B5** — `scenario_id="outbound_residential"` (amocrm_poll.py:448) в конфиг, а не worker-константа. Низкий приоритет.
+- [ ] **F7** *(опц.)* — route-level guards для `#complexes`/`#reprocess` (app.js:58,70): редирект вместо рендера 403-страницы при выключенном модуле.
+
+## Лог итераций
+- **Итерация 1:** загрузил план+спеку; 2 аудит-агента (backend+frontend) → карта done/remaining; составил очередь; сделал B1 (TDD, коммит+пуш `498cc75`); создал этот файл.
