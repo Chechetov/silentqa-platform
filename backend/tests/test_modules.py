@@ -82,3 +82,19 @@ def test_amocrm_blocked_when_module_off(monkeypatch, fake_redis):
     r = c.post("/api/amocrm/reprocess", cookies=_admin_cookie("t_acme"), json={"lead_id": 1})
     assert r.status_code == 403
     assert r.json()["detail"] == "module_disabled"
+
+
+def test_complexes_blocked_when_module_off(monkeypatch, fake_redis):
+    # spec §4.3: complexes:false → 403 on /api/complexes/* (not only /extraction)
+    from app.tenancy_http import TenantRegistry
+
+    rows = [{"slug": "acme", "schema_name": "t_acme", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {"complexes": False}}]
+    monkeypatch.setattr(TenantRegistry, "all_tenants", lambda self: _coro(rows))
+    from app.main import app
+
+    c = TestClient(app, base_url="https://acme.silentqa.com")
+    r = c.get("/api/complexes", cookies=_admin_cookie("t_acme"))
+    assert r.status_code == 403
+    assert r.json()["detail"] == "module_disabled"

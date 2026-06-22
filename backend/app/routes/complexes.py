@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_user import require_admin, require_viewer
 from app.database import get_db
+from app.modules import require_module
 from app.schemas_templates import (
     ComplexDetail, ComplexListItem, ComplexMerge, ComplexRename, ExtractionRelink,
 )
@@ -22,7 +23,12 @@ if str(WORKER_PATH) not in sys.path:
     sys.path.insert(0, str(WORKER_PATH))
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api", tags=["complexes"])
+# Whole router gated by the complexes module (spec §4.3): a tenant without the
+# RE "База ЖК" stack gets 403 module_disabled on every /api/complexes/* path.
+router = APIRouter(
+    prefix="/api", tags=["complexes"],
+    dependencies=[Depends(require_module("complexes"))],
+)
 
 
 def _recompute_aggregate_sync(complex_id: uuid.UUID) -> None:
