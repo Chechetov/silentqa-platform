@@ -19,6 +19,7 @@ app = Celery(
     include=[
         "tasks.pipeline",
         "tasks.transcribe",
+        "tasks.transcribe_compare",
         "tasks.diarize",
         "tasks.sentiment",
         "tasks.quality",

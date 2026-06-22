@@ -192,15 +192,17 @@ def _transcribe_elevenlabs(audio_path: str) -> list[dict]:
 
 # ── Public API ──────────────────────────────────────────────────
 
-def transcribe_audio(audio_path: str, word_boost: list[str] | None = None, engine_override: str | None = None) -> list[dict]:
+def transcribe_audio(audio_path: str, word_boost: list[str] | None = None, engine_override: str | None = None, fallback: bool = True) -> list[dict]:
     """
     Транскрибирует аудиофайл выбранным движком.
-    При ошибке основного движка пробует fallback.
+    При ошибке основного движка пробует fallback (если fallback=True).
 
     Args:
         audio_path: Путь к аудиофайлу
         word_boost: Список слов/фраз для улучшения распознавания (AssemblyAI)
         engine_override: Принудительный выбор движка (иначе из env ASR_ENGINE)
+        fallback: Пробовать ли другие движки при ошибке. Для честного сравнения
+            движков (ASR-тюнинг) ставится False — нужен ровно запрошенный движок.
     """
     engine = engine_override or os.getenv("ASR_ENGINE", "whisper")
 
@@ -210,6 +212,9 @@ def transcribe_audio(audio_path: str, word_boost: list[str] | None = None, engin
         if name == "assemblyai":
             return _transcribe_assemblyai(audio_path, word_boost=word_boost)
         return _transcribe_whisper(audio_path)
+
+    if not fallback:
+        return _run(engine)
 
     default_chain = ["elevenlabs", "assemblyai", "whisper"]
     chain = [engine] + [e for e in default_chain if e != engine]

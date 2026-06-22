@@ -267,8 +267,56 @@ async def delete_session(
     return Response(status_code=204)
 
 
+ALLOWED_ASR_ENGINES = ("whisper", "assemblyai", "elevenlabs")
+
+
+class TranscribeCompareBody(BaseModel):
+    engines: list[str]
+
+
+@router.post("/{session_id}/transcribe-compare", status_code=202,
+             dependencies=[Depends(require_admin)])
+async def transcribe_compare(
+    session_id: uuid.UUID,
+    body: TranscribeCompareBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """ASR-тюнинг (админ): прогнать аудио звонка несколькими движками для сравнения.
+
+    Не трогает канонический транскрипт/БД — варианты пишутся отдельными файлами,
+    читаются через GET /transcript-variants.
+    """
+    engines = [e for e in dict.fromkeys(body.engines) if e in ALLOWED_ASR_ENGINES]
+    if not engines:
+        raise HTTPException(status_code=400,
+                            detail="No supported engines (whisper|assemblyai|elevenlabs)")
+
+    sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sess.status in (SessionStatus.processing, SessionStatus.uploading):
+        raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
+
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: celery_app.send_task(
+            "pipeline.compare_transcripts",
+            args=[str(session_id)],
+            kwargs={"engines": engines, "tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
+    )
+    return {"status": "queued", "engines": engines}
+
+
 class ReprocessBody(BaseModel):
-    template_id: uuid.UUID
+    # None → перепрогон без шаблона: заново квалити+сентимент по активному
+    # профилю оценки сценария (см. routes/eval_profiles.py). С шаблоном —
+    # как раньше: шаблон переопределяет протокол/критерии.
+    template_id: uuid.UUID | None = None
 
 
 @router.post("/{session_id}/reprocess", response_model=SessionResponse,
@@ -278,20 +326,26 @@ async def reprocess_session(
     body: ReprocessBody,
     db: AsyncSession = Depends(get_db),
 ):
-    """Reprocess an existing session with a different template (skip transcription)."""
+    """Reprocess an existing session (skip transcription).
+
+    With a template_id — re-run with that evaluation/extraction template.
+    Without — plain re-evaluation that picks up the scenario's active eval profile.
+    """
     sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
     if sess.status in (SessionStatus.processing, SessionStatus.uploading):
         raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
 
-    tpl = (await db.execute(text("SELECT id FROM extraction_templates WHERE id=:id"),
-                            {"id": body.template_id})).first()
-    if not tpl:
-        raise HTTPException(status_code=404, detail="Template not found")
-
     meta = dict(sess.metadata_ or {})
-    meta["template_id"] = str(body.template_id)
+    if body.template_id is not None:
+        tpl = (await db.execute(text("SELECT id FROM extraction_templates WHERE id=:id"),
+                                {"id": body.template_id})).first()
+        if not tpl:
+            raise HTTPException(status_code=404, detail="Template not found")
+        meta["template_id"] = str(body.template_id)
+    else:
+        meta.pop("template_id", None)   # plain re-eval → no template override
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
     await db.commit()

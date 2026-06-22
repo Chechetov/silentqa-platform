@@ -74,6 +74,9 @@ async function router() {
   } else if (route === 'team') {
     if (!isAdmin()) { navigate('#calls'); return; }
     await renderTeam();
+  } else if (route === 'evaluation') {
+    if (!isAdmin()) { navigate('#calls'); return; }
+    await renderEvaluation();
   } else if (route === 'profile') {
     await renderProfile();
   } else {
@@ -480,6 +483,8 @@ async function renderCallDetail(id) {
     if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
     let card = null;
     try { card = await api(`/api/sessions/${id}/card`); } catch {}
+    let asrVariants = null;  // ASR-сравнение (админ-тюнинг)
+    if (isAdmin()) { try { asrVariants = await api(`/api/sessions/${id}/transcript-variants`); } catch {} }
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
@@ -524,6 +529,7 @@ async function renderCallDetail(id) {
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
         <button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>
         ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="compareEnginesModal('${id}')">Сравнить движки ASR…</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
       </div>
 
@@ -937,9 +943,20 @@ async function renderCallDetail(id) {
       `;
     }
 
+    html += renderAsrVariantsSection(asrVariants);
+
     } // end if (!extraction) — legacy analysis blocks
 
     app.innerHTML = html;
+
+    // ASR-варианты: переключение вкладок движков
+    document.querySelectorAll('.asr-variant-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const eng = btn.dataset.engine;
+        document.querySelectorAll('.asr-variant-tab').forEach(b => { b.style.fontWeight = b.dataset.engine === eng ? '700' : ''; });
+        document.querySelectorAll('.asr-variant-panel').forEach(p => { p.style.display = p.dataset.engine === eng ? '' : 'none'; });
+      });
+    });
 
     // Audio player: click-to-seek on transcript lines
     const transcriptContainer = $('#transcriptContainer');
@@ -2535,6 +2552,223 @@ async function reprocessSession(sessionId) {
   } catch (err) {
     showToast('Ошибка: ' + err.message, 'error');
   }
+}
+
+// ── ASR-сравнение (админ-тюнинг) ────────────────────────────────
+const ASR_ENGINE_LABELS = { whisper: 'Whisper (локальный)', assemblyai: 'AssemblyAI', elevenlabs: 'ElevenLabs Scribe' };
+
+function _asrVariantStat(s) {
+  if (!s) return 'нет данных';
+  if (s.status === 'error') return `ошибка: ${escapeHtml(s.error || '')}`;
+  const spk = s.has_speakers ? `${(s.speakers || []).length} спикер(ов)` : 'без спикеров';
+  return `${s.segments} сегм. · ${s.chars} симв. · ${spk}${s.elapsed_s != null ? ` · ${s.elapsed_s}s` : ''}`;
+}
+
+function renderAsrVariantsSection(variants) {
+  if (!variants) return '';
+  const engines = Object.keys(variants.engines || {});
+  if (!engines.length) return '';
+  const tabs = engines.map((e, i) =>
+    `<button class="btn btn-secondary btn-sm asr-variant-tab" data-engine="${e}" style="${i === 0 ? 'font-weight:700' : ''}">${escapeHtml(ASR_ENGINE_LABELS[e] || e)} <span style="opacity:.6">(${escapeHtml((variants.engines[e] || {}).status || '?')})</span></button>`
+  ).join('');
+  const panels = engines.map((e, i) => {
+    const segs = (variants.variants || {})[e] || [];
+    const body = segs.length
+      ? segs.map(seg => {
+          const speaker = seg.speaker || '';
+          const time = seg.start != null ? formatSeconds(seg.start) : '';
+          return `<div class="transcript-line">${time ? `<span class="transcript-time">${time}</span>` : ''}${speaker ? `<span class="speaker-tag">${escapeHtml(speaker)}</span>` : ''}<span class="transcript-text">${escapeHtml(seg.text || '')}</span></div>`;
+        }).join('')
+      : '<p style="color:var(--text-muted)">пусто</p>';
+    return `<div class="asr-variant-panel" data-engine="${e}" style="${i === 0 ? '' : 'display:none'}">
+        <div style="color:var(--text-muted);font-size:13px;margin-bottom:8px">${escapeHtml(_asrVariantStat(variants.engines[e]))}</div>
+        <div class="transcript-container">${body}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="card">
+      <h3>Варианты транскрипта (ASR-сравнение)</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      ${panels}
+    </div>`;
+}
+
+async function compareEnginesModal(sessionId) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content">
+      <div class="modal-head"><h3>Сравнить движки ASR</h3></div>
+      <p style="color:var(--text-muted);font-size:13px">Прогнать аудио этого звонка выбранными движками для сравнения качества. Облачные движки (AssemblyAI, ElevenLabs) — платные вызовы.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin:12px 0">
+        ${Object.entries(ASR_ENGINE_LABELS).map(([id, label]) => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" value="${id}" checked> ${escapeHtml(label)}</label>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary" id="asrCancel">Отмена</button>
+        <button class="btn btn-primary" id="asrRun">Запустить</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#asrCancel').addEventListener('click', close);
+  overlay.querySelector('#asrRun').addEventListener('click', async () => {
+    const engines = Array.from(overlay.querySelectorAll('input[type=checkbox]:checked')).map(c => c.value);
+    if (!engines.length) return showToast('Выберите хотя бы один движок', 'error');
+    try {
+      await api(`/api/sessions/${sessionId}/transcribe-compare`, { method: 'POST', body: JSON.stringify({ engines }) });
+      showToast('Сравнение запущено — обновите страницу через минуту');
+      close();
+    } catch (err) {
+      showToast('Ошибка: ' + err.message, 'error');
+    }
+  });
+}
+
+// ── Критерии оценки (#evaluation, пер-сценарные профили) ─────────
+let _evalState = { scenarioId: null, data: null };
+
+function evalSelectScenario(sid) { _evalState.scenarioId = sid; renderEvaluation(); }
+
+function _evalCriterionRow(c) {
+  return `<div class="eval-crit-row" style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;margin-bottom:8px">
+    <input class="eval-crit-name" placeholder="Название" value="${escapeHtml(c.name || '')}">
+    <input class="eval-crit-desc" placeholder="Описание (что оцениваем)" value="${escapeHtml(c.description || '')}">
+    <button class="btn btn-danger btn-sm" onclick="this.closest('.eval-crit-row').remove()">✕</button>
+  </div>`;
+}
+
+function evalAddCriterion() {
+  document.getElementById('evalCriteria').insertAdjacentHTML('beforeend', _evalCriterionRow({}));
+}
+
+function _evalCollectCriteria() {
+  return Array.from(document.querySelectorAll('#evalCriteria .eval-crit-row')).map(row => ({
+    name: row.querySelector('.eval-crit-name').value.trim(),
+    description: row.querySelector('.eval-crit-desc').value.trim(),
+  })).filter(c => c.name);
+}
+
+function _evalHistory(history) {
+  if (!history || !history.length) return '<p style="color:var(--text-muted)">Версий пока нет — действует дефолт из конфига.</p>';
+  return history.map(v => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border,#eee)">
+      <div><b>v${v.version}</b> · ${escapeHtml(v.source)} · ${escapeHtml(formatDate(v.created_at))}
+        ${v.is_active ? '<span style="background:#2e7d32;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
+      <div style="display:flex;gap:6px">
+        ${v.is_active ? '' : `<button class="btn btn-secondary btn-sm" onclick="evalActivate('${v.id}')">Активировать</button>`}
+        ${v.is_active ? '' : `<button class="btn btn-danger btn-sm" onclick="evalDeleteVersion('${v.id}')">Удалить</button>`}
+      </div>
+    </div>`).join('');
+}
+
+async function renderEvaluation() {
+  const scenarios = (features && features.scenarios) || [];
+  if (!scenarios.length) {
+    app.innerHTML = `<div class="empty-state"><h2>Критерии оценки</h2><p>У аккаунта нет сценариев созвонов. Критерии оценки настраиваются по сценарию.</p></div>`;
+    return;
+  }
+  if (!_evalState.scenarioId || !scenarios.some(s => s.id === _evalState.scenarioId)) {
+    _evalState.scenarioId = scenarios[0].id;
+  }
+  const sid = _evalState.scenarioId;
+  showLoading();
+  let data;
+  try { data = await api(`/api/eval-profiles?scenario_id=${encodeURIComponent(sid)}`); }
+  catch (err) { app.innerHTML = `<div class="empty-state"><p>Ошибка: ${escapeHtml(err.message)}</p></div>`; return; }
+  _evalState.data = data;
+
+  const active = data.active;
+  const fb = data.file_fallback || {};
+  const criteria = (active && active.criteria && active.criteria.length) ? active.criteria : (fb.criteria || []);
+  const prompt = (active && active.prompt) || fb.prompt || '';
+  const srcLabel = active ? `активная версия v${active.version}` : 'дефолт из конфига (профиль не задан)';
+  const opts = scenarios.map(s => `<option value="${escapeHtml(s.id)}" ${s.id === sid ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+
+  app.innerHTML = `
+    <div class="page-header"><h1>Критерии оценки</h1></div>
+    <div class="card">
+      <label>Сценарий созвона</label>
+      <select id="evalScenario" onchange="evalSelectScenario(this.value)" style="max-width:360px">${opts}</select>
+      <p style="color:var(--text-muted);font-size:13px;margin-top:6px">Источник: ${escapeHtml(srcLabel)}</p>
+    </div>
+    <div class="card">
+      <h3>Критерии</h3>
+      <div id="evalCriteria">${criteria.map(c => _evalCriterionRow(c)).join('') || ''}</div>
+      <button class="btn btn-secondary btn-sm" onclick="evalAddCriterion()">+ Критерий</button>
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="evalSaveCriteria()">Сохранить как версию</button></div>
+    </div>
+    <div class="card">
+      <h3>Промпт оценки</h3>
+      <textarea id="evalPromptView" rows="8" readonly style="width:100%;font-family:monospace">${escapeHtml(prompt)}</textarea>
+      <h4 style="margin-top:16px">Пожелания → переработать промпт</h4>
+      <p style="color:var(--text-muted);font-size:13px">Опишите, что важно при оценке. LLM переработает промпт; результат сохранится как новая версия — можно активировать или отклонить.</p>
+      <textarea id="evalWishes" rows="4" placeholder="Напр.: строже оценивай отработку возражений; учитывай фиксацию следующих шагов" style="width:100%"></textarea>
+      <div style="margin-top:8px"><button class="btn btn-primary" id="evalRewriteBtn" onclick="evalRewrite()">Переработать промпт</button></div>
+      <div id="evalRewritePreview"></div>
+    </div>
+    <div class="card">
+      <h3>История версий</h3>
+      ${_evalHistory(data.history)}
+    </div>`;
+}
+
+async function evalSaveCriteria() {
+  const criteria = _evalCollectCriteria();
+  const d = _evalState.data || {};
+  const prompt = (d.active && d.active.prompt) || (d.file_fallback || {}).prompt || null;
+  try {
+    await api(`/api/eval-profiles/${encodeURIComponent(_evalState.scenarioId)}/versions`, {
+      method: 'POST', body: JSON.stringify({ criteria, prompt, source: 'manual', activate: true }),
+    });
+    showToast('Критерии сохранены как новая активная версия');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
+}
+
+async function evalRewrite() {
+  const wishes = document.getElementById('evalWishes').value.trim();
+  if (!wishes) return showToast('Опишите пожелания', 'error');
+  const btn = document.getElementById('evalRewriteBtn');
+  btn.disabled = true; btn.textContent = 'Думаю…';
+  try {
+    const v = await api(`/api/eval-profiles/${encodeURIComponent(_evalState.scenarioId)}/rewrite`, {
+      method: 'POST', body: JSON.stringify({ wishes }),
+    });
+    const meta = v.rewrite_meta || {};
+    document.getElementById('evalRewritePreview').innerHTML = `
+      <div class="card" style="margin-top:12px;border:1px solid var(--accent,#888)">
+        <h4>Предложение (v${v.version}, ещё не активно)</h4>
+        ${meta.rationale ? `<p style="color:var(--text-muted)">${escapeHtml(meta.rationale)}</p>` : ''}
+        <textarea rows="8" readonly style="width:100%;font-family:monospace">${escapeHtml(v.prompt || '')}</textarea>
+        ${(v.criteria && v.criteria.length) ? `<p style="margin-top:8px"><b>Критерии:</b> ${v.criteria.map(c => escapeHtml(c.name)).join(', ')}</p>` : ''}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="evalActivate('${v.id}')">Активировать</button>
+          <button class="btn btn-secondary" onclick="evalDeleteVersion('${v.id}')">Отклонить</button>
+        </div>
+      </div>`;
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Переработать промпт';
+  }
+}
+
+async function evalActivate(vid) {
+  try {
+    await api(`/api/eval-profiles/versions/${vid}/activate`, { method: 'PATCH' });
+    showToast('Версия активирована');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
+}
+
+async function evalDeleteVersion(vid) {
+  if (!confirm('Удалить версию?')) return;
+  try {
+    await api(`/api/eval-profiles/versions/${vid}`, { method: 'DELETE' });
+    showToast('Версия удалена');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
 }
 
 // Pull a numeric AmoCRM lead id out of URL or pasted digits.

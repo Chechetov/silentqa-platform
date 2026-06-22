@@ -14,7 +14,7 @@ from app.config import settings
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
     amocrm, templates, complexes, knowledge, auth, user_auth, tenancy_check, platform_auth,
-    platform_tenants, users,
+    platform_tenants, users, eval_profiles,
 )
 
 
@@ -72,6 +72,7 @@ app.include_router(tenancy_check.router)
 app.include_router(platform_auth.router)
 app.include_router(platform_tenants.router)
 app.include_router(users.router)
+app.include_router(eval_profiles.router)
 
 
 @app.get("/health")

@@ -682,6 +682,29 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
 
     use_extended = bool(scenario and scenario.get("prompt"))
 
+    # Per-tenant, per-scenario evaluation profile (DB) overrides the file-config
+    # scenario criteria/prompt. Активный профиль настраивается в дашборде
+    # (#evaluation, routes/eval_profiles.py). Evaluation-шаблон (ниже, при явном
+    # reprocess) всё ещё главнее профиля.
+    scenario_id_eff = scenario.get("id") if scenario else None
+    if scenario_id_eff:
+        try:
+            from tasks.eval_profile import load_active_eval_profile
+            _profile = load_active_eval_profile(scenario_id_eff)
+        except Exception:
+            logger.exception(f"[{session_id}] eval profile load failed; using file config")
+            _profile = None
+        if _profile:
+            if _profile.get("criteria"):
+                quality_criteria = _profile["criteria"]
+            if _profile.get("prompt"):
+                quality_prompt = _profile["prompt"]
+                use_extended = True
+            logger.info(
+                f"[{session_id}] Using eval profile for scenario '{scenario_id_eff}' "
+                f"(criteria: {len(_profile.get('criteria') or [])}, custom_prompt: {bool(_profile.get('prompt'))})"
+            )
+
     # Evaluation template override: if the session was tagged with an evaluation
     # template, the template's prompt is self-contained (protocol + criteria +
     # scoring rules baked in by migration 005/008). Drop scenario-derived
