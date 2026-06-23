@@ -56,6 +56,7 @@ async function router() {
     const id = route.slice(8);
     await renderCompanyDetail(id);
   } else if (route === 'reprocess') {
+    if (!moduleOn('amocrm')) { navigate('#calls'); return; }
     await renderReprocess();
   } else if (route === 'templates') {
     await renderTemplates();
@@ -68,8 +69,10 @@ async function router() {
   } else if (route === 'knowledge') {
     await renderKnowledge();
   } else if (route === 'complexes') {
+    if (!moduleOn('complexes')) { navigate('#calls'); return; }
     await renderComplexes();
   } else if (route.startsWith('complex/')) {
+    if (!moduleOn('complexes')) { navigate('#calls'); return; }
     await renderComplexDetail(route.split('/')[1]);
   } else if (route === 'team') {
     if (!isAdmin()) { navigate('#calls'); return; }
