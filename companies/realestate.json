@@ -2,6 +2,7 @@
   "id": "realestate",
   "name": "Агентство недвижимости",
   "language": "ru",
+  "amocrm_subdomain": "rogovestate.amocrm.ru",
   "asr": {
     "engine": null,
     "word_boost": [

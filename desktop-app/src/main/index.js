@@ -4,9 +4,41 @@ const fs = require('fs');
 const fsp = require('fs/promises');
 const crypto = require('crypto');
 
-// Initialize electron-audio-loopback (sets up setDisplayMediaRequestHandler + Chromium flags)
-const { initMain } = require('electron-audio-loopback');
-initMain();
+// macOS system-audio loopback backend selection (ported from the working v3 build).
+// The available capture backend depends on the macOS VERSION, not the CPU arch:
+//   • CoreAudio process taps (CATap, "MacCatapSystemAudioLoopbackCapture")  — macOS 14.2+
+//   • ScreenCaptureKit       ("MacSckSystemAudioLoopbackOverride")          — macOS 13.0+
+// Forcing CATap on an unsupported system makes the audio source fail to start.
+function macOSSupportsCoreAudioTap() {
+  if (process.platform !== 'darwin') return false;
+  const ver = typeof process.getSystemVersion === 'function' ? process.getSystemVersion() : '0';
+  const [major, minor = 0] = ver.split('.').map((n) => parseInt(n, 10) || 0);
+  return major > 14 || (major === 14 && minor >= 2);
+}
+
+const isAppleSilicon = process.arch === 'arm64';
+// Manual override for A/B testing: AUDIO_BACKEND=sck | catap
+let useCoreAudioTap;
+if (process.env.AUDIO_BACKEND === 'catap') useCoreAudioTap = true;
+else if (process.env.AUDIO_BACKEND === 'sck') useCoreAudioTap = false;
+// Apple Silicon: ScreenCaptureKit is the proven path. Intel: CATap only on macOS 14.2+.
+else useCoreAudioTap = !isAppleSilicon && macOSSupportsCoreAudioTap();
+
+// Enable macOS system-audio loopback via Chromium flags — MUST be before app.ready.
+// Without these, getDisplayMedia({ audio: true }) fails with "Not supported".
+app.commandLine.appendSwitch('enable-features',
+  useCoreAudioTap
+    ? 'MacLoopbackAudioForScreenShare,MacCatapSystemAudioLoopbackCapture'
+    : 'MacLoopbackAudioForScreenShare,MacSckSystemAudioLoopbackOverride');
+
+// electron-audio-loopback registers an IPC handler + merges flags. The ACTIVE
+// getDisplayMedia handler is the manual one set in createWindow() below.
+try {
+  const { initMain } = require('electron-audio-loopback');
+  initMain({ forceCoreAudioTap: useCoreAudioTap });
+} catch (err) {
+  console.warn('electron-audio-loopback not available, using manual setup:', err.message);
+}
 
 // Single instance lock
 const gotLock = app.requestSingleInstanceLock();
@@ -23,12 +55,12 @@ const credentialsPath = path.join(app.getPath('userData'), 'credentials.enc');
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 420,
-    height: 580,
+    height: 700,
     frame: true, // native frame — enables menu bar + DevTools access
     resizable: true,
-    backgroundColor: '#111827',
+    backgroundColor: '#FAF8F3', // warm light theme bg (was dark #111827 → flash)
     show: false,
-    title: 'Call Recorder',
+    title: 'SilentQA Recorder',
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
@@ -38,8 +70,27 @@ function createWindow() {
 
   mainWindow.loadFile(path.join(__dirname, '..', 'renderer', 'index.html'));
 
-  // Open DevTools automatically for debugging
-  mainWindow.webContents.openDevTools({ mode: 'detach' });
+  // DevTools: auto-open only in dev (npm start). In a packaged .dmg it is NEVER
+  // auto-opened for end users — still reachable on demand via the shortcut below.
+  if (!app.isPackaged) {
+    mainWindow.webContents.openDevTools({ mode: 'detach' });
+  }
+  // (on-demand F12 / Cmd+Opt+I toggle handler already exists below)
+
+  // System-audio capture: auto-answer getDisplayMedia with the screen + 'loopback'
+  // audio (no picker dialog shown to the user). This ACTIVE handler overrides the
+  // library's; without it getDisplayMedia({ audio: true }) fails with "Not supported".
+  try {
+    const { desktopCapturer, session } = require('electron');
+    session.defaultSession.setDisplayMediaRequestHandler((_request, callback) => {
+      desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {
+        if (sources.length === 0) { callback({}); return; }
+        callback({ video: sources[0], audio: 'loopback' });
+      }).catch(() => callback({}));
+    });
+  } catch (err) {
+    console.warn('Failed to set display media handler:', err.message);
+  }
 
   mainWindow.once('ready-to-show', () => {
     mainWindow.show();
@@ -94,7 +145,7 @@ function createTray() {
     },
   ]);
 
-  tray.setToolTip('Call Recorder');
+  tray.setToolTip('SilentQA Recorder');
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {

@@ -1,21 +1,35 @@
 import asyncio
 import logging
-import secrets
 import shutil
 import uuid
 from pathlib import Path
 
 from celery import Celery
-from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
-from sqlalchemy import select, func, text
+from sqlalchemy import select, func, text, table, column
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.auth_jwt import get_current_broker
+from app.company_scenarios import valid_scenario
+from app.auth_user import (
+    UserCtx,
+    _NO_EMPLOYEE,
+    employee_scope,
+    get_current_user,
+    require_admin,
+    require_ingestion_auth,
+    require_session_access,
+    require_viewer,
+)
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
+from app.modules import module_enabled, require_module
 from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
+from tenancy.context import require_tenant_slug
+from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
 
 logger = logging.getLogger(__name__)
 
@@ -23,15 +37,24 @@ router = APIRouter(prefix="/api/sessions", tags=["sessions"])
 
 celery_app = Celery("voiceqa", broker=settings.REDIS_URL)
 
+# Lightweight table handle for the kb_tag filter subquery (no ORM model needed).
+_kb_mentions = table(
+    "kb_entry_mentions",
+    column("session_id", PGUUID(as_uuid=True)),
+    column("entry_id", PGUUID(as_uuid=True)),
+)
 
-@router.get("")
+
+@router.get("", dependencies=[Depends(require_viewer)])
 async def list_sessions(
     limit: int = 50,
     offset: int = 0,
     source: str | None = None,
     phone: str | None = None,
     template_id: str | None = None,
+    kb_tag: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(employee_scope),
 ):
     """List all sessions with pagination, sorted by created_at DESC.
 
@@ -51,6 +74,14 @@ async def list_sessions(
             filters.append(Session.metadata_["template_id"].astext.is_(None))
         else:
             filters.append(Session.metadata_["template_id"].astext == template_id)
+
+    if scope is not None:
+        filters.append(Session.metadata_["employee"].astext == scope)
+
+    if kb_tag:
+        filters.append(Session.id.in_(
+            select(_kb_mentions.c.session_id).where(_kb_mentions.c.entry_id == kb_tag)
+        ))
 
     count_q = select(func.count()).select_from(Session)
     list_q = select(Session).order_by(Session.created_at.desc())
@@ -93,11 +124,50 @@ async def list_sessions(
 # they're either populated from the authenticated broker JWT or left absent.
 # This prevents an unauthenticated (or differently-authenticated) client from
 # spoofing attribution by stuffing values into request metadata.
-_SERVER_OWNED_METADATA = ("broker_id", "amocrm_user_id", "broker_name", "responsible_user_id")
+_SERVER_OWNED_METADATA = (
+    "broker_id", "amocrm_user_id", "broker_name", "responsible_user_id",
+    # company_id/scenario_id — выбор конфига оценки принадлежит серверу
+    # (берётся из shared.tenants.company_config_id), клиент подменить не может.
+    "company_id", "scenario_id",
+)
 
 # Seeded by migration 008 — applied by default to desktop-app recordings,
 # which are Zoom meetings (not outbound calls).
 _DEFAULT_DESKTOP_TEMPLATE_NAME = "Zoom-встреча брокера (презентация ЖК)"
+
+_EMPLOYEE_MAX_LEN = 120
+
+
+def build_session_metadata(raw_meta: dict | None, broker: "BrokerInfo | None") -> dict:
+    """Собрать метаданные сессии (без БД): вычистить server-owned, санкционировать
+    клиентский `employee` (атрибуция для recorder-only тенантов), проставить
+    broker_* при наличии брокера. Чистая функция — юнит-тестируется без БД."""
+    meta = dict(raw_meta or {})
+    # Strip any server-owned keys the client tried to supply.
+    for k in _SERVER_OWNED_METADATA:
+        meta.pop(k, None)
+
+    # Санкционированный `employee`: только непустая строка, обрезаем до лимита.
+    # Намеренно НЕ в _SERVER_OWNED_METADATA — это легитимная клиентская атрибуция
+    # (десктоп по API-ключу проставляет имя сотрудника; AmoCRM-потоки его не шлют).
+    emp = meta.get("employee")
+    if isinstance(emp, str):
+        emp = emp.strip()[:_EMPLOYEE_MAX_LEN]
+        if emp:
+            meta["employee"] = emp
+        else:
+            meta.pop("employee", None)
+    else:
+        meta.pop("employee", None)
+
+    if broker is not None:
+        # Auto-attribute to the authenticated broker (authoritative).
+        meta["broker_id"] = str(broker.id)
+        meta["amocrm_user_id"] = broker.amocrm_user_id
+        meta["broker_name"] = broker.name
+        meta["responsible_user_id"] = broker.amocrm_user_id
+
+    return meta
 
 
 async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
@@ -108,31 +178,25 @@ async def _resolve_default_desktop_template_id(db: AsyncSession) -> str | None:
     return str(row[0]) if row else None
 
 
-@router.post("", response_model=SessionResponse, status_code=201)
+@router.post("", response_model=SessionResponse, status_code=201,
+             dependencies=[Depends(require_ingestion_auth)])
 async def create_session(
+    request: Request,
     body: SessionCreate,
     db: AsyncSession = Depends(get_db),
     broker: BrokerInfo | None = Depends(get_current_broker),
 ):
-    meta = dict(body.metadata or {})
-    # Strip any server-owned keys the client tried to supply.
-    for k in _SERVER_OWNED_METADATA:
-        meta.pop(k, None)
+    meta = build_session_metadata(body.metadata, broker)
 
-    if broker is not None:
-        # Auto-attribute the session to the authenticated broker. Authoritative
-        # — overwrite any (now-cleared) values from the client.
-        meta["broker_id"] = str(broker.id)
-        meta["amocrm_user_id"] = broker.amocrm_user_id
-        meta["broker_name"] = broker.name
-        # Mirror to responsible_user_id so existing AmoCRM name resolution works.
-        meta["responsible_user_id"] = broker.amocrm_user_id
-
-    # Desktop-app recordings are Zoom meetings (presentation), not outbound
-    # calls — auto-apply the Zoom-meeting evaluation template so the protocol
-    # used by the LLM matches the genre. Client may override by passing an
-    # explicit template_id.
-    if meta.get("source") == "desktop-app" and not meta.get("template_id"):
+    # Desktop-app recordings на тенантах с модулем complexes (RE «презентация ЖК») —
+    # авто-применяем Zoom-evaluation-шаблон, чтобы протокол LLM совпадал с жанром.
+    # Тенанты без complexes (fulldent и пр.) этого НЕ получают: их desktop-приёмы
+    # оцениваются сценарием company-config, а realestate-протокол «презентация ЖК»
+    # перебил бы его (pipeline.py:685-707). Гейт по МОДУЛЮ, не по слугу (спека §4.3).
+    # Клиент может явно задать template_id.
+    modules = (getattr(request.state, "tenant", None) or {}).get("modules")
+    if (meta.get("source") == "desktop-app" and not meta.get("template_id")
+            and module_enabled(modules, "complexes")):
         tid = await _resolve_default_desktop_template_id(db)
         if tid:
             meta["template_id"] = tid
@@ -144,12 +208,22 @@ async def create_session(
     return _to_response(session, 0)
 
 
-@router.get("/{session_id}", response_model=SessionResponse)
-async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+@router.get("/{session_id}", response_model=SessionResponse,
+            dependencies=[Depends(require_ingestion_auth)])
+async def get_session(
+    session_id: uuid.UUID,
+    db: AsyncSession = Depends(get_db),
+    user: UserCtx | None = Depends(get_current_user),
+):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
         raise HTTPException(status_code=404, detail="Session not found")
+
+    if user is not None and user.role == "manager":
+        emp = (session.metadata_ or {}).get("employee")
+        if emp != (user.employee_name or _NO_EMPLOYEE):
+            raise HTTPException(status_code=404, detail="Session not found")
 
     chunks_count = await db.scalar(
         select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
@@ -157,27 +231,15 @@ async def get_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db))
     return _to_response(session, chunks_count or 0)
 
 
-def _require_delete_password(provided: str | None) -> None:
-    expected = settings.DELETE_PASSWORD
-    if not expected:
-        # Fail-closed if password is not configured on the server.
-        raise HTTPException(status_code=503, detail="Delete is disabled: DELETE_PASSWORD not configured")
-    if not provided or not secrets.compare_digest(provided, expected):
-        raise HTTPException(status_code=401, detail="Invalid delete password")
-
-
-@router.delete("/{session_id}", status_code=204)
+@router.delete("/{session_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_session(
     session_id: uuid.UUID,
-    x_delete_password: str | None = Header(default=None, alias="X-Delete-Password"),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a session: DB row (cascades chunks) + audio and results directories.
 
-    Requires X-Delete-Password header matching server-side DELETE_PASSWORD.
+    Requires an admin cookie session (access matrix 5.6).
     """
-    _require_delete_password(x_delete_password)
-
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
     if not session:
@@ -187,51 +249,119 @@ async def delete_session(
     await db.commit()
 
     sid = str(session_id)
-    for base in (settings.AUDIO_STORAGE_PATH, settings.RESULTS_STORAGE_PATH):
-        # AUDIO is under <base>/sessions/<id>; RESULTS is under <base>/<id>
-        for candidate in (Path(base) / "sessions" / sid, Path(base) / sid):
-            if candidate.exists():
-                try:
-                    shutil.rmtree(candidate)
-                except OSError as e:
-                    logger.warning("Failed to remove %s: %s", candidate, e)
+    slug = require_tenant_slug()
+    candidates = [
+        tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, slug, sid),
+        tenant_results_dir(settings.RESULTS_STORAGE_PATH, slug, sid),
+        # legacy pre-tenant layout (files written before the cutover)
+        Path(settings.AUDIO_STORAGE_PATH) / "sessions" / sid,
+        Path(settings.RESULTS_STORAGE_PATH) / sid,
+    ]
+    for candidate in candidates:
+        if candidate.exists():
+            try:
+                shutil.rmtree(candidate)
+            except OSError as e:
+                logger.warning("Failed to remove %s: %s", candidate, e)
 
     return Response(status_code=204)
 
 
-class ReprocessBody(BaseModel):
-    template_id: uuid.UUID
+ALLOWED_ASR_ENGINES = ("whisper", "assemblyai", "elevenlabs")
 
 
-@router.post("/{session_id}/reprocess", response_model=SessionResponse)
-async def reprocess_session(
+class TranscribeCompareBody(BaseModel):
+    engines: list[str]
+
+
+@router.post("/{session_id}/transcribe-compare", status_code=202,
+             dependencies=[Depends(require_admin)])
+async def transcribe_compare(
     session_id: uuid.UUID,
-    body: ReprocessBody,
+    body: TranscribeCompareBody,
     db: AsyncSession = Depends(get_db),
 ):
-    """Reprocess an existing session with a different template (skip transcription)."""
+    """ASR-тюнинг (админ): прогнать аудио звонка несколькими движками для сравнения.
+
+    Не трогает канонический транскрипт/БД — варианты пишутся отдельными файлами,
+    читаются через GET /transcript-variants.
+    """
+    engines = [e for e in dict.fromkeys(body.engines) if e in ALLOWED_ASR_ENGINES]
+    if not engines:
+        raise HTTPException(status_code=400,
+                            detail="No supported engines (whisper|assemblyai|elevenlabs)")
+
     sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
     if not sess:
         raise HTTPException(status_code=404, detail="Session not found")
     if sess.status in (SessionStatus.processing, SessionStatus.uploading):
         raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
 
-    tpl = (await db.execute(text("SELECT id FROM extraction_templates WHERE id=:id"),
-                            {"id": body.template_id})).first()
-    if not tpl:
-        raise HTTPException(status_code=404, detail="Template not found")
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
+    loop = asyncio.get_event_loop()
+    await loop.run_in_executor(
+        None,
+        lambda: celery_app.send_task(
+            "pipeline.compare_transcripts",
+            args=[str(session_id)],
+            kwargs={"engines": engines, "tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
+    )
+    return {"status": "queued", "engines": engines}
+
+
+class ReprocessBody(BaseModel):
+    # None → перепрогон без шаблона: заново квалити+сентимент по активному
+    # профилю оценки сценария (см. routes/eval_profiles.py). С шаблоном —
+    # как раньше: шаблон переопределяет протокол/критерии.
+    template_id: uuid.UUID | None = None
+
+
+@router.post("/{session_id}/reprocess", response_model=SessionResponse,
+             dependencies=[Depends(require_admin)])
+async def reprocess_session(
+    session_id: uuid.UUID,
+    body: ReprocessBody,
+    db: AsyncSession = Depends(get_db),
+):
+    """Reprocess an existing session (skip transcription).
+
+    With a template_id — re-run with that evaluation/extraction template.
+    Without — plain re-evaluation that picks up the scenario's active eval profile.
+    """
+    sess = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not sess:
+        raise HTTPException(status_code=404, detail="Session not found")
+    if sess.status in (SessionStatus.processing, SessionStatus.uploading):
+        raise HTTPException(status_code=409, detail=f"Session is currently {sess.status.value}")
 
     meta = dict(sess.metadata_ or {})
-    meta["template_id"] = str(body.template_id)
+    if body.template_id is not None:
+        tpl = (await db.execute(text("SELECT id FROM extraction_templates WHERE id=:id"),
+                                {"id": body.template_id})).first()
+        if not tpl:
+            raise HTTPException(status_code=404, detail="Template not found")
+        meta["template_id"] = str(body.template_id)
+    else:
+        meta.pop("template_id", None)   # plain re-eval → no template override
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
     await db.commit()
     await db.refresh(sess)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(
@@ -244,8 +374,10 @@ class LinkLeadBody(BaseModel):
     lead_id: int | None = None  # None = unlink
 
 
-@router.post("/{session_id}/link-lead", response_model=SessionResponse)
+@router.post("/{session_id}/link-lead", response_model=SessionResponse,
+             dependencies=[Depends(require_ingestion_auth)])
 async def link_lead(
+    request: Request,
     session_id: uuid.UUID,
     body: LinkLeadBody,
     db: AsyncSession = Depends(get_db),
@@ -291,7 +423,12 @@ async def link_lead(
     # on the old lead in AmoCRM so the deal doesn't keep a stale
     # evaluation pointing back to a session that no longer references it.
     old_note_ids = [nid for nid in (meta.get("amo_note_id"), meta.get("plan_amo_note_id")) if nid]
-    if old_lead_id and old_note_ids:
+    # Note-cleanup дёргает AmoCRM realestate — гейтим модулем amocrm тенанта
+    # (находка финального ревью Plan 2): чужой тенант не должен достучаться
+    # до CRM, даже подсунув lead_id/amo_note_id в metadata.
+    if old_lead_id and old_note_ids and module_enabled(
+        (getattr(request.state, "tenant", None) or {}).get("modules"), "amocrm"
+    ):
         try:
             import sys as _sys
             from pathlib import Path as _Path
@@ -327,10 +464,17 @@ async def link_lead(
     await db.commit()
     await db.refresh(sess)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(
@@ -339,7 +483,8 @@ async def link_lead(
     return _to_response(sess, chunks_count or 0)
 
 
-@router.get("/{session_id}/extraction")
+@router.get("/{session_id}/extraction",
+            dependencies=[Depends(require_session_access), Depends(require_module("complexes"))])
 async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """Return the latest extraction for the session, or 404 if none exists."""
     row = (await db.execute(text("""
@@ -359,7 +504,20 @@ async def get_session_extraction(session_id: uuid.UUID, db: AsyncSession = Depen
     }
 
 
-@router.post("/{session_id}/finish", response_model=SessionResponse)
+@router.get("/{session_id}/tags", dependencies=[Depends(require_session_access)])
+async def get_session_tags(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
+    rows = (await db.execute(text("""
+        SELECT e.id, e.term, c.name, m.count
+        FROM kb_entry_mentions m
+        JOIN kb_entries e ON e.id = m.entry_id
+        JOIN kb_categories c ON c.id = e.category_id
+        WHERE m.session_id = :sid ORDER BY m.count DESC
+    """), {"sid": session_id})).all()
+    return [{"entry_id": str(r[0]), "term": r[1], "category": r[2], "count": r[3]} for r in rows]
+
+
+@router.post("/{session_id}/finish", response_model=SessionResponse,
+             dependencies=[Depends(require_ingestion_auth)])
 async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(Session).where(Session.id == session_id))
     session = result.scalar_one_or_none()
@@ -369,14 +527,39 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     if session.status not in (SessionStatus.created, SessionStatus.uploading):
         raise HTTPException(status_code=400, detail=f"Cannot finish session in status '{session.status}'")
 
+    # Санкционирование клиентского appointment_type → scenario_id (RE-safe):
+    # appointment_type — валидное клиентское поле (НЕ server-owned), доживает из
+    # create_session. Если оно есть И валидно для сценариев company-config тенанта —
+    # передаём config={"scenario_id": ...} в pipeline. Нет/невалид → config=None →
+    # дефолтный сценарий (поведение realestate не меняется).
+    meta = session.metadata_ or {}
+    appt = meta.get("appointment_type")
+    config: dict | None = None
+    if appt:
+        row = (await db.execute(
+            text("SELECT company_config_id FROM shared.tenants WHERE slug = :slug"),
+            {"slug": require_tenant_slug()},
+        )).first()
+        cfg_id = row[0] if row else None
+        scen = valid_scenario(cfg_id, appt)
+        if scen:
+            config = {"scenario_id": scen}
+
     session.status = SessionStatus.processing
     await db.commit()
     await db.refresh(session)
 
+    from tenancy.context import require_tenant_schema
+    tenant_schema = require_tenant_schema()
     loop = asyncio.get_event_loop()
     await loop.run_in_executor(
         None,
-        lambda: celery_app.send_task("pipeline.process_session", args=[str(session_id)], queue="transcription"),
+        lambda: celery_app.send_task(
+            "pipeline.process_session",
+            args=[str(session_id)],
+            kwargs={"tenant_schema": tenant_schema, "config": config},
+            queue="transcription",
+        ),
     )
 
     chunks_count = await db.scalar(
@@ -385,7 +568,7 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     return _to_response(session, chunks_count or 0)
 
 
-@router.patch("/{session_id}/speaker-map")
+@router.patch("/{session_id}/speaker-map", dependencies=[Depends(require_admin)])
 async def update_speaker_map(
     session_id: uuid.UUID,
     body: SpeakerMapUpdate,

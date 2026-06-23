@@ -12,10 +12,13 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import require_ingestion_auth
 from app.config import settings
 from app.database import get_db
 from app.models import Chunk, Session, SessionStatus
 from app.schemas import ChunkResponse
+from tenancy.context import require_tenant_slug
+from tenancy.paths import tenant_audio_sessions_dir
 
 # Hard cap so a malicious or buggy client cannot DoS missing-chunks (which
 # materializes a range up to received[-1]) or blow the filename pad. 99999
@@ -35,7 +38,8 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg exit {result.returncode}: {stderr_tail}")
 
 
-@router.post("/{session_id}/chunks", response_model=ChunkResponse, status_code=201)
+@router.post("/{session_id}/chunks", response_model=ChunkResponse, status_code=201,
+             dependencies=[Depends(require_ingestion_auth)])
 async def upload_chunk(
     session_id: uuid.UUID,
     file: UploadFile,
@@ -77,7 +81,7 @@ async def upload_chunk(
         if chunk_number > MAX_CHUNK_NUMBER:
             raise HTTPException(status_code=400, detail="chunk count exceeded")
 
-    session_dir = Path(settings.AUDIO_STORAGE_PATH) / "sessions" / str(session_id)
+    session_dir = tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, require_tenant_slug(), session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     file_path = session_dir / f"chunk_{chunk_number:06d}.webm"
 
@@ -158,7 +162,7 @@ async def upload_chunk(
     )
 
 
-@router.get("/{session_id}/missing-chunks")
+@router.get("/{session_id}/missing-chunks", dependencies=[Depends(require_ingestion_auth)])
 async def missing_chunks(session_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     """List chunk numbers that should exist but don't.
 
@@ -183,7 +187,7 @@ async def missing_chunks(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     return {"received": received, "missing": missing, "max": received[-1]}
 
 
-@router.post("/{session_id}/upload-audio")
+@router.post("/{session_id}/upload-audio", dependencies=[Depends(require_ingestion_auth)])
 async def upload_audio_file(
     session_id: uuid.UUID,
     file: UploadFile,
@@ -206,7 +210,7 @@ async def upload_audio_file(
     ext = Path(original_name).suffix.lower() or ".webm"
 
     # Save uploaded file
-    session_dir = Path(settings.AUDIO_STORAGE_PATH) / "sessions" / str(session_id)
+    session_dir = tenant_audio_sessions_dir(settings.AUDIO_STORAGE_PATH, require_tenant_slug(), session_id)
     session_dir.mkdir(parents=True, exist_ok=True)
     original_path = session_dir / f"original{ext}"
 

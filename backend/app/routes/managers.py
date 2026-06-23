@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import employee_scope, require_viewer
 from app.database import get_db
 from app.models import Chunk, Session
 from app.schemas import SessionResponse
@@ -11,16 +12,25 @@ from app.schemas import SessionResponse
 router = APIRouter(prefix="/api/managers", tags=["managers"])
 
 
-@router.get("")
-async def list_managers(db: AsyncSession = Depends(get_db)):
-    """List unique managers with aggregated stats."""
+async def _all_sessions(db: AsyncSession):
     result = await db.execute(select(Session))
-    sessions = result.scalars().all()
+    return result.scalars().all()
+
+
+@router.get("", dependencies=[Depends(require_viewer)])
+async def list_managers(
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(employee_scope),
+):
+    """List unique managers with aggregated stats."""
+    sessions = await _all_sessions(db)
 
     managers: dict[str, dict] = {}
     for session in sessions:
         employee = (session.metadata_ or {}).get("employee")
         if not employee:
+            continue
+        if scope is not None and employee != scope:
             continue
 
         if employee not in managers:
@@ -54,11 +64,17 @@ async def list_managers(db: AsyncSession = Depends(get_db)):
     return result_list
 
 
-@router.get("/{name}/sessions", response_model=list[SessionResponse])
-async def get_manager_sessions(name: str, db: AsyncSession = Depends(get_db)):
+@router.get("/{name}/sessions", response_model=list[SessionResponse], dependencies=[Depends(require_viewer)])
+async def get_manager_sessions(
+    name: str,
+    db: AsyncSession = Depends(get_db),
+    scope: str | None = Depends(employee_scope),
+):
     """List sessions for a specific manager."""
-    result = await db.execute(select(Session))
-    sessions = result.scalars().all()
+    if scope is not None and name != scope:
+        raise HTTPException(status_code=403, detail="foreign_manager")
+
+    sessions = await _all_sessions(db)
 
     matched = []
     for session in sessions:

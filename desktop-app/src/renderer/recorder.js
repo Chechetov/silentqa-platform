@@ -19,6 +19,9 @@ let sessionId = null;
 let serverUrl = '';
 let authHeader = '';
 let brokerToken = '';
+let apiKey = '';
+let employee = '';
+let appointmentType = '';
 let chunksUploaded = 0;
 let nextChunkNumber = 0;
 let pendingChunks = 0;
@@ -62,6 +65,7 @@ const MIC_CONSTRAINTS = {
 function buildHeaders(extra = {}, auth = authHeader) {
   const h = { Authorization: auth };
   if (brokerToken) h['X-Broker-Token'] = brokerToken;
+  if (apiKey) h['X-API-Key'] = apiKey;
   return Object.assign(h, extra);
 }
 
@@ -79,16 +83,17 @@ function sendStatus(status, extra = {}) {
 }
 
 async function createSession() {
+  const metadata = {
+    source: 'desktop-app',
+    platform: window.electronAPI.platform,
+    recordedAt: new Date().toISOString(),
+  };
+  if (employee) metadata.employee = employee;
+  if (appointmentType) metadata.appointment_type = appointmentType;
   const resp = await fetchWithRetry(`${serverUrl}/api/sessions`, {
     method: 'POST',
     headers: buildHeaders({ 'Content-Type': 'application/json' }),
-    body: JSON.stringify({
-      metadata: {
-        source: 'desktop-app',
-        platform: window.electronAPI.platform,
-        recordedAt: new Date().toISOString(),
-      },
-    }),
+    body: JSON.stringify({ metadata }),
   });
   if (!resp.ok) throw new Error(`Failed to create session: ${resp.status}`);
   const data = await resp.json();
@@ -665,5 +670,8 @@ window.Recorder = {
   isRecording,
   recoverPendingChunks,
   setBrokerToken: (token) => { brokerToken = token || ''; },
+  setApiKey: (key) => { apiKey = key || ''; },
+  setEmployee: (v) => { employee = (v || '').trim(); },
+  setAppointmentType: (v) => { appointmentType = (v || '').trim(); },
 };
 })();

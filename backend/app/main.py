@@ -1,84 +1,30 @@
-import base64
-import secrets
 import subprocess
+import sys
 from contextlib import asynccontextmanager
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → tenancy
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
 
 from app.config import settings
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
-    webhooks, amocrm, templates, complexes, auth,
+    amocrm, templates, complexes, knowledge, auth, user_auth, tenancy_check, platform_auth,
+    platform_tenants, users, eval_profiles,
 )
-
-
-class BasicAuthMiddleware(BaseHTTPMiddleware):
-    """HTTP Basic Auth on UI routes only. API endpoints are open for the Chrome extension."""
-
-    OPEN_PREFIXES = ("/api/", "/health")
-    PROTECTED_PREFIXES = ("/api/templates", "/api/complexes", "/api/extractions")
-    PROTECTED_METHODS = {"POST", "PATCH", "DELETE"}
-
-    async def dispatch(self, request: Request, call_next):
-        # Destructive calls on templates/complexes/extractions need the delete password
-        if (request.method in self.PROTECTED_METHODS
-                and any(request.url.path.startswith(p) for p in self.PROTECTED_PREFIXES)):
-            expected = settings.DELETE_PASSWORD
-            if not expected:
-                return Response(
-                    status_code=503,
-                    content='{"detail":"Mutations disabled: DELETE_PASSWORD not configured"}',
-                    media_type="application/json",
-                )
-            provided = request.headers.get("X-Delete-Password")
-            if not provided or not secrets.compare_digest(provided, expected):
-                return Response(
-                    status_code=401,
-                    content='{"detail":"Invalid delete password"}',
-                    media_type="application/json",
-                )
-            return await call_next(request)
-
-        if request.url.path.startswith(self.OPEN_PREFIXES):
-            return await call_next(request)
-
-        # Allow CORS preflight through
-        if request.method == "OPTIONS":
-            return await call_next(request)
-
-        auth = request.headers.get("Authorization")
-        if auth:
-            try:
-                scheme, credentials = auth.split(" ", 1)
-                if scheme.lower() == "basic":
-                    decoded = base64.b64decode(credentials).decode("utf-8")
-                    username, password = decoded.split(":", 1)
-                    if (
-                        secrets.compare_digest(username, settings.AUTH_USERNAME)
-                        and secrets.compare_digest(password, settings.AUTH_PASSWORD)
-                    ):
-                        return await call_next(request)
-            except Exception:
-                pass
-
-        return Response(
-            status_code=401,
-            headers={"WWW-Authenticate": 'Basic realm="Meeting Recorder"'},
-            content="Unauthorized",
-        )
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run alembic migrations on startup
+    # Run the two-track migration runner (shared registry first, then the
+    # tenant track per active schema). Fresh process: env.py's asyncio.run
+    # would clash with the already-running loop here, hence subprocess.
     result = subprocess.run(
-        ["alembic", "upgrade", "head"],
+        [sys.executable, "-m", "app.migrate"],
         capture_output=True, text=True,
     )
     if result.returncode != 0:
@@ -90,7 +36,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Meeting Recorder", version="1.0.0", lifespan=lifespan)
 
-# CORS — must be added before BasicAuth so preflight responses include CORS headers
+# CORS
 origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
@@ -99,8 +45,15 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Basic Auth
-app.add_middleware(BasicAuthMiddleware)
+# Tenant resolution — outermost: unknown hosts 404 before anything else runs
+from app.tenancy_http import registry, TenantResolutionMiddleware
+
+app.add_middleware(
+    TenantResolutionMiddleware,
+    registry=registry,
+    base_domain=settings.BASE_DOMAIN,
+    default_tenant=settings.DEFAULT_TENANT,
+)
 
 # Routes
 app.include_router(sessions.router)
@@ -109,11 +62,17 @@ app.include_router(transcripts.router)
 app.include_router(companies.router)
 app.include_router(analysis.router)
 app.include_router(managers.router)
-app.include_router(webhooks.router)
 app.include_router(amocrm.router)
 app.include_router(templates.router)
 app.include_router(complexes.router)
+app.include_router(knowledge.router)
 app.include_router(auth.router)
+app.include_router(user_auth.router)
+app.include_router(tenancy_check.router)
+app.include_router(platform_auth.router)
+app.include_router(platform_tenants.router)
+app.include_router(users.router)
+app.include_router(eval_profiles.router)
 
 
 @app.get("/health")
@@ -121,9 +80,15 @@ async def health():
     return {"status": "ok"}
 
 
-@app.get("/recorder")
-async def recorder_page():
-    return FileResponse("static/recorder.html")
+from tenancy.context import get_tenant_slug as _get_tenant_slug
+
+
+@app.get("/", include_in_schema=False)
+async def root_page():
+    # Платформенный контур (apex и admin.) — админ-SPA; тенант — дашборд
+    page = "admin.html" if _get_tenant_slug() is None else "index.html"
+    return FileResponse(f"static/{page}")
+
 
 # Static files — must be LAST (after all API routers) so it doesn't intercept API routes
 app.mount("/", StaticFiles(directory="static", html=True), name="static")

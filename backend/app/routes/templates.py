@@ -1,4 +1,4 @@
-"""CRUD for extraction templates. Mutations require X-Delete-Password (gated in main.py)."""
+"""CRUD for extraction templates. Reads require viewer, mutations require admin."""
 from __future__ import annotations
 
 import json
@@ -10,6 +10,7 @@ from jsonschema import Draft202012Validator, SchemaError
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.auth_user import require_admin, require_viewer
 from app.database import get_db
 from app.schemas_templates import (
     TemplateCreate, TemplateDetail, TemplateListItem, TemplateUpdate,
@@ -26,7 +27,7 @@ def _validate_schema(schema: dict) -> None:
         raise HTTPException(status_code=422, detail=f"json_schema is not a valid JSON Schema: {e.message}")
 
 
-@router.get("", response_model=list[TemplateListItem])
+@router.get("", response_model=list[TemplateListItem], dependencies=[Depends(require_viewer)])
 async def list_templates(db: AsyncSession = Depends(get_db)):
     rows = (await db.execute(text(
         "SELECT id, name, description, kind, updated_at FROM extraction_templates ORDER BY name"
@@ -34,7 +35,7 @@ async def list_templates(db: AsyncSession = Depends(get_db)):
     return [TemplateListItem(id=r[0], name=r[1], description=r[2], kind=r[3], updated_at=r[4]) for r in rows]
 
 
-@router.get("/{template_id}", response_model=TemplateDetail)
+@router.get("/{template_id}", response_model=TemplateDetail, dependencies=[Depends(require_viewer)])
 async def get_template(template_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     row = (await db.execute(text("""
         SELECT id, name, description, kind, prompt, json_schema, created_at, updated_at
@@ -48,7 +49,7 @@ async def get_template(template_id: uuid.UUID, db: AsyncSession = Depends(get_db
     )
 
 
-@router.post("", response_model=TemplateDetail, status_code=201)
+@router.post("", response_model=TemplateDetail, status_code=201, dependencies=[Depends(require_admin)])
 async def create_template(body: TemplateCreate, db: AsyncSession = Depends(get_db)):
     _validate_schema(body.json_schema)
     new_id = uuid.uuid4()
@@ -68,7 +69,7 @@ async def create_template(body: TemplateCreate, db: AsyncSession = Depends(get_d
     return await get_template(new_id, db)
 
 
-@router.patch("/{template_id}", response_model=TemplateDetail)
+@router.patch("/{template_id}", response_model=TemplateDetail, dependencies=[Depends(require_admin)])
 async def update_template(template_id: uuid.UUID, body: TemplateUpdate, db: AsyncSession = Depends(get_db)):
     if body.json_schema is not None:
         _validate_schema(body.json_schema)
@@ -92,7 +93,7 @@ async def update_template(template_id: uuid.UUID, body: TemplateUpdate, db: Asyn
     return await get_template(template_id, db)
 
 
-@router.delete("/{template_id}", status_code=204)
+@router.delete("/{template_id}", status_code=204, dependencies=[Depends(require_admin)])
 async def delete_template(template_id: uuid.UUID, db: AsyncSession = Depends(get_db)):
     used = (await db.execute(text("""
         SELECT

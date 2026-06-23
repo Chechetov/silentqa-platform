@@ -16,6 +16,9 @@ from openai import OpenAI
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DbSession
 
+from tenancy.context import require_tenant_slug
+from tenancy.paths import tenant_results_dir
+
 from tasks.complex_match import match_or_create_complex
 
 logger = logging.getLogger(__name__)
@@ -45,7 +48,7 @@ def _flatten_transcript(transcript) -> str:
     return "\n".join(parts)
 
 
-def run_extraction(db: DbSession, session_id, template_id) -> dict:
+def run_extraction(db: DbSession, session_id, template_id, glossary: str | None = None) -> dict:
     """Run the LLM extraction step. Returns the extracted dict.
 
     Raises RuntimeError on safety-cap breach, missing transcript, or LLM error —
@@ -57,7 +60,7 @@ def run_extraction(db: DbSession, session_id, template_id) -> dict:
     if not template:
         raise RuntimeError(f"template {template_id} not found")
 
-    transcript_path = RESULTS_PATH / str(session_id) / "transcript.json"
+    transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
     if not transcript_path.exists():
         raise RuntimeError(f"transcript not found at {transcript_path}")
     with transcript_path.open() as f:
@@ -74,11 +77,12 @@ def run_extraction(db: DbSession, session_id, template_id) -> dict:
 
     client = OpenAI()
     logger.info("Running extraction with template '%s' for session %s", template.name, session_id)
+    user_content = (glossary + "\n\n" if glossary else "") + f"Транскрипт:\n\n{flat}"
     resp = client.responses.create(
         model="gpt-5.4",
         input=[
             {"role": "system", "content": template.prompt},
-            {"role": "user", "content": f"Транскрипт:\n\n{flat}"},
+            {"role": "user", "content": user_content},
         ],
         text={
             "format": {
@@ -91,7 +95,7 @@ def run_extraction(db: DbSession, session_id, template_id) -> dict:
     )
     extracted = json.loads(resp.output_text)
 
-    out_dir = RESULTS_PATH / str(session_id)
+    out_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)
     out_dir.mkdir(parents=True, exist_ok=True)
     with (out_dir / "extraction.json").open("w") as f:
         json.dump(extracted, f, ensure_ascii=False, indent=2)

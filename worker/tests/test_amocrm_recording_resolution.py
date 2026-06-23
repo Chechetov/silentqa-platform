@@ -37,13 +37,13 @@ def test_missing_recording_parks_call_as_awaiting(monkeypatch):
     """Empty recording_url + note still has no link → status 'awaiting_recording'."""
     updates = []
     monkeypatch.setattr(ap, "_get_sync_db_url", lambda: "postgresql://x")
-    monkeypatch.setattr(ap, "psycopg2",
-                        MagicMock(connect=lambda *a, **k: _fake_conn(_row(retry_count=2))))
+    monkeypatch.setattr(ap, "tenant_connect",
+                        lambda *a, **k: _fake_conn(_row(retry_count=2)))
     monkeypatch.setattr(ap, "get_note_details", lambda *a, **k: {"params": {"link": ""}})
     monkeypatch.setattr(ap, "_update_call_status",
                         lambda cid, status, **kw: updates.append((cid, status, kw)))
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     assert len(updates) == 1
     cid, status, kw = updates[0]
@@ -58,8 +58,8 @@ def test_missing_recording_resolved_on_retry(monkeypatch, tmp_path):
     updates = []
     monkeypatch.setattr(ap, "AUDIO_PATH", str(tmp_path))
     monkeypatch.setattr(ap, "_get_sync_db_url", lambda: "postgresql://x")
-    monkeypatch.setattr(ap, "psycopg2",
-                        MagicMock(connect=lambda *a, **k: _fake_conn(_row())))
+    monkeypatch.setattr(ap, "tenant_connect",
+                        lambda *a, **k: _fake_conn(_row()))
     monkeypatch.setattr(ap, "get_note_details",
                         lambda *a, **k: {"params": {"link": "https://media.example/rec.mp3"}})
     monkeypatch.setattr(ap, "_update_call_status",
@@ -67,7 +67,7 @@ def test_missing_recording_resolved_on_retry(monkeypatch, tmp_path):
     # Stop right after URL resolution by making the download fail fast.
     monkeypatch.setattr(ap, "download_recording", lambda url, dest: False)
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     # First status update persists the resolved URL alongside 'downloading'
     # and clears the stale 'recording_not_published' marker.
@@ -82,12 +82,12 @@ def test_present_recording_skips_resolution(monkeypatch, tmp_path):
     fetched = []
     monkeypatch.setattr(ap, "AUDIO_PATH", str(tmp_path))
     monkeypatch.setattr(ap, "_get_sync_db_url", lambda: "postgresql://x")
-    monkeypatch.setattr(ap, "psycopg2", MagicMock(
-        connect=lambda *a, **k: _fake_conn(_row(recording_url="https://media.example/x.mp3"))))
+    monkeypatch.setattr(ap, "tenant_connect",
+                        lambda *a, **k: _fake_conn(_row(recording_url="https://media.example/x.mp3")))
     monkeypatch.setattr(ap, "_update_call_status", lambda *a, **k: None)
     monkeypatch.setattr(ap, "download_recording", lambda url, dest: False)
     monkeypatch.setattr(ap, "get_note_details", lambda *a, **k: fetched.append(1))
 
-    ap.process_amocrm_call(call_id=42)
+    ap.process_amocrm_call(call_id=42, tenant_schema="t_realestate")
 
     assert fetched == []                                # resolution path not entered

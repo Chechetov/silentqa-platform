@@ -11,9 +11,15 @@ import os
 import subprocess
 import uuid
 from datetime import datetime, timezone, timedelta
-from pathlib import Path
 
-import psycopg2
+from tenancy.context import (
+    get_tenant_schema,
+    require_tenant_slug,
+    reset_tenant_schema,
+    set_tenant_schema,
+)
+from tenancy.db import get_sync_db_url, tenant_connect
+from tenancy.paths import tenant_audio_amocrm_dir
 
 from tasks.celery_app import app
 from tasks.amocrm_sync import (
@@ -45,11 +51,7 @@ MAX_RETRIES = int(os.getenv("AMOCRM_MAX_RETRIES", "36"))
 RETRY_MAX_AGE_HOURS = int(os.getenv("AMOCRM_RETRY_MAX_AGE_HOURS", "24"))
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
 
 
 def _get_last_poll_timestamp() -> int:
@@ -63,12 +65,11 @@ def _get_last_poll_timestamp() -> int:
     safety_cutoff = now_ts - POLL_SAFETY_WINDOW_MINUTES * 60
     initial_cutoff = int((datetime.now(timezone.utc) - timedelta(hours=INITIAL_LOOKBACK_HOURS)).timestamp())
 
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return initial_cutoff
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT MAX(created_at) FROM amocrm_calls")
@@ -94,12 +95,11 @@ def _insert_call(amo_note_id: int, lead_id: int, phone: str, direction: str,
     entity reference (`entity_type`/`entity_id`) lets process_amocrm_call
     re-read the note later to pick the recording up once it lands.
     """
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return None
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -126,8 +126,7 @@ _ALLOWED_UPDATE_COLUMNS = {"error_message", "session_id", "retry_count", "proces
 
 def _update_call_status(call_id: int, status: str, **kwargs):
     """Update amocrm_calls row status and optional fields."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return
 
     sets = ["status = %s"]
@@ -140,7 +139,7 @@ def _update_call_status(call_id: int, status: str, **kwargs):
     values.append(call_id)
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(f"UPDATE amocrm_calls SET {', '.join(sets)} WHERE id = %s", values)
@@ -151,11 +150,10 @@ def _update_call_status(call_id: int, status: str, **kwargs):
 
 def reset_call_for_reprocess(call_id: int) -> bool:
     """Reset a call to 'created' status so it can be re-enqueued. Returns True if reset."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return False
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -181,12 +179,11 @@ def _get_retryable_calls() -> list[dict]:
     (call ingested before its recording was published) — the latter is retried
     until the recording lands or the retry budget is exhausted.
     """
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         return []
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -214,14 +211,13 @@ def _get_retryable_calls() -> list[dict]:
 
 def _create_session(metadata: dict) -> str:
     """Create a new session in the sessions table. Returns session_id."""
-    db_url = _get_sync_db_url()
     session_id = str(uuid.uuid4())
 
-    if not db_url:
+    if not _get_sync_db_url():
         return session_id
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -310,13 +306,12 @@ def _ingest_call_event(event: dict) -> int | None:
         entity_id=entity_id,
     )
     if call_id:
-        process_amocrm_call.delay(call_id)
+        process_amocrm_call.delay(call_id, tenant_schema=get_tenant_schema())
     return call_id
 
 
-@app.task(name="amocrm_poll.poll_amocrm_calls")
-def poll_amocrm_calls():
-    """Celery Beat task: poll AmoCRM for new call recordings every 5 minutes."""
+def _poll_for_current_tenant():
+    """Poll AmoCRM for new call recordings (tenant context already set)."""
     logger.info("Polling AmoCRM for new calls...")
     since = _get_last_poll_timestamp()
     events = get_recent_call_events(since)
@@ -330,23 +325,35 @@ def poll_amocrm_calls():
     retryable = _get_retryable_calls()
     for call in retryable:
         logger.info(f"Retrying failed call {call['id']} (note {call['amo_note_id']})")
-        process_amocrm_call.delay(call["id"])
+        process_amocrm_call.delay(call["id"], tenant_schema=get_tenant_schema())
 
     logger.info(f"Poll complete: {new_count} new calls, {len(retryable)} retries")
     return {"new": new_count, "retries": len(retryable)}
 
 
-@app.task(bind=True, queue="transcription", name="amocrm_poll.process_amocrm_call")
-def process_amocrm_call(self, call_id: int):
+@app.task(name="amocrm_poll.poll_amocrm_calls")
+def poll_amocrm_calls():
+    """Celery Beat task (every 5 minutes): poll AmoCRM for each AmoCRM tenant."""
+    from tenancy.registry import iter_amocrm_tenants
+    for t in iter_amocrm_tenants():
+        token = set_tenant_schema(t["schema_name"])
+        try:
+            _poll_for_current_tenant()
+        except Exception:
+            logger.exception(f"poll failed for tenant {t['slug']}")
+        finally:
+            reset_tenant_schema(token)
+
+
+def _process_amocrm_call_body(task, call_id: int):
     """Download recording from AmoCRM note and run through pipeline."""
     # Read call data from DB
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not _get_sync_db_url():
         logger.error("DATABASE_URL not set")
         return
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -413,7 +420,7 @@ def process_amocrm_call(self, call_id: int):
         _update_call_status(call_id, "downloading")
 
     # === 1. Download recording ===
-    call_dir = Path(AUDIO_PATH) / "amocrm" / str(amo_note_id)
+    call_dir = tenant_audio_amocrm_dir(AUDIO_PATH, require_tenant_slug(), amo_note_id)
     call_dir.mkdir(parents=True, exist_ok=True)
 
     # Determine file extension from URL or default to mp3
@@ -463,7 +470,7 @@ def process_amocrm_call(self, call_id: int):
         company_config = load_company_config("realestate")
         scenario = get_scenario(company_config, scenario_id)
 
-        result = _run_pipeline(self, session_id, wav_path, {
+        result = _run_pipeline(task, session_id, wav_path, {
             "company_id": "realestate",
             "scenario_id": scenario_id,
         }, company_config, scenario, session_meta)
@@ -508,3 +515,15 @@ def process_amocrm_call(self, call_id: int):
         _update_call_status(call_id, "failed", error_message=str(e)[:500], retry_count=retry_count + 1)
         logger.exception(f"[amo:{amo_note_id}] Pipeline failed: {e}")
         raise
+
+
+@app.task(bind=True, queue="transcription", name="amocrm_poll.process_amocrm_call")
+def process_amocrm_call(self, call_id: int, tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_amocrm_call_body(self, call_id)
+    finally:
+        reset_tenant_schema(token)

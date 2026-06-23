@@ -9,7 +9,7 @@ side-by-side comparison.
 
 Usage (from /root/projects/realestate/worker):
 
-    ../.venv/bin/python3 -m scripts.reassess_quality [--limit N] [--only SESSION_ID]
+    ../.venv/bin/python3 -m scripts.reassess_quality --tenant <slug> [--limit N] [--only SESSION_ID]
 """
 from __future__ import annotations
 
@@ -24,7 +24,6 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
-import psycopg2
 from dotenv import load_dotenv
 
 
@@ -32,8 +31,13 @@ from dotenv import load_dotenv
 REPO_ROOT = Path(__file__).resolve().parents[2]
 load_dotenv(REPO_ROOT / ".env")
 
-# Make sure tasks package is importable when run as `python -m scripts.reassess_quality`
+# Make sure tasks + tenancy packages are importable when run as `python -m scripts.reassess_quality`
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(REPO_ROOT))
+
+from tenancy.context import set_tenant_schema  # noqa: E402
+from tenancy.db import get_sync_db_url, tenant_connect  # noqa: E402
+from tenancy.identifiers import schema_for_slug  # noqa: E402
 
 from tasks.quality import assess_quality, plan_next_call  # noqa: E402
 from tasks.prior_context import build_prior_context_for_session  # noqa: E402
@@ -47,16 +51,11 @@ logger = logging.getLogger("reassess")
 # Quiet the noisy info logs from tasks.quality
 logging.getLogger("tasks.quality").setLevel(logging.WARNING)
 
-RESULTS_PATH = Path(os.getenv("RESULTS_STORAGE_PATH", "/data/realestate/results"))
+RESULTS_ROOT = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
+# Per-tenant results dir (<RESULTS_ROOT>/<slug>); finalized in main() from --tenant.
+RESULTS_PATH = Path(RESULTS_ROOT)
 
-
-def _sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    # psycopg2 doesn't understand SQLAlchemy dialect prefixes
-    return (
-        url.replace("postgresql+psycopg2://", "postgresql://")
-        .replace("postgresql+asyncpg://", "postgresql://")
-    )
+_sync_db_url = get_sync_db_url
 
 
 def list_completed_sessions() -> list[tuple[str, Any, Any]]:
@@ -64,7 +63,7 @@ def list_completed_sessions() -> list[tuple[str, Any, Any]]:
     db_url = _sync_db_url()
     if not db_url:
         raise RuntimeError("DATABASE_URL_SYNC not set")
-    conn = psycopg2.connect(db_url)
+    conn = tenant_connect()
     try:
         with conn, conn.cursor() as cur:
             cur.execute(
@@ -158,12 +157,19 @@ def reassess_one(session_id: str, created_at: Any, metadata: Any) -> dict:
 
 
 def main() -> int:
+    global RESULTS_PATH
+
     parser = argparse.ArgumentParser(description="Light reassess for quality+plan with new prompts")
+    parser.add_argument("--tenant", required=True, help="tenant slug, e.g. realestate")
     parser.add_argument("--limit", type=int, default=None, help="Limit number of sessions (for testing)")
     parser.add_argument("--only", type=str, default=None, help="Process only this session_id")
     parser.add_argument("--skip-existing", action="store_true", help="Skip sessions that already have quality_v2.json")
     parser.add_argument("--workers", type=int, default=1, help="Parallel LLM requests (be mindful of OpenAI rate limits)")
     args = parser.parse_args()
+
+    tenant_schema = schema_for_slug(args.tenant)
+    set_tenant_schema(tenant_schema)
+    RESULTS_PATH = Path(RESULTS_ROOT) / args.tenant
 
     if not os.getenv("OPENAI_API_KEY"):
         logger.error("OPENAI_API_KEY is not set — cannot run LLM reassess")
@@ -186,6 +192,9 @@ def main() -> int:
     t_start = time.time()
 
     def _task(i: int, sid: str, created: Any, meta: Any) -> dict:
+        # ThreadPoolExecutor threads start with a fresh contextvars context —
+        # re-set the tenant so DB access inside reassess_one stays scoped.
+        set_tenant_schema(tenant_schema)
         sdir = RESULTS_PATH / sid
         if args.skip_existing and (sdir / "quality_v2.json").exists():
             return {"session_id": sid, "status": "skipped_existing", "_order": i}

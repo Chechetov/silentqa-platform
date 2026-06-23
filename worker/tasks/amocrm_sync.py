@@ -19,10 +19,52 @@ from datetime import datetime, timezone, timedelta
 import psycopg2
 import requests
 
+from tenancy.context import get_tenant_slug
+from tenancy.db import shared_connect
+
 logger = logging.getLogger(__name__)
 
 AMOCRM_BASE_URL = os.getenv("AMOCRM_BASE_URL", "https://rogovestate.amocrm.ru")
 DASHBOARD_BASE_URL = os.getenv("DASHBOARD_BASE_URL", "https://rogov.automate-it.fun")
+
+_DASHBOARD_URL_CACHE: dict[str, str] = {}
+
+
+def _dashboard_base_url() -> str:
+    """База ссылок на дашборд для текущего тенанта (спека 5.5).
+
+    Приоритет: shared.tenants.dashboard_base_url → https://{slug}.{BASE_DOMAIN}
+    → env DASHBOARD_BASE_URL (dev-фоллбек без тенант-контекста).
+    """
+    slug = get_tenant_slug()
+    if slug is None:
+        return DASHBOARD_BASE_URL
+    if slug in _DASHBOARD_URL_CACHE:
+        return _DASHBOARD_URL_CACHE[slug]
+    url = None
+    lookup_ok = False
+    try:
+        conn = shared_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT dashboard_base_url FROM shared.tenants WHERE slug = %s",
+                    (slug,),
+                )
+                row = cur.fetchone()
+                url = row[0] if row and row[0] else None
+            lookup_ok = True
+        finally:
+            conn.close()
+    except Exception:
+        logger.exception("dashboard_base_url lookup failed; using fallback")
+    if not url:
+        url = f"https://{slug}.{os.getenv('BASE_DOMAIN', 'silentqa.com')}"
+    if lookup_ok:
+        # Транзиентный сбой БД не должен пиновать фоллбек в module-global
+        # кеше на всю жизнь процесса воркера — кешируем только успешный lookup.
+        _DASHBOARD_URL_CACHE[slug] = url
+    return url
 
 # Token is owned by rogov-partner-portal and stored in portal.amocrm_tokens.
 # This worker reads-only to avoid racing the portal's refresh_token rotation,
@@ -740,7 +782,7 @@ def format_enriched_note(quality_report: dict, session_id: str, responsible_user
         parts.append("")
 
     # Ссылка на подробности
-    parts.append(f"Подробнее: {DASHBOARD_BASE_URL}/#call/{session_id}")
+    parts.append(f"Подробнее: {_dashboard_base_url()}/#call/{session_id}")
 
     return "\n".join(parts).strip()
 

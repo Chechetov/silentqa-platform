@@ -18,7 +18,6 @@ import redis
 
 logger = logging.getLogger(__name__)
 
-LOCK_KEY_PREFIX = "lead_lock:"
 # Must exceed the Celery task hard limit (task_time_limit=5400s in
 # celery_app.py). The lock is held around the entire heavy pipeline
 # (transcription → diarization → 2 LLM calls → AmoCRM push), so a TTL shorter
@@ -58,7 +57,8 @@ def lead_lock(
         return
 
     redis_client = client or _get_default_client()
-    key = f"{LOCK_KEY_PREFIX}{lead_id}"
+    from tenancy.context import require_tenant_slug
+    key = f"lock:{require_tenant_slug()}:{lead_id}"
     token = str(uuid.uuid4())
 
     acquired = redis_client.set(key, token, nx=True, ex=timeout)

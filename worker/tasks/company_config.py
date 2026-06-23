@@ -7,11 +7,40 @@ import logging
 import os
 from pathlib import Path
 
+from tenancy.db import shared_connect
+
 logger = logging.getLogger(__name__)
 
 COMPANIES_DIR = Path(os.getenv("COMPANIES_PATH", "/companies"))
 
 _cache: dict[str, dict] = {}
+
+_TENANT_COMPANY_CACHE: dict[str, str | None] = {}
+
+
+def tenant_company_config_id() -> str | None:
+    """company_config_id текущего тенанта из shared.tenants (кеш на процесс).
+
+    Worker перезапускается при деплоях/ротациях (см. CLAUDE.md), поэтому
+    простой module-level кеш безопасен — как и остальные module-globals тут.
+    """
+    from tenancy.context import require_tenant_slug
+
+    slug = require_tenant_slug()
+    if slug in _TENANT_COMPANY_CACHE:
+        return _TENANT_COMPANY_CACHE[slug]
+    conn = shared_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT company_config_id FROM shared.tenants WHERE slug = %s",
+                (slug,),
+            )
+            row = cur.fetchone()
+    finally:
+        conn.close()
+    _TENANT_COMPANY_CACHE[slug] = row[0] if row else None
+    return _TENANT_COMPANY_CACHE[slug]
 
 
 def load_company_config(company_id: str | None) -> dict:
@@ -69,3 +98,13 @@ def get_scenario(company_config: dict, scenario_id: str | None) -> dict | None:
         if s.get("id") == scenario_id:
             return s
     return None
+
+
+def get_card_extraction(company_config: dict) -> dict | None:
+    """Generic structured-card config block ({label, prompt, json_schema}) or None."""
+    return company_config.get("card_extraction")
+
+
+def get_default_scenario_id(company_config: dict) -> str | None:
+    """Tenant's default evaluation scenario id (used when the session has none)."""
+    return company_config.get("default_scenario_id")

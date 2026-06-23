@@ -5,7 +5,15 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from tasks.lead_lock import lead_lock, LOCK_KEY_PREFIX, DEFAULT_TIMEOUT_SEC
+from tasks.lead_lock import lead_lock, DEFAULT_TIMEOUT_SEC
+
+
+@pytest.fixture(autouse=True)
+def _tenant_ctx():
+    from tenancy.context import set_tenant_schema, reset_tenant_schema
+    token = set_tenant_schema("t_acme")
+    yield
+    reset_tenant_schema(token)
 
 
 def test_ttl_outlives_celery_hard_limit():
@@ -35,9 +43,25 @@ def test_acquires_on_first_try():
     with lead_lock(42, client=client, poll_interval=0.01):
         pass
     args, kwargs = client.set.call_args_list[0]
-    assert args[0] == f"{LOCK_KEY_PREFIX}42"
+    assert args[0] == "lock:acme:42"
     assert kwargs.get("nx") is True
     assert kwargs.get("ex") == 5700
+
+
+def test_lock_key_namespaced_by_tenant():
+    from tenancy.context import set_tenant_schema, reset_tenant_schema
+    client = MagicMock()
+    client.set.return_value = True
+    with lead_lock(42, client=client, poll_interval=0.01):
+        pass
+    assert client.set.call_args_list[0][0][0] == "lock:acme:42"
+    token = set_tenant_schema("t_other")
+    try:
+        with lead_lock(42, client=client, poll_interval=0.01):
+            pass
+    finally:
+        reset_tenant_schema(token)
+    assert client.set.call_args_list[1][0][0] == "lock:other:42"
 
 
 def test_releases_only_own_token():
@@ -47,7 +71,7 @@ def test_releases_only_own_token():
         pass
     assert client.eval.called
     eval_args = client.eval.call_args[0]
-    assert eval_args[2] == f"{LOCK_KEY_PREFIX}42"
+    assert eval_args[2] == "lock:acme:42"
     set_token = client.set.call_args[0][1]
     eval_token = eval_args[3]
     assert set_token == eval_token

@@ -12,6 +12,11 @@ let currentRoute = '';
 let sessionsCache = null;
 let _currentCallData = null; // {session, transcript, analysis} for export
 let _currentCompanyData = null; // company config for editing
+let currentUser = null; // {email, role} после логина
+let features = {}; // module-флаги из /api/tenancy/features
+const isAdmin = () => currentUser && currentUser.role === 'admin';
+const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
+const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // из company-config через /features (фолбэк — дефолт realestate)
 
 // ---- Router ----
 function navigate(hash) {
@@ -51,17 +56,32 @@ async function router() {
     const id = route.slice(8);
     await renderCompanyDetail(id);
   } else if (route === 'reprocess') {
+    if (!moduleOn('amocrm')) { navigate('#calls'); return; }
     await renderReprocess();
   } else if (route === 'templates') {
     await renderTemplates();
   } else if (route === 'template/new') {
+    if (!isAdmin()) { navigate('#templates'); return; }
     await renderTemplateEdit(null);
   } else if (route.startsWith('template/')) {
+    if (!isAdmin()) { navigate('#templates'); return; }
     await renderTemplateEdit(route.split('/')[1]);
+  } else if (route === 'knowledge') {
+    await renderKnowledge();
   } else if (route === 'complexes') {
+    if (!moduleOn('complexes')) { navigate('#calls'); return; }
     await renderComplexes();
   } else if (route.startsWith('complex/')) {
+    if (!moduleOn('complexes')) { navigate('#calls'); return; }
     await renderComplexDetail(route.split('/')[1]);
+  } else if (route === 'team') {
+    if (!isAdmin()) { navigate('#calls'); return; }
+    await renderTeam();
+  } else if (route === 'evaluation') {
+    if (!isAdmin()) { navigate('#calls'); return; }
+    await renderEvaluation();
+  } else if (route === 'profile') {
+    await renderProfile();
   } else {
     app.innerHTML = '<div class="empty-state"><p>Страница не найдена</p></div>';
   }
@@ -70,8 +90,84 @@ async function router() {
 window.addEventListener('hashchange', router);
 window.addEventListener('load', () => {
   checkHealth();
-  router();
+  bootAuth().then((ok) => { if (ok) { router(); } else { showLogin(); } });
 });
+
+// ---- Auth (user sessions) ----
+async function bootAuth() {
+  try {
+    currentUser = await api('/api/user-auth/me');
+    try { features = await api('/api/tenancy/features'); } catch (e) { features = {}; }
+    if (features && features.display_name) {
+      document.title = features.display_name;
+      const logoText = document.querySelector('.logo-text');
+      if (logoText) logoText.textContent = features.display_name;
+    }
+    document.querySelectorAll('[data-module]').forEach(el => {
+      const li = el.closest('li') || el;
+      if (features[el.dataset.module] === false) li.style.display = 'none';
+    });
+    document.querySelectorAll('[data-admin-only]').forEach(el => {
+      el.style.display = isAdmin() ? '' : 'none';
+    });
+    const banner = document.getElementById('support-banner');
+    if (currentUser.impersonated_by && !banner) {
+      const b = document.createElement('div');
+      b.id = 'support-banner';
+      b.textContent = `Режим поддержки: ${currentUser.impersonated_by}`;
+      b.style.cssText = 'background:#ff8f00;color:#fff;text-align:center;padding:4px;';
+      document.body.prepend(b);
+    }
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+function showLogin() {
+  currentUser = null;
+  const el = document.getElementById('app') || document.body;
+  el.innerHTML = `
+    <div class="login-screen">
+      <form id="login-form" class="login-card">
+        <h2>Вход в дашборд</h2>
+        <input type="email" id="login-email" placeholder="Email" required autocomplete="username">
+        <input type="password" id="login-password" placeholder="Пароль" required autocomplete="current-password">
+        <button type="submit">Войти</button>
+        <div id="login-error" class="login-error"></div>
+      </form>
+    </div>`;
+  document.getElementById('login-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const errEl = document.getElementById('login-error');
+    errEl.textContent = '';
+    try {
+      const res = await fetch('/api/user-auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: document.getElementById('login-email').value.trim(),
+          password: document.getElementById('login-password').value,
+        }),
+      });
+      if (!res.ok) {
+        errEl.textContent = res.status === 429
+          ? 'Слишком много попыток — подождите 5 минут'
+          : 'Неверный email или пароль';
+        return;
+      }
+      currentUser = await res.json();
+      window.location.reload();
+    } catch (e) {
+      errEl.textContent = 'Сервер недоступен';
+    }
+  });
+}
+
+async function logout() {
+  try { await fetch('/api/user-auth/logout', { method: 'POST' }); } catch (e) {}
+  showLogin();
+}
 
 // ---- API Helpers ----
 async function api(path, options = {}) {
@@ -79,22 +175,22 @@ async function api(path, options = {}) {
     headers: { 'Content-Type': 'application/json', ...options.headers },
     ...options,
   });
+  if (res.status === 401) {
+    let detail = '';
+    try { detail = (await res.clone().json()).detail || ''; } catch (e) {}
+    // Редирект на логин ТОЛЬКО для cookie-гейченных ответов (спека 5.2):
+    // ошибки API-ключа/брокерского JWT сюда не относятся.
+    if (detail === 'auth_required') {
+      showLogin();
+      throw new Error('auth required');
+    }
+  }
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: res.statusText }));
     throw new Error(err.detail || `HTTP ${res.status}`);
   }
   if (res.status === 204) return null;
   return res.json();
-}
-
-async function ensureDeletePassword() {
-  let p = sessionStorage.getItem('deletePassword');
-  if (!p) {
-    p = prompt('Пароль для опасных действий:');
-    if (!p) return null;
-    sessionStorage.setItem('deletePassword', p);
-  }
-  return p;
 }
 
 async function checkHealth() {
@@ -190,7 +286,7 @@ function formatSource(metadata) {
 // ============================================
 // PAGE: Calls List
 // ============================================
-let callsFilters = { source: '', phone: '', template_id: '' };
+let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
 let callsPhoneDebounce = null;
 let _templatesCache = null;
 
@@ -216,6 +312,7 @@ async function renderCalls(page = 0) {
   if (callsFilters.source) params.set('source', callsFilters.source);
   if (callsFilters.phone) params.set('phone', callsFilters.phone);
   if (callsFilters.template_id) params.set('template_id', callsFilters.template_id);
+  if (callsFilters.kb_tag) params.set('kb_tag', callsFilters.kb_tag);
 
   try {
     const data = await api(`/api/sessions?${params.toString()}`);
@@ -229,7 +326,7 @@ async function renderCalls(page = 0) {
     const tplOptions = templates.map(t =>
       `<option value="${t.id}" ${callsFilters.template_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
     ).join('');
-    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id);
+    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag);
 
     let html = `
       <div class="page-header">
@@ -270,6 +367,7 @@ async function renderCalls(page = 0) {
               ${tplOptions}
             </select>
             <input type="search" id="callsPhoneFilter" class="table-filter" placeholder="Телефон…" value="${escapeHtml(callsFilters.phone)}">
+            ${callsFilters.kb_tag ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по тегу базы знаний">Тег: ${escapeHtml(callsFilters.kb_tag_label || callsFilters.kb_tag)} <button type="button" id="callsKbTagClear" title="Снять фильтр по тегу" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
             ${filtersActive ? '<button type="button" id="callsFiltersReset" class="table-filter-reset">Сбросить</button>' : ''}
             <input type="text" class="table-search" placeholder="Поиск на странице…" id="callSearch">
           </div>
@@ -349,7 +447,15 @@ async function renderCalls(page = 0) {
     const resetBtn = $('#callsFiltersReset');
     if (resetBtn) {
       resetBtn.addEventListener('click', () => {
-        callsFilters = { source: '', phone: '', template_id: '' };
+        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+        renderCalls(0);
+      });
+    }
+    const kbTagClear = $('#callsKbTagClear');
+    if (kbTagClear) {
+      kbTagClear.addEventListener('click', () => {
+        callsFilters.kb_tag = '';
+        callsFilters.kb_tag_label = '';
         renderCalls(0);
       });
     }
@@ -369,6 +475,13 @@ async function renderCalls(page = 0) {
   }
 }
 
+function filterByKbTag(el) {
+  // Клик по KB-тегу в карточке звонка → список звонков, отфильтрованный по этому тегу.
+  callsFilters = { source: '', phone: '', template_id: '',
+                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '' };
+  navigate('calls');
+}
+
 // ============================================
 // PAGE: Call Detail
 // ============================================
@@ -385,10 +498,17 @@ async function renderCallDetail(id) {
     let sentiment = null;
     try { sentiment = await api(`/api/sessions/${id}/sentiment`); } catch {}
     let extraction = null;
-    try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {}
+    if (moduleOn('complexes')) { try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {} }
+    let kbTags = [];
+    if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
+    let card = null;
+    try { card = await api(`/api/sessions/${id}/card`); } catch {}
+    let asrVariants = null;  // ASR-сравнение (админ-тюнинг)
+    if (isAdmin()) { try { asrVariants = await api(`/api/sessions/${id}/transcript-variants`); } catch {} }
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
+    const _currentCardLabel = 'Карта приёма';
     const meta = session.metadata || {};
     const rawScore = analysis && analysis.overall_score != null ? analysis.overall_score : null;
     const overallScore = rawScore != null ? normalizeScore(rawScore, analysis) : null;
@@ -427,9 +547,10 @@ async function renderCallDetail(id) {
       <div class="export-buttons" style="display:flex;gap:8px;margin-bottom:12px;justify-content:flex-end">
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
-        <button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>
-        <button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>
+        ${moduleOn('amocrm') ? `<button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="compareEnginesModal('${id}')">Сравнить движки ASR…</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
       </div>
 
       <div class="call-detail-header">
@@ -477,13 +598,20 @@ async function renderCallDetail(id) {
           ${extraction.complex_id ? `
             <a class="btn btn-secondary btn-sm" href="#complex/${extraction.complex_id}">Открыть профиль ЖК</a>
           ` : ''}
-          <button class="btn btn-secondary btn-sm" onclick="relinkExtraction('${extraction.extraction_id}')">${extraction.complex_id ? 'Перепривязать к другому ЖК…' : 'Привязать к ЖК…'}</button>
+          ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="relinkExtraction('${extraction.extraction_id}')">${extraction.complex_id ? 'Перепривязать к другому ЖК…' : 'Привязать к ЖК…'}</button>` : ''}
         </div>
       </div>
       ` : ''}
     `;
 
+    if (kbTags.length) {
+      html += `<div class="kb-tags-section" style="margin-bottom:16px"><h2>Теги базы знаний</h2>` +
+        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term).replace(/"/g, '&quot;')}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
+        `</div>`;
+    }
+
     if (!extraction) {
+      html += renderCard(card, _currentCardLabel);
     // Sentiment timeline
     if (sentiments.length > 0) {
       html += `
@@ -825,7 +953,7 @@ async function renderCallDetail(id) {
                   return `
                     <div class="transcript-line" data-start="${seg.start != null ? seg.start : ''}" data-end="${seg.end != null ? seg.end : ''}">
                       ${time ? `<span class="transcript-time">${time}</span>` : ''}
-                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}" onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать">${escapeHtml(displayName)}</span>
+                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
                       <span class="transcript-text">${escapeHtml(text)}</span>
                     </div>
                   `;
@@ -835,9 +963,20 @@ async function renderCallDetail(id) {
       `;
     }
 
+    html += renderAsrVariantsSection(asrVariants);
+
     } // end if (!extraction) — legacy analysis blocks
 
     app.innerHTML = html;
+
+    // ASR-варианты: переключение вкладок движков
+    document.querySelectorAll('.asr-variant-tab').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const eng = btn.dataset.engine;
+        document.querySelectorAll('.asr-variant-tab').forEach(b => { b.style.fontWeight = b.dataset.engine === eng ? '700' : ''; });
+        document.querySelectorAll('.asr-variant-panel').forEach(p => { p.style.display = p.dataset.engine === eng ? '' : 'none'; });
+      });
+    });
 
     // Audio player: click-to-seek on transcript lines
     const transcriptContainer = $('#transcriptContainer');
@@ -956,8 +1095,18 @@ async function renderManagers() {
 // ============================================
 async function renderCompanies() {
   showLoading();
+  let companies;
   try {
-    const companies = await api('/api/companies');
+    companies = await api('/api/companies');
+  } catch (err) {
+    if (/not found|404/i.test(err.message)) {
+      app.innerHTML = '<div class="empty-state"><p>Раздел доступен только платформенному администратору</p></div>';
+    } else {
+      app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки: ${escapeHtml(err.message)}</p></div>`;
+    }
+    return;
+  }
+  try {
     app.innerHTML = `
       <div class="page-header">
         <h1>Компании</h1>
@@ -1299,10 +1448,6 @@ function collectScenariosFromDOM() {
 // PAGE: Upload Audio File
 // ============================================
 async function renderUpload() {
-  // Load companies for scenario selection
-  let companies = [];
-  try { companies = await api('/api/companies'); } catch {}
-
   let templates = [];
   try { templates = await api('/api/templates'); } catch {}
 
@@ -1339,24 +1484,11 @@ async function renderUpload() {
           <option value="">— Без шаблона (legacy-протокол) —</option>
           ${templates.map(t => `<option value="${escapeHtml(t.id)}">${escapeHtml(t.name)} (${escapeHtml(t.kind)})</option>`).join('')}
         </select>
-        <p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>
+        ${moduleOn('complexes') ? '<p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>' : ''}
       </div>
       <div class="form-group">
         <label>Сотрудник / врач</label>
         <input type="text" id="uploadEmployee" placeholder="Имя сотрудника">
-      </div>
-      <div class="form-group">
-        <label>Компания</label>
-        <select id="uploadCompany">
-          <option value="">-- По умолчанию --</option>
-          ${companies.map(c => `<option value="${escapeHtml(c.id)}">${escapeHtml(c.name || c.id)}</option>`).join('')}
-        </select>
-      </div>
-      <div class="form-group" id="scenarioGroup" style="display:none">
-        <label>Сценарий оценки</label>
-        <select id="uploadScenario">
-          <option value="">-- Протокол по умолчанию --</option>
-        </select>
       </div>
       <div class="form-group">
         <label>Комментарий</label>
@@ -1420,34 +1552,6 @@ async function renderUpload() {
     dropzone.classList.add('upload-dropzone--selected');
     $('#uploadBtn').disabled = false;
   }
-
-  // Company → scenarios dynamic loading
-  const companySelect = $('#uploadCompany');
-  companySelect.addEventListener('change', async () => {
-    const companyId = companySelect.value;
-    const scenarioGroup = $('#scenarioGroup');
-    const scenarioSelect = $('#uploadScenario');
-    if (!companyId) {
-      scenarioGroup.style.display = 'none';
-      return;
-    }
-    try {
-      const company = await api(`/api/companies/${companyId}`);
-      const scenarios = company.scenarios || [];
-      if (scenarios.length === 0) {
-        scenarioGroup.style.display = 'none';
-        return;
-      }
-      scenarioSelect.innerHTML = '<option value="">-- Протокол по умолчанию --</option>' +
-        scenarios.map(s => {
-          const badge = s.type === 'in_person' ? '[Очно]' : '[Звонок]';
-          return `<option value="${escapeHtml(s.id)}">${badge} ${escapeHtml(s.name)}</option>`;
-        }).join('');
-      scenarioGroup.style.display = 'block';
-    } catch {
-      scenarioGroup.style.display = 'none';
-    }
-  });
 }
 
 async function startUpload() {
@@ -1455,8 +1559,6 @@ async function startUpload() {
   if (!file) return;
 
   const employee = $('#uploadEmployee').value.trim();
-  const companyId = $('#uploadCompany').value;
-  const scenarioId = ($('#uploadScenario') && $('#uploadScenario').value) || '';
   const comment = $('#uploadComment').value.trim();
 
   const btn = $('#uploadBtn');
@@ -1466,8 +1568,6 @@ async function startUpload() {
 
   const metadata = { source: 'file-upload', uploadedAt: new Date().toISOString() };
   if (employee) metadata.employee = employee;
-  if (companyId) metadata.company_id = companyId;
-  if (scenarioId) metadata.scenario_id = scenarioId;
   if (comment) metadata.comment = comment;
 
   try {
@@ -1537,22 +1637,14 @@ async function deleteSession(id) {
     showToast('Удаление отменено: фраза не совпадает', 'error');
     return;
   }
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/sessions/${id}`, {
       method: 'DELETE',
-      headers: { 'X-Delete-Password': password },
     });
     showToast('Сессия удалена');
     navigate('calls');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль удаления', 'error');
-    } else {
-      showToast(`Не удалось удалить: ${err.message}`, 'error');
-    }
+    showToast(`Не удалось удалить: ${err.message}`, 'error');
   }
 }
 
@@ -1796,6 +1888,188 @@ async function renderReprocess() {
 // ============================================
 // PAGE: Templates
 // ============================================
+// База знаний (#knowledge)
+// ============================================
+async function renderKnowledge() {
+  showLoading();
+  try {
+    const cats = await api('/api/knowledge/categories?include_entries=true');
+    let html = `
+      <div class="page-header">
+        <div>
+          <h1>База знаний</h1>
+          <p>Термины, бренды, сущности: коррекция транскрипта, глоссарий для LLM, теги звонков</p>
+        </div>
+        ${isAdmin() ? `<button class="btn btn-primary" onclick="kbNewCategory()">+ Категория</button>` : ''}
+      </div>`;
+    html += cats.length
+      ? cats.map(c => kbCategoryCard(c)).join('')
+      : `<div class="empty-state"><p>Пока нет категорий${isAdmin() ? ' — создайте первую' : ''}</p></div>`;
+    app.innerHTML = html;
+  } catch (err) {
+    app.innerHTML = `<div class="empty-state"><p>Ошибка: ${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
+function kbFlagBadge(cat, key, label) {
+  const on = !!cat[key];
+  const attr = isAdmin()
+    ? `onclick="kbToggleFlag('${cat.id}','${key}',${!on})" style="cursor:pointer"`
+    : '';
+  return `<span class="badge ${on ? 'badge-completed' : ''}" ${attr} title="${label}">${label}: ${on ? 'да' : 'нет'}</span>`;
+}
+
+function kbCategoryCard(cat) {
+  const entries = cat.entries || [];
+  return `
+    <div class="card" style="margin-bottom:16px">
+      <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
+        <h3 style="margin:0">${escapeHtml(cat.name)} <span class="muted" style="font-weight:400">(${escapeHtml(cat.slug)})</span></h3>
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" onclick="kbDeleteCategory('${cat.id}', ${JSON.stringify(cat.name)})">✕</button>` : ''}
+      </div>
+      <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
+        ${kbFlagBadge(cat, 'feeds_asr', 'ASR')}
+        ${kbFlagBadge(cat, 'feeds_llm', 'Глоссарий')}
+        ${kbFlagBadge(cat, 'is_taxonomy', 'Теги')}
+      </div>
+      ${cat.description ? `<p class="muted">${escapeHtml(cat.description)}</p>` : ''}
+      <table class="data-table" style="width:100%;margin-top:8px">
+        <thead><tr><th>Термин</th><th>Синонимы</th><th>Описание</th><th></th></tr></thead>
+        <tbody>
+          ${entries.length ? entries.map(e => `
+            <tr>
+              <td>${escapeHtml(e.term)}</td>
+              <td>${escapeHtml((e.aliases || []).join(', '))}</td>
+              <td>${escapeHtml(e.description || '')}</td>
+              <td style="white-space:nowrap;text-align:right">
+                <button class="btn btn-secondary btn-sm" onclick="kbShowMentions('${e.id}', ${JSON.stringify(e.term)})">Упоминания</button>
+                ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="kbDeleteEntry('${e.id}', ${JSON.stringify(e.term)})">✕</button>` : ''}
+              </td>
+            </tr>`).join('') : `<tr><td colspan="4" class="muted">Записей пока нет</td></tr>`}
+        </tbody>
+      </table>
+      ${isAdmin() ? `
+        <form onsubmit="event.preventDefault(); kbAddEntry('${cat.id}', this)" style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+          <input type="text" name="term" placeholder="термин" required style="flex:1;min-width:120px">
+          <input type="text" name="aliases" placeholder="синонимы через запятую" style="flex:1;min-width:120px">
+          <input type="text" name="description" placeholder="описание" style="flex:2;min-width:120px">
+          <button type="submit" class="btn btn-secondary btn-sm">+ Запись</button>
+        </form>
+        <details style="margin-top:8px">
+          <summary class="muted" style="cursor:pointer">Импорт списком</summary>
+          <form onsubmit="event.preventDefault(); kbImport('${cat.id}', this)" style="margin-top:8px">
+            <textarea name="rows" rows="5" placeholder="Один термин на строку, синонимы после двоеточия: Эталон: etalon, эталон" style="width:100%"></textarea>
+            <button type="submit" class="btn btn-secondary btn-sm" style="margin-top:6px">Импортировать</button>
+          </form>
+        </details>
+      ` : ''}
+    </div>`;
+}
+
+async function kbNewCategory() {
+  const name = prompt('Название категории (например, «Бренды»):');
+  if (!name) return;
+  const slug = (prompt('Slug (латиница, напр. brands):', '') || '').trim();
+  if (!slug) return;
+  try {
+    await api('/api/knowledge/categories', {
+      method: 'POST',
+      body: JSON.stringify({ name: name.trim(), slug }),
+    });
+    showToast('Категория создана');
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось создать: ' + err.message, 'error');
+  }
+}
+
+async function kbToggleFlag(catId, key, value) {
+  try {
+    await api(`/api/knowledge/categories/${catId}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ [key]: value }),
+    });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось изменить: ' + err.message, 'error');
+  }
+}
+
+async function kbDeleteCategory(catId, name) {
+  if (!confirm(`Удалить категорию "${name}" со всеми записями?`)) return;
+  try {
+    await api(`/api/knowledge/categories/${catId}`, { method: 'DELETE' });
+    showToast('Категория удалена');
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось удалить: ' + err.message, 'error');
+  }
+}
+
+async function kbAddEntry(catId, form) {
+  const aliases = form.aliases.value.split(',').map(s => s.trim()).filter(Boolean);
+  try {
+    await api('/api/knowledge/entries', {
+      method: 'POST',
+      body: JSON.stringify({
+        category_id: catId,
+        term: form.term.value.trim(),
+        aliases,
+        description: form.description.value.trim() || null,
+      }),
+    });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось добавить: ' + err.message, 'error');
+  }
+}
+
+async function kbDeleteEntry(entryId, term) {
+  if (!confirm(`Удалить запись "${term}"?`)) return;
+  try {
+    await api(`/api/knowledge/entries/${entryId}`, { method: 'DELETE' });
+    renderKnowledge();
+  } catch (err) {
+    showToast('Не удалось удалить: ' + err.message, 'error');
+  }
+}
+
+async function kbImport(catId, form) {
+  const rows = form.rows.value.split('\n').map(line => {
+    const t = line.trim();
+    if (!t) return null;
+    const idx = t.indexOf(':');
+    const term = (idx >= 0 ? t.slice(0, idx) : t).trim();
+    const aliases = idx >= 0 ? t.slice(idx + 1).split(',').map(s => s.trim()).filter(Boolean) : [];
+    return term ? { term, aliases } : null;
+  }).filter(Boolean);
+  if (!rows.length) return;
+  try {
+    const res = await api('/api/knowledge/import', {
+      method: 'POST',
+      body: JSON.stringify({ category_id: catId, rows }),
+    });
+    showToast(`Импортировано: ${res.inserted} из ${res.received}`);
+    renderKnowledge();
+  } catch (err) {
+    showToast('Импорт не удался: ' + err.message, 'error');
+  }
+}
+
+async function kbShowMentions(entryId, term) {
+  try {
+    const rows = await api(`/api/knowledge/entries/${entryId}/mentions`);
+    if (!rows.length) { showToast(`«${term}»: упоминаний нет`); return; }
+    const total = rows.reduce((s, r) => s + (r.count || 0), 0);
+    const lines = rows.map(r => `${formatDate(r.created_at)} — ${r.count}`).join('\n');
+    alert(`«${term}»: ${total} упоминаний в ${rows.length} звонках\n\n${lines}`);
+  } catch (err) {
+    showToast('Не удалось загрузить упоминания: ' + err.message, 'error');
+  }
+}
+
+
+// ============================================
 function _kindLabel(kind) {
   if (kind === 'extraction') return 'Извлечение фактов';
   if (kind === 'evaluation') return 'Оценка звонка';
@@ -1812,7 +2086,7 @@ async function renderTemplates() {
           <h1>Шаблоны</h1>
           <p>Что и как анализировать в записи: извлекать факты или оценивать звонок</p>
         </div>
-        <button class="btn btn-primary" onclick="navigate('template/new')">+ Новый шаблон</button>
+        ${isAdmin() ? `<button class="btn btn-primary" onclick="navigate('template/new')">+ Новый шаблон</button>` : ''}
       </div>
       ${items.length === 0
         ? '<div class="empty-state"><p>Пока нет шаблонов</p></div>'
@@ -1820,9 +2094,9 @@ async function renderTemplates() {
             <a class="tpl-card" href="#template/${t.id}">
               <div class="tpl-card-head">
                 <span class="tpl-kind tpl-kind-${escapeHtml(t.kind)}">${escapeHtml(_kindLabel(t.kind))}</span>
-                <button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
+                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
-                </button>
+                </button>` : ''}
               </div>
               <div class="tpl-card-name">${escapeHtml(t.name)}</div>
               <div class="tpl-card-desc">${escapeHtml(t.description || '—')}</div>
@@ -1859,13 +2133,13 @@ async function renderTemplateEdit(id) {
           <h3>Основное</h3>
           <div class="form-group">
             <label>Название</label>
-            <input type="text" id="tplName" value="${escapeHtml(tpl.name)}" placeholder="например: Презентация ЖК" required>
+            <input type="text" id="tplName" value="${escapeHtml(tpl.name)}" placeholder="например: Извлечение структуры" required>
           </div>
           <div class="form-group">
             <label>Тип шаблона</label>
             <select id="tplKind"${id ? ' disabled' : ''}>
-              <option value="extraction"${tpl.kind === 'extraction' ? ' selected' : ''}>Извлечение фактов (например, презентация ЖК → структура)</option>
-              <option value="evaluation"${tpl.kind === 'evaluation' ? ' selected' : ''}>Оценка звонка (например, звонок брокера → скрипт + критерии)</option>
+              <option value="extraction"${tpl.kind === 'extraction' ? ' selected' : ''}>Извлечение фактов (транскрипт → структура)</option>
+              <option value="evaluation"${tpl.kind === 'evaluation' ? ' selected' : ''}>Оценка звонка (звонок → скрипт + критерии)</option>
             </select>
             ${id ? '<p class="form-hint">Тип нельзя менять у существующего шаблона</p>' : ''}
           </div>
@@ -1913,31 +2187,22 @@ async function saveTemplate(id) {
   };
   if (!id) body.kind = $('#tplKind').value;
 
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     if (id) {
       await api(`/api/templates/${id}`, {
         method: 'PATCH',
-        headers: { 'X-Delete-Password': password },
         body: JSON.stringify(body),
       });
     } else {
       await api('/api/templates', {
         method: 'POST',
-        headers: { 'X-Delete-Password': password },
         body: JSON.stringify(body),
       });
     }
     showToast('Шаблон сохранён');
     navigate('templates');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Не удалось сохранить: ' + err.message, 'error');
-    }
+    showToast('Не удалось сохранить: ' + err.message, 'error');
   }
 }
 
@@ -1952,22 +2217,14 @@ function validateSchemaInline() {
 
 async function deleteTemplate(id, name) {
   if (!confirm(`Удалить шаблон "${name}"?`)) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/templates/${id}`, {
       method: 'DELETE',
-      headers: { 'X-Delete-Password': password },
     });
     showToast('Шаблон удалён');
     renderTemplates();
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Не удалось удалить: ' + err.message, 'error');
-    }
+    showToast('Не удалось удалить: ' + err.message, 'error');
   }
 }
 
@@ -2198,9 +2455,102 @@ function renderComplexProfile(data) {
   }
 
   if (!html) {
-    return '<p class="muted">Информация ещё не извлечена. Обработай презентацию через шаблон «Презентация ЖК».</p>';
+    return '<p class="muted">Информация ещё не извлечена. Обработай звонок через шаблон извлечения.</p>';
   }
   return html;
+}
+
+// Dispatcher: dental cards keep their bespoke layout; everything else (e.g.
+// chechetov «Итоги созвона») renders through the generic key/value renderer.
+function renderCard(card, label) {
+  if (!card) return '';
+  const isDental = card.dental_status !== undefined ||
+    (card.patient && typeof card.patient === 'object');
+  return isDental ? renderDentalCard(card, label) : renderGenericCard(card, label);
+}
+
+// --- Generic card renderer (domain-agnostic) -------------------------------
+const _CARD_LABELS = {
+  summary: 'Итог', participants: 'Участники', topics: 'Темы', points: 'Тезисы',
+  agreements: 'Договорённости', next_steps: 'Следующие шаги', action: 'Действие',
+  owner: 'Ответственный', due: 'Срок', objections: 'Возражения',
+  objection: 'Возражение', raised_by: 'Кто высказал', handled: 'Отработано',
+  handling: 'Как отработано', improvement: 'Как можно лучше',
+  sale_context: 'Контекст продажи', speaker: 'Спикер', name: 'Имя',
+  role: 'Роль', topic: 'Тема',
+};
+function _cardLabel(k) {
+  return _CARD_LABELS[k] || k.replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase());
+}
+function _cardObjInline(o) {
+  return Object.entries(o)
+    .filter(([, v]) => v !== null && v !== '' && !(Array.isArray(v) && !v.length))
+    .map(([k, v]) => `<b>${escapeHtml(_cardLabel(k))}:</b> ${_cardVal(v)}`)
+    .join(' · ') || '—';
+}
+function _cardVal(v) {
+  const esc = escapeHtml;
+  if (v === null || v === undefined || v === '') return '—';
+  if (typeof v === 'boolean') return v ? 'да' : 'нет';
+  if (typeof v === 'string' || typeof v === 'number') return esc(String(v));
+  if (Array.isArray(v)) {
+    if (!v.length) return '—';
+    const items = v.map((x) =>
+      (x && typeof x === 'object') ? _cardObjInline(x) : esc(String(x)));
+    return `<ul class="card-ul">${items.map((i) => `<li>${i}</li>`).join('')}</ul>`;
+  }
+  if (typeof v === 'object') return _cardObjInline(v);
+  return esc(String(v));
+}
+function renderGenericCard(card, label) {
+  const esc = escapeHtml;
+  const rows = Object.entries(card)
+    .filter(([k]) => k !== 'summary')
+    .map(([k, v]) => `<dt>${esc(_cardLabel(k))}</dt><dd>${_cardVal(v)}</dd>`)
+    .join('');
+  return `
+    <div class="card">
+      <h3>📋 ${esc(label || 'Итоги')}</h3>
+      <dl class="card-dl">${rows}</dl>
+      ${card.summary ? `<blockquote>${esc(card.summary)}</blockquote>` : ''}
+    </div>`;
+}
+
+// --- Dental card renderer (unchanged) --------------------------------------
+function renderDentalCard(card, label) {
+  if (!card) return '';
+  const esc = escapeHtml;
+  const list = (a) => (a && a.length) ? a.map(esc).join(', ') : '—';
+  const cl = card; // card.json IS the clinical object
+  const p = cl.patient || {};
+  const an = cl.anamnesis || {};
+  const tp = cl.treatment_plan || {};
+  const teeth = (cl.dental_status || []).map(t =>
+    `<tr><td>${esc(t.tooth)}</td><td>${esc(t.status)}</td><td>${esc(t.note || '—')}</td></tr>`).join('');
+  const stages = (tp.stages || []).map(s =>
+    `<tr><td>${esc(s.procedure)}</td><td>${esc(s.teeth || '—')}</td><td>${esc(s.priority)}</td><td>${esc(s.timeline || '—')}</td><td>${esc(s.price || '—')}</td></tr>`).join('');
+  const row = (k, v) => `<dt>${k}</dt><dd>${v}</dd>`;
+  return `
+    <div class="card">
+      <h3>🦷 ${esc(label || 'Карта приёма')}</h3>
+      <dl class="card-dl">
+        ${row('Пациент', `${esc(p.gender || '—')}; имя ${esc(p.name || '—')}; возраст ${esc(p.age || '—')}; тел. ${esc(p.phone || '—')}`)}
+        ${row('Повод', esc(cl.chief_complaint || '—'))}
+        ${row('Жалобы', list(an.complaints))}
+        ${row('Анамнез', esc(an.history || '—'))}
+        ${row('Хронические', list(an.chronic_conditions))}
+        ${row('Аллергии', list(an.allergies))}
+        ${row('Препараты', list(an.medications))}
+        ${row('Осмотр', list(cl.examination))}
+        ${row('Диагноз', list(cl.diagnosis))}
+      </dl>
+      ${teeth ? `<h4>Зубная формула</h4><table class="card-table"><tr><th>Зуб</th><th>Статус</th><th>Заметка</th></tr>${teeth}</table>` : ''}
+      ${stages ? `<h4>План лечения</h4><table class="card-table"><tr><th>Процедура</th><th>Зубы</th><th>Приоритет</th><th>Срок</th><th>Цена</th></tr>${stages}</table>
+        <p><b>Итого:</b> ${esc(tp.total_cost || '—')} · <b>Оплата:</b> ${list(tp.payment_options)}</p>` : '<h4>План лечения</h4><p>—</p>'}
+      ${(cl.recommendations && cl.recommendations.length) ? `<h4>Рекомендации</h4><ul>${cl.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}</ul>` : ''}
+      ${cl.visit_outcome ? `<p><b>Итог визита:</b> ${esc(cl.visit_outcome.result)} — ${esc(cl.visit_outcome.next_step || '—')}</p>` : ''}
+      ${cl.summary ? `<blockquote>${esc(cl.summary)}</blockquote>` : ''}
+    </div>`;
 }
 
 async function reprocessSession(sessionId) {
@@ -2224,6 +2574,223 @@ async function reprocessSession(sessionId) {
   }
 }
 
+// ── ASR-сравнение (админ-тюнинг) ────────────────────────────────
+const ASR_ENGINE_LABELS = { whisper: 'Whisper (локальный)', assemblyai: 'AssemblyAI', elevenlabs: 'ElevenLabs Scribe' };
+
+function _asrVariantStat(s) {
+  if (!s) return 'нет данных';
+  if (s.status === 'error') return `ошибка: ${escapeHtml(s.error || '')}`;
+  const spk = s.has_speakers ? `${(s.speakers || []).length} спикер(ов)` : 'без спикеров';
+  return `${s.segments} сегм. · ${s.chars} симв. · ${spk}${s.elapsed_s != null ? ` · ${s.elapsed_s}s` : ''}`;
+}
+
+function renderAsrVariantsSection(variants) {
+  if (!variants) return '';
+  const engines = Object.keys(variants.engines || {});
+  if (!engines.length) return '';
+  const tabs = engines.map((e, i) =>
+    `<button class="btn btn-secondary btn-sm asr-variant-tab" data-engine="${e}" style="${i === 0 ? 'font-weight:700' : ''}">${escapeHtml(ASR_ENGINE_LABELS[e] || e)} <span style="opacity:.6">(${escapeHtml((variants.engines[e] || {}).status || '?')})</span></button>`
+  ).join('');
+  const panels = engines.map((e, i) => {
+    const segs = (variants.variants || {})[e] || [];
+    const body = segs.length
+      ? segs.map(seg => {
+          const speaker = seg.speaker || '';
+          const time = seg.start != null ? formatSeconds(seg.start) : '';
+          return `<div class="transcript-line">${time ? `<span class="transcript-time">${time}</span>` : ''}${speaker ? `<span class="speaker-tag">${escapeHtml(speaker)}</span>` : ''}<span class="transcript-text">${escapeHtml(seg.text || '')}</span></div>`;
+        }).join('')
+      : '<p style="color:var(--text-muted)">пусто</p>';
+    return `<div class="asr-variant-panel" data-engine="${e}" style="${i === 0 ? '' : 'display:none'}">
+        <div style="color:var(--text-muted);font-size:13px;margin-bottom:8px">${escapeHtml(_asrVariantStat(variants.engines[e]))}</div>
+        <div class="transcript-container">${body}</div>
+      </div>`;
+  }).join('');
+  return `
+    <div class="card">
+      <h3>Варианты транскрипта (ASR-сравнение)</h3>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">${tabs}</div>
+      ${panels}
+    </div>`;
+}
+
+async function compareEnginesModal(sessionId) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.innerHTML = `
+    <div class="modal-content">
+      <div class="modal-head"><h3>Сравнить движки ASR</h3></div>
+      <p style="color:var(--text-muted);font-size:13px">Прогнать аудио этого звонка выбранными движками для сравнения качества. Облачные движки (AssemblyAI, ElevenLabs) — платные вызовы.</p>
+      <div style="display:flex;flex-direction:column;gap:8px;margin:12px 0">
+        ${Object.entries(ASR_ENGINE_LABELS).map(([id, label]) => `<label style="display:flex;gap:8px;align-items:center"><input type="checkbox" value="${id}" checked> ${escapeHtml(label)}</label>`).join('')}
+      </div>
+      <div style="display:flex;gap:8px;justify-content:flex-end">
+        <button class="btn btn-secondary" id="asrCancel">Отмена</button>
+        <button class="btn btn-primary" id="asrRun">Запустить</button>
+      </div>
+    </div>`;
+  document.body.appendChild(overlay);
+  const close = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('#asrCancel').addEventListener('click', close);
+  overlay.querySelector('#asrRun').addEventListener('click', async () => {
+    const engines = Array.from(overlay.querySelectorAll('input[type=checkbox]:checked')).map(c => c.value);
+    if (!engines.length) return showToast('Выберите хотя бы один движок', 'error');
+    try {
+      await api(`/api/sessions/${sessionId}/transcribe-compare`, { method: 'POST', body: JSON.stringify({ engines }) });
+      showToast('Сравнение запущено — обновите страницу через минуту');
+      close();
+    } catch (err) {
+      showToast('Ошибка: ' + err.message, 'error');
+    }
+  });
+}
+
+// ── Критерии оценки (#evaluation, пер-сценарные профили) ─────────
+let _evalState = { scenarioId: null, data: null };
+
+function evalSelectScenario(sid) { _evalState.scenarioId = sid; renderEvaluation(); }
+
+function _evalCriterionRow(c) {
+  return `<div class="eval-crit-row" style="display:grid;grid-template-columns:1fr 2fr auto;gap:8px;margin-bottom:8px">
+    <input class="eval-crit-name" placeholder="Название" value="${escapeHtml(c.name || '')}">
+    <input class="eval-crit-desc" placeholder="Описание (что оцениваем)" value="${escapeHtml(c.description || '')}">
+    <button class="btn btn-danger btn-sm" onclick="this.closest('.eval-crit-row').remove()">✕</button>
+  </div>`;
+}
+
+function evalAddCriterion() {
+  document.getElementById('evalCriteria').insertAdjacentHTML('beforeend', _evalCriterionRow({}));
+}
+
+function _evalCollectCriteria() {
+  return Array.from(document.querySelectorAll('#evalCriteria .eval-crit-row')).map(row => ({
+    name: row.querySelector('.eval-crit-name').value.trim(),
+    description: row.querySelector('.eval-crit-desc').value.trim(),
+  })).filter(c => c.name);
+}
+
+function _evalHistory(history) {
+  if (!history || !history.length) return '<p style="color:var(--text-muted)">Версий пока нет — действует дефолт из конфига.</p>';
+  return history.map(v => `
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border,#eee)">
+      <div><b>v${v.version}</b> · ${escapeHtml(v.source)} · ${escapeHtml(formatDate(v.created_at))}
+        ${v.is_active ? '<span style="background:#2e7d32;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
+      <div style="display:flex;gap:6px">
+        ${v.is_active ? '' : `<button class="btn btn-secondary btn-sm" onclick="evalActivate('${v.id}')">Активировать</button>`}
+        ${v.is_active ? '' : `<button class="btn btn-danger btn-sm" onclick="evalDeleteVersion('${v.id}')">Удалить</button>`}
+      </div>
+    </div>`).join('');
+}
+
+async function renderEvaluation() {
+  const scenarios = (features && features.scenarios) || [];
+  if (!scenarios.length) {
+    app.innerHTML = `<div class="empty-state"><h2>Критерии оценки</h2><p>У аккаунта нет сценариев созвонов. Критерии оценки настраиваются по сценарию.</p></div>`;
+    return;
+  }
+  if (!_evalState.scenarioId || !scenarios.some(s => s.id === _evalState.scenarioId)) {
+    _evalState.scenarioId = scenarios[0].id;
+  }
+  const sid = _evalState.scenarioId;
+  showLoading();
+  let data;
+  try { data = await api(`/api/eval-profiles?scenario_id=${encodeURIComponent(sid)}`); }
+  catch (err) { app.innerHTML = `<div class="empty-state"><p>Ошибка: ${escapeHtml(err.message)}</p></div>`; return; }
+  _evalState.data = data;
+
+  const active = data.active;
+  const fb = data.file_fallback || {};
+  const criteria = (active && active.criteria && active.criteria.length) ? active.criteria : (fb.criteria || []);
+  const prompt = (active && active.prompt) || fb.prompt || '';
+  const srcLabel = active ? `активная версия v${active.version}` : 'дефолт из конфига (профиль не задан)';
+  const opts = scenarios.map(s => `<option value="${escapeHtml(s.id)}" ${s.id === sid ? 'selected' : ''}>${escapeHtml(s.name)}</option>`).join('');
+
+  app.innerHTML = `
+    <div class="page-header"><h1>Критерии оценки</h1></div>
+    <div class="card">
+      <label>Сценарий созвона</label>
+      <select id="evalScenario" onchange="evalSelectScenario(this.value)" style="max-width:360px">${opts}</select>
+      <p style="color:var(--text-muted);font-size:13px;margin-top:6px">Источник: ${escapeHtml(srcLabel)}</p>
+    </div>
+    <div class="card">
+      <h3>Критерии</h3>
+      <div id="evalCriteria">${criteria.map(c => _evalCriterionRow(c)).join('') || ''}</div>
+      <button class="btn btn-secondary btn-sm" onclick="evalAddCriterion()">+ Критерий</button>
+      <div style="margin-top:12px"><button class="btn btn-primary" onclick="evalSaveCriteria()">Сохранить как версию</button></div>
+    </div>
+    <div class="card">
+      <h3>Промпт оценки</h3>
+      <textarea id="evalPromptView" rows="8" readonly style="width:100%;font-family:monospace">${escapeHtml(prompt)}</textarea>
+      <h4 style="margin-top:16px">Пожелания → переработать промпт</h4>
+      <p style="color:var(--text-muted);font-size:13px">Опишите, что важно при оценке. LLM переработает промпт; результат сохранится как новая версия — можно активировать или отклонить.</p>
+      <textarea id="evalWishes" rows="4" placeholder="Напр.: строже оценивай отработку возражений; учитывай фиксацию следующих шагов" style="width:100%"></textarea>
+      <div style="margin-top:8px"><button class="btn btn-primary" id="evalRewriteBtn" onclick="evalRewrite()">Переработать промпт</button></div>
+      <div id="evalRewritePreview"></div>
+    </div>
+    <div class="card">
+      <h3>История версий</h3>
+      ${_evalHistory(data.history)}
+    </div>`;
+}
+
+async function evalSaveCriteria() {
+  const criteria = _evalCollectCriteria();
+  const d = _evalState.data || {};
+  const prompt = (d.active && d.active.prompt) || (d.file_fallback || {}).prompt || null;
+  try {
+    await api(`/api/eval-profiles/${encodeURIComponent(_evalState.scenarioId)}/versions`, {
+      method: 'POST', body: JSON.stringify({ criteria, prompt, source: 'manual', activate: true }),
+    });
+    showToast('Критерии сохранены как новая активная версия');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
+}
+
+async function evalRewrite() {
+  const wishes = document.getElementById('evalWishes').value.trim();
+  if (!wishes) return showToast('Опишите пожелания', 'error');
+  const btn = document.getElementById('evalRewriteBtn');
+  btn.disabled = true; btn.textContent = 'Думаю…';
+  try {
+    const v = await api(`/api/eval-profiles/${encodeURIComponent(_evalState.scenarioId)}/rewrite`, {
+      method: 'POST', body: JSON.stringify({ wishes }),
+    });
+    const meta = v.rewrite_meta || {};
+    document.getElementById('evalRewritePreview').innerHTML = `
+      <div class="card" style="margin-top:12px;border:1px solid var(--accent,#888)">
+        <h4>Предложение (v${v.version}, ещё не активно)</h4>
+        ${meta.rationale ? `<p style="color:var(--text-muted)">${escapeHtml(meta.rationale)}</p>` : ''}
+        <textarea rows="8" readonly style="width:100%;font-family:monospace">${escapeHtml(v.prompt || '')}</textarea>
+        ${(v.criteria && v.criteria.length) ? `<p style="margin-top:8px"><b>Критерии:</b> ${v.criteria.map(c => escapeHtml(c.name)).join(', ')}</p>` : ''}
+        <div style="display:flex;gap:8px;margin-top:8px">
+          <button class="btn btn-primary" onclick="evalActivate('${v.id}')">Активировать</button>
+          <button class="btn btn-secondary" onclick="evalDeleteVersion('${v.id}')">Отклонить</button>
+        </div>
+      </div>`;
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Переработать промпт';
+  }
+}
+
+async function evalActivate(vid) {
+  try {
+    await api(`/api/eval-profiles/versions/${vid}/activate`, { method: 'PATCH' });
+    showToast('Версия активирована');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
+}
+
+async function evalDeleteVersion(vid) {
+  if (!confirm('Удалить версию?')) return;
+  try {
+    await api(`/api/eval-profiles/versions/${vid}`, { method: 'DELETE' });
+    showToast('Версия удалена');
+    renderEvaluation();
+  } catch (err) { showToast('Ошибка: ' + err.message, 'error'); }
+}
+
 // Pull a numeric AmoCRM lead id out of URL or pasted digits.
 // Recognised: amocrm.ru/leads/detail/<id>, /leads/<id>, ?id=<id>, or a bare digit string ≥5 chars.
 function _extractLeadIdFromQuery(q) {
@@ -2245,6 +2812,7 @@ async function _postLinkLead(sessionId, leadId) {
 }
 
 async function linkLeadModal(sessionId) {
+  if (!moduleOn('amocrm')) return;  // AmoCRM-only; кнопка скрыта при выключенном модуле (defense-in-depth)
   // Look up current lead from cached call data, if any.
   let currentLeadId = null;
   if (_currentCallData && _currentCallData.session && _currentCallData.session.id === sessionId) {
@@ -2261,7 +2829,7 @@ async function linkLeadModal(sessionId) {
           <p class="modal-hint">Вставьте ссылку на сделку (https://…amocrm.ru/leads/detail/12345) или ищите по имени / телефону / email. После привязки оценка будет пересчитана с учётом истории по клиенту, а в карточку сделки уйдут заметки со ссылкой, выжимкой и планом.</p>
           ${currentLeadId ? `
             <div class="link-current">
-              Текущая привязка: <a href="https://rogovestate.amocrm.ru/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>
+              Текущая привязка: ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
               <button type="button" id="leadUnlink" class="link-action">Отвязать</button>
             </div>
           ` : ''}
@@ -2308,7 +2876,7 @@ async function linkLeadModal(sessionId) {
           </div>
           <div class="lead-result-sub">
             <span>Открыть в AmoCRM:&nbsp;</span>
-            <a href="https://rogovestate.amocrm.ru/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://rogovestate.amocrm.ru/leads/detail/${leadId}</a>
+            ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
           </div>
         </button>`;
       results.querySelector('.lead-result').addEventListener('click', () => linkAndClose(leadId, `сделке #${leadId}`));
@@ -2483,23 +3051,15 @@ async function relinkExtraction(extractionId) {
   if (!choice) return;
   const target = items.find(c => c.name === choice.trim());
   if (!target) return showToast('ЖК не найден', 'error');
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/extractions/${extractionId}/relink`, {
       method: 'POST',
-      headers: { 'X-Delete-Password': password },
       body: JSON.stringify({ complex_id: target.id }),
     });
     showToast('Перепривязано');
     location.reload();
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
 }
 
@@ -2572,10 +3132,11 @@ async function renderComplexDetail(id) {
         <h1>${escapeHtml(c.name)}</h1>
         <p>${escapeHtml(c.developer || '')} ${c.class ? '· ' + escapeHtml(c.class) : ''} ${c.district ? '· ' + escapeHtml(c.district) : ''}</p>
       </div>
+      ${isAdmin() ? `
       <div style="margin-bottom:16px;display:flex;gap:8px">
         <button class="btn btn-secondary btn-sm" onclick="renameComplex('${c.id}', ${JSON.stringify(c.name)})">Переименовать</button>
         <button class="btn btn-danger btn-sm" onclick="deleteComplex('${c.id}', ${JSON.stringify(c.name)})">Удалить профиль</button>
-      </div>
+      </div>` : ''}
       <div class="cx-profile">
         ${renderComplexProfile(c.aggregated_data)}
       </div>
@@ -2592,40 +3153,143 @@ async function renderComplexDetail(id) {
 async function renameComplex(id, currentName) {
   const newName = prompt('Новое имя ЖК:', currentName);
   if (!newName || newName === currentName) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
     await api(`/api/complexes/${id}`, {
       method: 'PATCH',
-      headers: { 'X-Delete-Password': password },
       body: JSON.stringify({ name: newName }),
     });
     showToast('Переименовано');
     renderComplexDetail(id);
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
 }
 
 async function deleteComplex(id, name) {
   if (!confirm(`Удалить профиль "${name}"? Сами записи останутся, но будут отвязаны.`)) return;
-  const password = await ensureDeletePassword();
-  if (!password) return;
   try {
-    await api(`/api/complexes/${id}`, { method: 'DELETE', headers: { 'X-Delete-Password': password } });
+    await api(`/api/complexes/${id}`, { method: 'DELETE' });
     showToast('Удалено');
     navigate('complexes');
   } catch (err) {
-    if (/401|invalid delete password|unauthorized/i.test(err.message)) {
-      sessionStorage.removeItem('deletePassword');
-      showToast('Неверный пароль', 'error');
-    } else {
-      showToast('Ошибка: ' + err.message, 'error');
-    }
+    showToast('Ошибка: ' + err.message, 'error');
   }
+}
+
+// ============================================
+// PAGE: Team (admin only)
+// ============================================
+async function renderTeam() {
+  showLoading();
+  const appEl = document.getElementById('app');
+  let users;
+  try {
+    users = await api('/api/users');
+  } catch (err) {
+    appEl.innerHTML = `<div class="empty-state"><p>Ошибка загрузки: ${escapeHtml(err.message)}</p></div>`;
+    return;
+  }
+  let knownNames = [];
+  try { knownNames = (await api('/api/managers')).map(m => m.name); } catch (e) {}
+  const options = knownNames.map(n => `<option value="${escapeHtml(n)}">`).join('');
+  appEl.innerHTML = `
+    <h2>Команда</h2>
+    <datalist id="known-employees">${options}</datalist>
+    <table>
+      <tr><th>Email</th><th>Роль</th><th>Сотрудник (из рекордера)</th><th></th></tr>
+      ${users.map(u => `
+        <tr>
+          <td>${escapeHtml(u.email)}</td>
+          <td>
+            <select data-role-for="${u.id}">
+              ${['admin','viewer','manager'].map(r =>
+                `<option value="${r}" ${u.role===r?'selected':''}>${r}</option>`).join('')}
+            </select>
+          </td>
+          <td><input list="known-employees" data-emp-for="${u.id}"
+                     value="${escapeHtml(u.employee_name||'')}" placeholder="—"></td>
+          <td>
+            <button data-save="${u.id}">Сохранить</button>
+            <button data-reset="${u.id}">Сбросить пароль</button>
+            <button data-del="${u.id}">Удалить</button>
+          </td>
+        </tr>`).join('')}
+    </table>
+    <h3>Добавить юзера</h3>
+    <form id="team-add">
+      <input type="email" id="team-email" placeholder="Email" required>
+      <select id="team-role">
+        <option value="viewer">viewer</option>
+        <option value="admin">admin</option>
+        <option value="manager">manager</option>
+      </select>
+      <input list="known-employees" id="team-emp" placeholder="Сотрудник (для manager)">
+      <button type="submit">Создать</button>
+    </form>
+    <div id="team-secret"></div>`;
+  appEl.querySelector('#team-add').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const body = { email: appEl.querySelector('#team-email').value,
+                   role: appEl.querySelector('#team-role').value };
+    const emp = appEl.querySelector('#team-emp').value.trim();
+    if (emp) body.employee_name = emp;
+    try {
+      const r = await api('/api/users', { method: 'POST', body: JSON.stringify(body) });
+      const newEmail = r.email, newPwd = r.password;
+      await renderTeam();
+      document.getElementById('app').querySelector('#team-secret').innerHTML =
+        `Пароль для ${escapeHtml(newEmail)} (покажем один раз): <code>${escapeHtml(newPwd)}</code>`;
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-save]').forEach(b => b.onclick = async () => {
+    const id = b.dataset.save;
+    try {
+      await api(`/api/users/${id}`, { method: 'PATCH', body: JSON.stringify({
+        role: appEl.querySelector(`[data-role-for="${id}"]`).value,
+        employee_name: appEl.querySelector(`[data-emp-for="${id}"]`).value.trim(),
+      })});
+      showToast('Сохранено');
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-reset]').forEach(b => b.onclick = async () => {
+    try {
+      const r = await api(`/api/users/${b.dataset.reset}/reset-password`, { method: 'POST' });
+      appEl.querySelector('#team-secret').innerHTML =
+        `Новый пароль (покажем один раз): <code>${escapeHtml(r.password)}</code>`;
+    } catch (e) { showToast(e.message, 'error'); }
+  });
+  appEl.querySelectorAll('button[data-del]').forEach(b => b.onclick = async () => {
+    if (!confirm('Удалить юзера?')) return;
+    try { await api(`/api/users/${b.dataset.del}`, { method: 'DELETE' }); await renderTeam(); }
+    catch (e) { showToast(e.message, 'error'); }
+  });
+}
+
+// ============================================
+// PAGE: Profile (all roles)
+// ============================================
+async function renderProfile() {
+  const appEl = document.getElementById('app');
+  appEl.innerHTML = `
+    <h2>Профиль</h2>
+    <div>${escapeHtml(currentUser.email)} (${escapeHtml(currentUser.role)})</div>
+    <h3>Сменить пароль</h3>
+    <form id="pw-form">
+      <input type="password" id="pw-old" placeholder="Текущий пароль" required>
+      <input type="password" id="pw-new" placeholder="Новый пароль (мин. 8)" required minlength="8">
+      <button type="submit">Сменить</button>
+    </form>`;
+  appEl.querySelector('#pw-form').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    try {
+      await api('/api/user-auth/change-password', { method: 'POST', body: JSON.stringify({
+        old_password: appEl.querySelector('#pw-old').value,
+        new_password: appEl.querySelector('#pw-new').value,
+      })});
+      showToast('Пароль изменён; остальные сессии разлогинены');
+      ev.target.reset();
+    } catch (e) {
+      showToast(e.message === 'wrong_password' ? 'Неверный текущий пароль' : e.message, 'error');
+    }
+  });
 }

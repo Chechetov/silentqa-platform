@@ -1,4 +1,4 @@
-// UI controller for Call Recorder Desktop
+// UI controller for SilentQA Recorder Desktop
 
 // --- Global error handlers — show errors on screen ---
 window.onerror = (msg, src, line) => {
@@ -22,6 +22,8 @@ const recorderScreen = document.getElementById('recorderScreen');
 const setupServerUrl = document.getElementById('setupServerUrl');
 const setupUsername = document.getElementById('setupUsername');
 const setupPassword = document.getElementById('setupPassword');
+const setupApiKey = document.getElementById('setupApiKey');
+const setupEmployee = document.getElementById('setupEmployee');
 const btnTestConnection = document.getElementById('btnTestConnection');
 const testConnectionResult = document.getElementById('testConnectionResult');
 const btnSaveSetup = document.getElementById('btnSaveSetup');
@@ -49,6 +51,8 @@ const btnClaimBack = document.getElementById('btnClaimBack');
 const claimCompleteError = document.getElementById('claimCompleteError');
 const brokerInfo = document.getElementById('brokerInfo');
 const btnLogout = document.getElementById('btnLogout');
+const appointmentTypeRow = document.getElementById('appointmentTypeRow');
+const appointmentType = document.getElementById('appointmentType');
 
 // --- Recorder screen elements ---
 const btnStart = document.getElementById('btnStart');
@@ -73,6 +77,8 @@ const settingsPanel = document.getElementById('settingsPanel');
 const inputServerUrl = document.getElementById('inputServerUrl');
 const inputUsername = document.getElementById('inputUsername');
 const inputPassword = document.getElementById('inputPassword');
+const inputApiKey = document.getElementById('inputApiKey');
+const inputEmployee = document.getElementById('inputEmployee');
 const btnSaveSettings = document.getElementById('btnSaveSettings');
 const settingsSaved = document.getElementById('settingsSaved');
 
@@ -88,6 +94,8 @@ let currentError = null;
 let serverUrl = '';
 let username = '';
 let password = '';
+let apiKey = '';
+let employee = '';
 let brokerJwt = '';
 let brokerName = '';
 let brokerEmail = '';
@@ -98,6 +106,19 @@ const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function basicAuthHeader() {
   return username ? 'Basic ' + btoa(username + ':' + password) : '';
+}
+
+// API-key mode: тенант без AmoCRM-брокеров (fulldent) — ключ есть, broker-логин
+// не нужен. realestate вводит username/password → broker-mode, поток не меняется.
+// Реализация живёт в mode.js (подключается <script> перед renderer.js) и
+// разделяется с Node-юнитом; здесь — тонкая обёртка с резервом на случай,
+// если mode.js не загрузился.
+// API-key mode = ключ есть И username пуст. Чистая логика (дублирует mode.js, где
+// юнит-тестируется) — БЕЗ window-делегирования: иначе в общем global scope это
+// объявление перезаписывает window.isApiKeyMode и обёртка рекурсирует (см.
+// normalizeServerUrl ниже). isApiKeyMode на критическом пути онбординга.
+function isApiKeyMode(c) {
+  return !!(c && c.apiKey && !c.username);
 }
 
 function showInlineError(el, msg) {
@@ -136,6 +157,35 @@ function showRecorderScreen() {
   hide(setupScreen);
   hide(loginScreen);
   show(recorderScreen);
+
+  // API-key mode (fulldent и пр.): нет брокера — показываем «Сотрудник» вместо
+  // «Брокер», шлём API-ключ + имя сотрудника, broker-токен очищаем.
+  if (isApiKeyMode({ apiKey, username })) {
+    hide(brokerInfo);
+    if (employee) {
+      brokerInfo.innerHTML = '';
+      const label = document.createElement('span');
+      label.textContent = 'Сотрудник: ';
+      const b = document.createElement('b');
+      b.textContent = employee;
+      brokerInfo.appendChild(label);
+      brokerInfo.appendChild(b);
+      show(brokerInfo);
+    }
+    if (window.Recorder && window.Recorder.setBrokerToken) window.Recorder.setBrokerToken('');
+    if (window.Recorder && window.Recorder.setEmployee) window.Recorder.setEmployee(employee);
+    if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
+    if (btnLogout) hide(btnLogout);
+    // Per-recording appointment-type chooser — populated from the tenant's
+    // scenarios. Failure-safe: never blocks recording.
+    loadAppointmentTypes().catch(() => {});
+    if (!recoveryStarted) {
+      recoveryStarted = true;
+      runRecovery().catch(() => {});
+    }
+    return;
+  }
+
   if (brokerName) {
     brokerInfo.innerHTML = '';
     const label = document.createElement('span');
@@ -154,9 +204,12 @@ function showRecorderScreen() {
     hide(brokerInfo);
   }
 
-  // Wire the recorder's broker token now that we have a valid JWT.
+  // Wire the recorder's broker token and API key now that we have a valid JWT.
   if (window.Recorder && typeof window.Recorder.setBrokerToken === 'function') {
     window.Recorder.setBrokerToken(brokerJwt);
+  }
+  if (window.Recorder && typeof window.Recorder.setApiKey === 'function') {
+    window.Recorder.setApiKey(apiKey);
   }
 
   // Recovery only kicks in once we're past auth — see init() comment.
@@ -166,67 +219,165 @@ function showRecorderScreen() {
   }
 }
 
+// Populate the per-recording appointment-type chooser from the tenant's
+// scenarios. Generic — scenario ids/names come entirely from the server
+// (GET /api/tenancy/features, resolved by Host, no auth). Called only in
+// API-key mode. Failure-safe: any error / missing scenarios leaves the row
+// hidden and sets no appointment type (backend falls back to default
+// scenario — RE-safe, unchanged behavior).
+async function loadAppointmentTypes() {
+  if (!appointmentTypeRow || !appointmentType || !serverUrl) return;
+  let scenarios = null;
+  try {
+    const resp = await fetch(serverUrl + '/api/tenancy/features');
+    if (!resp.ok) return;
+    const features = await resp.json();
+    scenarios = features && features.scenarios;
+  } catch (_) {
+    // Network error / server down — leave row hidden, record without a type.
+    return;
+  }
+  if (!Array.isArray(scenarios) || scenarios.length === 0) return;
+
+  appointmentType.innerHTML = '';
+  for (const s of scenarios) {
+    if (!s || !s.id) continue;
+    const opt = document.createElement('option');
+    opt.value = s.id;
+    opt.textContent = s.name || s.id;
+    appointmentType.appendChild(opt);
+  }
+  if (appointmentType.options.length === 0) return;
+
+  show(appointmentTypeRow);
+  appointmentType.value = appointmentType.options[0].value;
+  if (window.Recorder && window.Recorder.setAppointmentType) {
+    window.Recorder.setAppointmentType(appointmentType.value);
+  }
+}
+
+// Bound once (not inside loadAppointmentTypes) so re-entry can't stack
+// duplicate listeners.
+if (appointmentType) {
+  appointmentType.addEventListener('change', () => {
+    if (window.Recorder && window.Recorder.setAppointmentType) {
+      window.Recorder.setAppointmentType(appointmentType.value);
+    }
+  });
+}
+
+// Нормализация адреса сервера: добавляет https:// если схема не указана и срезает
+// хвостовые слэши. Чистая логика (дублирует mode.js, где юнит-тестируется) — БЕЗ
+// делегирования в window: в этом приложении (contextIsolation, классические скрипты
+// в ОБЩЕМ global scope) это function-объявление перезаписывает window.normalizeServerUrl
+// от mode.js, поэтому обёртка `return window.normalizeServerUrl(...)` ушла бы в
+// бесконечную рекурсию (Maximum call stack size exceeded).
+function normalizeServerUrl(raw) {
+  let s = String(raw == null ? '' : raw).trim();
+  if (!s) return '';
+  s = s.replace(/\/+$/, '');
+  if (!/^https?:\/\//i.test(s)) s = 'https://' + s;
+  return s;
+}
+
 // Test Connection — direct fetch from renderer (no IPC, avoids main process issues)
 btnTestConnection.addEventListener('click', async () => {
+  const setResult = (msg, ok) => {
+    testConnectionResult.textContent = msg;
+    testConnectionResult.className = 'test-result ' + (ok ? 'success' : 'error');
+    show(testConnectionResult);
+  };
+  const resetBtn = () => {
+    btnTestConnection.disabled = false;
+    btnTestConnection.textContent = 'Test Connection';
+  };
   try {
-    const url = setupServerUrl.value.replace(/\/+$/, '');
+    const url = normalizeServerUrl(setupServerUrl.value);
     const user = setupUsername.value;
     const pass = setupPassword.value;
+    const key = setupApiKey.value.trim();
 
     if (!url) {
-      testConnectionResult.textContent = 'Please enter a server URL';
-      testConnectionResult.className = 'test-result error';
-      show(testConnectionResult);
+      setResult('Please enter a server URL', false);
       return;
     }
+    setupServerUrl.value = url; // отражаем нормализованный URL (с https://) обратно в поле
 
     btnTestConnection.disabled = true;
     btnTestConnection.textContent = 'Testing...';
     hide(testConnectionResult);
     hide(btnSaveSetup);
 
-    const authHeader = user ? 'Basic ' + btoa(user + ':' + pass) : '';
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 10000);
 
+    // API-key mode (fulldent и пр.): ключ задан, username пуст — broker-логина нет.
+    // Валидируем без побочных эффектов: (1) тенант резолвится по /features,
+    // (2) ключ принимается ingestion-эндпоинтом — GET несуществующей сессии даёт
+    //     404 при валидном ключе (auth прошла) и 401/403 при неверном; сессия НЕ
+    //     создаётся (в отличие от POST /api/sessions).
+    if (key && !user) {
+      const fResp = await fetch(url + '/api/tenancy/features', { signal: controller.signal });
+      if (!fResp.ok) {
+        clearTimeout(timeout);
+        resetBtn();
+        setResult(fResp.status === 404
+          ? 'Тенант не найден — проверьте адрес сервера'
+          : 'Сервер недоступен (HTTP ' + fResp.status + ')', false);
+        return;
+      }
+      const probeId = '00000000-0000-4000-8000-000000000000';
+      const kResp = await fetch(url + '/api/sessions/' + probeId, {
+        method: 'GET',
+        headers: { 'X-API-Key': key },
+        signal: controller.signal,
+      });
+      clearTimeout(timeout);
+      resetBtn();
+      if (kResp.status === 404 || kResp.ok) {
+        setResult('Connection successful (API key)!', true);
+        show(btnSaveSetup);
+      } else if (kResp.status === 401 || kResp.status === 403) {
+        setResult('Invalid API key (HTTP ' + kResp.status + ')', false);
+      } else {
+        setResult('Server returned HTTP ' + kResp.status, false);
+      }
+      return;
+    }
+
+    // Broker mode (realestate): Basic-auth → GET /api/sessions.
+    const authHeader = user ? 'Basic ' + btoa(user + ':' + pass) : '';
     const resp = await fetch(url + '/api/sessions', {
       method: 'GET',
       headers: { Authorization: authHeader },
       signal: controller.signal,
     });
     clearTimeout(timeout);
-
-    btnTestConnection.disabled = false;
-    btnTestConnection.textContent = 'Test Connection';
+    resetBtn();
 
     if (resp.ok) {
-      testConnectionResult.textContent = 'Connection successful!';
-      testConnectionResult.className = 'test-result success';
+      setResult('Connection successful!', true);
       show(btnSaveSetup);
     } else if (resp.status === 401 || resp.status === 403) {
-      testConnectionResult.textContent = 'Invalid credentials (HTTP ' + resp.status + ')';
-      testConnectionResult.className = 'test-result error';
+      setResult('Invalid credentials (HTTP ' + resp.status + ')', false);
     } else {
-      testConnectionResult.textContent = 'Server returned HTTP ' + resp.status;
-      testConnectionResult.className = 'test-result error';
+      setResult('Server returned HTTP ' + resp.status, false);
     }
-    show(testConnectionResult);
 
   } catch (err) {
-    btnTestConnection.disabled = false;
-    btnTestConnection.textContent = 'Test Connection';
-    testConnectionResult.textContent = 'Error: ' + (err.name === 'AbortError' ? 'Connection timeout (10s)' : err.message);
-    testConnectionResult.className = 'test-result error';
-    show(testConnectionResult);
+    resetBtn();
+    setResult('Error: ' + (err.name === 'AbortError' ? 'Connection timeout (10s)' : err.message), false);
   }
 });
 
 // Save & Start
 btnSaveSetup.addEventListener('click', async () => {
   try {
-    serverUrl = setupServerUrl.value.replace(/\/+$/, '');
+    serverUrl = normalizeServerUrl(setupServerUrl.value);
     username = setupUsername.value;
     password = setupPassword.value;
+    apiKey = setupApiKey.value;
+    if (setupEmployee) employee = setupEmployee.value;
 
     await persistCredentials();
 
@@ -234,9 +385,16 @@ btnSaveSetup.addEventListener('click', async () => {
     inputServerUrl.value = serverUrl;
     inputUsername.value = username;
     inputPassword.value = password;
+    if (inputApiKey) inputApiKey.value = apiKey;
+    if (inputEmployee) inputEmployee.value = employee;
 
-    // Server is reachable, but the broker still needs to log in / activate.
-    showLoginScreen();
+    if (isApiKeyMode({ apiKey, username })) {
+      // API-key mode: брокер не нужен — сразу к записи.
+      showRecorderScreen();
+    } else {
+      // Server is reachable, but the broker still needs to log in / activate.
+      showLoginScreen();
+    }
   } catch (err) {
     testConnectionResult.textContent = 'Save error: ' + err.message;
     testConnectionResult.className = 'test-result error';
@@ -251,6 +409,8 @@ async function persistCredentials() {
     serverUrl,
     username,
     password,
+    apiKey,
+    employee,
     brokerJwt,
     brokerName,
     brokerEmail,
@@ -701,9 +861,12 @@ settingsToggle.addEventListener('click', () => {
 });
 
 btnSaveSettings.addEventListener('click', async () => {
-  serverUrl = inputServerUrl.value.replace(/\/+$/, '');
+  serverUrl = normalizeServerUrl(inputServerUrl.value);
+  inputServerUrl.value = serverUrl;
   username = inputUsername.value;
   password = inputPassword.value;
+  if (inputApiKey) apiKey = inputApiKey.value;
+  if (inputEmployee) employee = inputEmployee.value;
 
   await persistCredentials();
 
@@ -726,7 +889,14 @@ document.addEventListener('click', (e) => {
 async function init() {
   const creds = await window.electronAPI.credentials.get();
 
-  if (!creds || !creds.serverUrl || !creds.username || !creds.password) {
+  // Достаточны ли креды для запуска? Два режима:
+  //  • broker-mode (realestate): serverUrl + username + password;
+  //  • API-key mode (fulldent): serverUrl + apiKey (username пуст).
+  // Иначе (первый запуск / частичные креды) — экран настройки.
+  const hasServer = !!(creds && creds.serverUrl);
+  const hasBrokerCreds = !!(creds && creds.username && creds.password);
+  const hasApiKeyCreds = !!(creds && isApiKeyMode(creds));
+  if (!hasServer || (!hasBrokerCreds && !hasApiKeyCreds)) {
     // First launch (or partial creds) — show setup screen
     showSetupScreen();
     return;
@@ -735,12 +905,24 @@ async function init() {
   serverUrl = creds.serverUrl || '';
   username = creds.username || '';
   password = creds.password || '';
+  apiKey = creds.apiKey || '';
+  employee = creds.employee || '';
   brokerJwt = creds.brokerJwt || '';
   brokerName = creds.brokerName || '';
   brokerEmail = creds.brokerEmail || '';
   inputServerUrl.value = serverUrl;
   inputUsername.value = username;
   inputPassword.value = password;
+  if (inputApiKey) inputApiKey.value = apiKey;
+  if (inputEmployee) inputEmployee.value = employee;
+  if (window.Recorder && window.Recorder.setApiKey) window.Recorder.setApiKey(apiKey);
+
+  // API-key mode (fulldent): нет брокера — пропускаем broker-JWT-гейт и
+  // /api/auth/me, сразу к записи. realestate (с username/password) идёт ниже.
+  if (isApiKeyMode(creds)) {
+    showRecorderScreen();
+    return;
+  }
 
   if (!brokerJwt) {
     // Setup done, but no broker session — show login.

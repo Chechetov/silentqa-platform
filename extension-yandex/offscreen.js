@@ -8,6 +8,7 @@ let audioCtx = null;
 let sessionId = null;
 let serverUrl = "";
 let authHeader = "";
+let apiKey = "";
 let chunksUploaded = 0;
 let uploadQueue = Promise.resolve();
 
@@ -26,7 +27,7 @@ function sendStatus(status, extra = {}) {
 async function createSession(tabId) {
   const resp = await fetch(`${serverUrl}/api/sessions`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": authHeader },
+    headers: { "Content-Type": "application/json", "Authorization": authHeader, ...(apiKey ? { "X-API-Key": apiKey } : {}) },
     body: JSON.stringify({
       metadata: {
         source: "chrome-extension",
@@ -50,7 +51,7 @@ async function uploadChunk(blob) {
   try {
     const resp = await fetch(
       `${serverUrl}/api/sessions/${sessionId}/chunks`,
-      { method: "POST", body: formData, headers: { "Authorization": authHeader } }
+      { method: "POST", body: formData, headers: { "Authorization": authHeader, ...(apiKey ? { "X-API-Key": apiKey } : {}) } }
     );
     if (resp.ok) {
       chunksUploaded++;
@@ -71,7 +72,7 @@ async function finishSession() {
   try {
     await fetch(`${serverUrl}/api/sessions/${sessionId}/finish`, {
       method: "POST",
-      headers: { "Authorization": authHeader },
+      headers: { "Authorization": authHeader, ...(apiKey ? { "X-API-Key": apiKey } : {}) },
     });
     sendStatus("processing");
     chrome.runtime.sendMessage({
@@ -86,9 +87,10 @@ async function finishSession() {
 }
 
 // Start recording — capture tab audio + microphone, mix together
-async function startRecording(streamId, url, tabId, username, password) {
+async function startRecording(streamId, url, tabId, username, password, key) {
   serverUrl = url;
   authHeader = username ? "Basic " + btoa(username + ":" + password) : "";
+  apiKey = key || "";
   chunksUploaded = 0;
   uploadQueue = Promise.resolve();
 
@@ -192,7 +194,7 @@ async function stopRecording() {
 // Listen for messages from the background service worker
 chrome.runtime.onMessage.addListener((message) => {
   if (message.type === "start-recording") {
-    startRecording(message.streamId, message.serverUrl, message.tabId, message.authUsername, message.authPassword);
+    startRecording(message.streamId, message.serverUrl, message.tabId, message.authUsername, message.authPassword, message.apiKey);
   }
   if (message.type === "stop-recording") {
     stopRecording();

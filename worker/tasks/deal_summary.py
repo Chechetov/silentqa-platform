@@ -122,23 +122,18 @@ def format_deal_summary(summary: dict) -> str:
 # === Persistence ==================================================================
 
 import json
-import os
 from datetime import datetime, timezone
 
-import psycopg2
+from tenancy.db import get_sync_db_url, tenant_connect
 
-
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    return url.replace("postgresql+psycopg2://", "postgresql://").replace("postgresql+asyncpg://", "postgresql://")
+_get_sync_db_url = get_sync_db_url
 
 
 def get_existing_summary_note_id(lead_id: int) -> int | None:
-    db_url = _get_sync_db_url()
-    if not db_url or not lead_id:
+    if not _get_sync_db_url() or not lead_id:
         return None
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT amo_note_id FROM amocrm_deal_summaries WHERE lead_id=%s", (lead_id,))
@@ -152,11 +147,10 @@ def get_existing_summary_note_id(lead_id: int) -> int | None:
 
 
 def upsert_summary_record(lead_id: int, amo_note_id: int, content: dict) -> None:
-    db_url = _get_sync_db_url()
-    if not db_url or not lead_id:
+    if not _get_sync_db_url() or not lead_id:
         return
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         try:
             with conn:
                 with conn.cursor() as cur:

@@ -15,7 +15,15 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-import psycopg2
+from tenancy.context import require_tenant_slug, reset_tenant_schema, set_tenant_schema
+from tenancy.db import (
+    get_sync_db_url,
+    get_sync_dialect_url,
+    tenant_connect,
+    tenant_engine,
+)
+from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
+from tenancy.registry import tenant_amocrm_enabled
 
 from tasks.celery_app import app
 from tasks.transcribe import transcribe_audio
@@ -23,7 +31,7 @@ from tasks.diarize import diarize_audio
 from tasks.sentiment import analyze_sentiment
 from tasks.quality import assess_quality, plan_next_call
 from tasks.prior_context import build_prior_context_for_session
-from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario
+from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario, get_default_scenario_id, tenant_company_config_id
 from tasks.amocrm_sync import find_lead_by_phone, create_enriched_note, update_note, format_enriched_note, tag_lead, format_next_call_plan, create_plain_note
 from tasks.deal_summary import build_deal_summary, push_deal_summary
 from tasks.lead_lock import lead_lock
@@ -135,18 +143,12 @@ def _detect_broken_recording(audio_path: str, duration: float) -> dict | None:
     return None
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    # Normalize to plain postgresql:// for psycopg2
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
 
 
 def update_session_status(session_id: str, status: str, **kwargs):
     """Update session status directly in PostgreSQL via psycopg2."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         logger.warning("DATABASE_URL not set, cannot update session status")
         return
 
@@ -161,7 +163,7 @@ def update_session_status(session_id: str, status: str, **kwargs):
     query = f"UPDATE sessions SET {', '.join(sets)} WHERE id = %s"
 
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute(query, values)
@@ -189,11 +191,10 @@ RESULTS_PATH = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
 
 def _get_session_metadata(session_id: str) -> dict:
     """Read session metadata from DB."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return {}
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -214,11 +215,10 @@ def _load_template_kind(template_id: str | None) -> tuple[str | None, str]:
     """
     if not template_id:
         return None, "evaluation"
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None, "evaluation"
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         try:
             with eng.connect() as conn:
@@ -235,11 +235,10 @@ def _load_template_kind(template_id: str | None) -> tuple[str | None, str]:
 
 def _load_evaluation_template_prompt(template_id: str) -> str | None:
     """Return the prompt of an evaluation template, or None on error."""
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         with eng.connect() as conn:
             row = conn.execute(_text("SELECT prompt FROM extraction_templates WHERE id=:id"),
@@ -253,11 +252,10 @@ def _load_evaluation_template_prompt(template_id: str) -> str | None:
 
 def _load_evaluation_template_criteria(template_id: str) -> list[dict] | None:
     """Return the criteria list of an evaluation template, or None on error / NULL column."""
-    db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
-    if not db_url:
+    if not get_sync_dialect_url():
         return None
-    from sqlalchemy import create_engine, text as _text
-    eng = create_engine(db_url, future=True)
+    from sqlalchemy import text as _text
+    eng = tenant_engine()
     try:
         with eng.connect() as conn:
             row = conn.execute(_text("SELECT criteria FROM extraction_templates WHERE id=:id"),
@@ -273,11 +271,10 @@ def _load_evaluation_template_criteria(template_id: str) -> list[dict] | None:
 
 def _get_session_created_at(session_id: str):
     """Return created_at (datetime or None) for a session."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return None
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         try:
             with conn.cursor() as cur:
                 cur.execute("SELECT created_at FROM sessions WHERE id = %s", (session_id,))
@@ -290,9 +287,23 @@ def _get_session_created_at(session_id: str):
         return None
 
 
-def _get_company_id_from_session(session_id: str) -> str | None:
-    """Read company_id from session metadata in DB."""
-    return _get_session_metadata(session_id).get("company_id")
+def _merge_kb_keyterms(word_boost: list[str]) -> list[str]:
+    """Union config word_boost with KB feeds_asr keyterms; dedup; survive KB errors."""
+    try:
+        from tasks.knowledge_base import cap_keyterms, kb_keyterms
+        return cap_keyterms(list(word_boost or []) + kb_keyterms())
+    except Exception:
+        logger.exception("kb keyterms merge failed; using config word_boost only")
+        return list(word_boost or [])
+
+
+def _kb_glossary_safe() -> str:
+    try:
+        from tasks.knowledge_base import kb_glossary
+        return kb_glossary()
+    except Exception:
+        logger.exception("kb glossary failed; using empty")
+        return ""
 
 
 def merge_chunks(session_id: str) -> str:
@@ -303,7 +314,7 @@ def merge_chunks(session_id: str) -> str:
     остальные — продолжение без EBML header. Поэтому сначала склеиваем
     байты в один .webm, затем конвертируем в WAV через ffmpeg.
     """
-    session_dir = Path(AUDIO_PATH) / "sessions" / session_id
+    session_dir = tenant_audio_sessions_dir(AUDIO_PATH, require_tenant_slug(), session_id)
     output_path = session_dir / "full.wav"
 
     if output_path.exists():
@@ -379,7 +390,7 @@ def merge_transcript_with_speakers(transcript: list, diarization: list) -> list:
 
 def save_results(session_id: str, key: str, data: dict | list):
     """Сохраняет результат обработки в JSON."""
-    results_dir = Path(RESULTS_PATH) / session_id
+    results_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)
     results_dir.mkdir(parents=True, exist_ok=True)
     output_file = results_dir / f"{key}.json"
     with open(output_file, "w", encoding="utf-8") as f:
@@ -389,11 +400,10 @@ def save_results(session_id: str, key: str, data: dict | list):
 
 def _save_speaker_roles(session_id: str, speaker_roles: dict):
     """Save auto-detected speaker roles to session metadata (if no manual override exists)."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -411,11 +421,10 @@ def _save_speaker_roles(session_id: str, speaker_roles: dict):
 
 def _update_session_metadata(session_id: str, updates: dict):
     """Merge updates into session metadata."""
-    db_url = _get_sync_db_url()
-    if not db_url:
+    if not get_sync_db_url():
         return
     try:
-        conn = psycopg2.connect(db_url)
+        conn = tenant_connect()
         with conn:
             with conn.cursor() as cur:
                 cur.execute("SELECT metadata FROM sessions WHERE id = %s", (session_id,))
@@ -446,6 +455,13 @@ def _push_to_amocrm(
     reports (short calls, broken recordings, extraction-only) carry a
     `skip_reason` and are intentionally not published.
     """
+    slug = require_tenant_slug()
+    if not tenant_amocrm_enabled(slug):
+        logger.info(
+            f"[{session_id}] AmoCRM push skipped: tenant '{slug}' has no AmoCRM integration"
+        )
+        return
+
     lead_id = session_meta.get("lead_id")
     phone = session_meta.get("phone", "")
     amo_note_id = session_meta.get("amo_note_id")
@@ -580,7 +596,7 @@ def _run_pipeline(task, session_id: str, audio_path: str, config: dict, company_
 def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict, audio_duration: float):
     """Steps 2–8 of the pipeline, wrapped by a per-lead lock in the caller."""
     # === 2. Transcription (skipped if transcript already on disk — reprocess) ===
-    transcript_path = Path(RESULTS_PATH) / session_id / "transcript.json"
+    transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
     if transcript_path.exists():
         logger.info(f"[{session_id}] Step 2: Transcript already on disk, skipping transcription")
         with transcript_path.open() as f:
@@ -591,6 +607,7 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     else:
         task.update_state(state="PROGRESS", meta={"step": "transcribing", "progress": 15})
         word_boost = get_word_boost(company_config)
+        word_boost = _merge_kb_keyterms(word_boost)        # KB layer-2 (best-effort)
         engine_override = get_asr_engine(company_config)
         logger.info(f"[{session_id}] Step 2: Transcribing (word_boost: {len(word_boost)} terms)...")
         transcript = transcribe_audio(audio_path, word_boost=word_boost, engine_override=engine_override)
@@ -612,23 +629,35 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         logger.info(f"[{session_id}] Step 4: Merging transcript with speakers...")
         transcript_with_speakers = merge_transcript_with_speakers(transcript, diarization)
 
-    save_results(session_id, "transcript", transcript_with_speakers)
+    # KB layer-1: engine-agnostic correction + tagging. Idempotent → safe for reprocess.
+    try:
+        from tasks.knowledge_base import kb_build_matcher, normalize_transcript
+        matcher = kb_build_matcher()
+        transcript_with_speakers, _kb_hits = normalize_transcript(transcript_with_speakers, matcher)
+    except Exception:
+        logger.exception(f"[{session_id}] KB normalize failed; transcript unmodified")
+        _kb_hits = []
+    save_results(session_id, "transcript", transcript_with_speakers)  # normalized on disk
+    try:
+        from tasks.knowledge_base import kb_record_mentions
+        kb_record_mentions(session_id, _kb_hits)
+    except Exception:
+        logger.exception(f"[{session_id}] KB record_mentions failed")
 
     # === Branch: extraction template skips quality+sentiment+amocrm ===
     template_id_meta = (session_meta or {}).get("template_id")
     template_id, template_kind = _load_template_kind(template_id_meta)
     if template_kind == "extraction" and template_id:
         from tasks.extract import run_extraction
-        from sqlalchemy import create_engine
         from sqlalchemy.orm import Session as _DbSession
         task.update_state(state="PROGRESS", meta={"step": "extracting", "progress": 85})
         logger.info(f"[{session_id}] Step 5e: LLM extraction with template {template_id}...")
-        db_url = os.environ.get("DATABASE_URL_SYNC") or os.environ["DATABASE_URL"].replace("+asyncpg", "+psycopg2")
-        eng = create_engine(db_url, future=True)
+        eng = tenant_engine()
         try:
             with eng.connect() as conn:
                 with _DbSession(bind=conn, expire_on_commit=False) as db:
-                    run_extraction(db, session_id, template_id)
+                    from tasks.knowledge_base import kb_glossary
+                    run_extraction(db, session_id, template_id, glossary=kb_glossary())
             logger.info(f"[{session_id}] Extraction completed")
         finally:
             eng.dispose()
@@ -652,6 +681,29 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     quality_criteria = scenario.get("criteria") if scenario else None
 
     use_extended = bool(scenario and scenario.get("prompt"))
+
+    # Per-tenant, per-scenario evaluation profile (DB) overrides the file-config
+    # scenario criteria/prompt. Активный профиль настраивается в дашборде
+    # (#evaluation, routes/eval_profiles.py). Evaluation-шаблон (ниже, при явном
+    # reprocess) всё ещё главнее профиля.
+    scenario_id_eff = scenario.get("id") if scenario else None
+    if scenario_id_eff:
+        try:
+            from tasks.eval_profile import load_active_eval_profile
+            _profile = load_active_eval_profile(scenario_id_eff)
+        except Exception:
+            logger.exception(f"[{session_id}] eval profile load failed; using file config")
+            _profile = None
+        if _profile:
+            if _profile.get("criteria"):
+                quality_criteria = _profile["criteria"]
+            if _profile.get("prompt"):
+                quality_prompt = _profile["prompt"]
+                use_extended = True
+            logger.info(
+                f"[{session_id}] Using eval profile for scenario '{scenario_id_eff}' "
+                f"(criteria: {len(_profile.get('criteria') or [])}, custom_prompt: {bool(_profile.get('prompt'))})"
+            )
 
     # Evaluation template override: if the session was tagged with an evaluation
     # template, the template's prompt is self-contained (protocol + criteria +
@@ -681,7 +733,8 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     # with lead_id=None; we need it for prior_context lookup AND for the plan gate.
     lead_id = session_meta.get("lead_id")
     phone = session_meta.get("phone", "")
-    if not lead_id and phone:
+    amocrm_enabled = tenant_amocrm_enabled(require_tenant_slug())
+    if not lead_id and phone and amocrm_enabled:
         lead_id = find_lead_by_phone(phone)
         if lead_id:
             _update_session_metadata(session_id, {"lead_id": lead_id})
@@ -693,8 +746,8 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         )
     # Fetch deal stage + events for stage-aware + offline-gap awareness (Phase 2)
     from tasks.amocrm_sync import get_lead_stage, fetch_lead_events
-    deal_stage = get_lead_stage(lead_id) if lead_id else None
-    events = fetch_lead_events(lead_id) if lead_id else []
+    deal_stage = get_lead_stage(lead_id) if (lead_id and amocrm_enabled) else None
+    events = fetch_lead_events(lead_id) if (lead_id and amocrm_enabled) else []
 
     prior_context = (
         build_prior_context_for_session(lead_id, current_created_at, deal_stage=deal_stage, events=events)
@@ -714,8 +767,16 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         use_extended_schema=use_extended,
         prior_context=prior_context,
         template_driven=template_driven,
+        glossary=_kb_glossary_safe(),
     )
     save_results(session_id, "quality", quality_report)
+
+    # === 6b. Structured card (config-gated, generic; clinical only — QA above) ===
+    from tasks.card import run_card_extraction
+    card = run_card_extraction(transcript_with_speakers, company_config)
+    if card is not None:
+        save_results(session_id, "card", card)
+        logger.info(f"[{session_id}] Card extraction saved")
 
     # === 7. Auto-save speaker roles ===
     speaker_roles = quality_report.get("speaker_roles")
@@ -760,29 +821,31 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     }
 
 
-@app.task(bind=True, queue="transcription", name="pipeline.process_session")
-def process_session(self, session_id: str, config: dict | None = None):
+def _process_session_body(task, session_id: str, config: dict | None = None):
     """Full pipeline for browser-recorded sessions (WebM chunks)."""
     config = config or {}
     logger.info(f"[{session_id}] Starting processing pipeline...")
     start_time = datetime.now(timezone.utc)
     update_session_status(session_id, "processing")
 
-    session_meta = _get_session_metadata(session_id) if not config.get("company_id") else {}
-    company_id = config.get("company_id") or session_meta.get("company_id")
-    scenario_id = config.get("scenario_id") or session_meta.get("scenario_id")
+    session_meta = _get_session_metadata(session_id)
+    # company/scenario — server-owned (спека 5.6): из клиентских метаданных
+    # сессии НЕ читаются. company — из shared.tenants, scenario — только из
+    # явного config (ops-скрипты/reprocess).
+    company_id = config.get("company_id") or tenant_company_config_id()
+    scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id)
+    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
     logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
         # Step 1: Merge chunks
-        self.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
+        task.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
         logger.info(f"[{session_id}] Step 1: Merging audio chunks...")
         audio_path = merge_chunks(session_id)
 
         # Steps 2-8: shared pipeline
-        result = _run_pipeline(self, session_id, audio_path, config, company_config, scenario, session_meta)
+        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
 
         # Done
         finished_at = datetime.now(timezone.utc)
@@ -811,8 +874,20 @@ def process_session(self, session_id: str, config: dict | None = None):
         raise
 
 
-@app.task(bind=True, queue="transcription", name="pipeline.process_session_from_file")
-def process_session_from_file(self, session_id: str, audio_path: str, config: dict | None = None):
+@app.task(bind=True, queue="transcription", name="pipeline.process_session")
+def process_session(self, session_id: str, config: dict | None = None,
+                    tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_session_body(self, session_id, config)
+    finally:
+        reset_tenant_schema(token)
+
+
+def _process_session_from_file_body(task, session_id: str, audio_path: str, config: dict | None = None):
     """Pipeline for pre-existing audio files (AmoCRM calls, uploaded files)."""
     config = config or {}
     logger.info(f"[{session_id}] Starting file-based pipeline for {audio_path}...")
@@ -820,14 +895,16 @@ def process_session_from_file(self, session_id: str, audio_path: str, config: di
     update_session_status(session_id, "processing")
 
     session_meta = _get_session_metadata(session_id)
-    company_id = config.get("company_id") or session_meta.get("company_id")
-    scenario_id = config.get("scenario_id") or session_meta.get("scenario_id")
+    # company/scenario — server-owned (спека 5.6): клиентские фоллбеки из
+    # метаданных сессии убраны; см. _process_session_body.
+    company_id = config.get("company_id") or tenant_company_config_id()
+    scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id)
+    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
     logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
-        result = _run_pipeline(self, session_id, audio_path, config, company_config, scenario, session_meta)
+        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
 
         finished_at = datetime.now(timezone.utc)
         audio_duration = _get_audio_duration(audio_path)
@@ -853,3 +930,16 @@ def process_session_from_file(self, session_id: str, audio_path: str, config: di
         update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
         logger.exception(f"[{session_id}] File-based pipeline failed: {e}")
         raise
+
+
+@app.task(bind=True, queue="transcription", name="pipeline.process_session_from_file")
+def process_session_from_file(self, session_id: str, audio_path: str, config: dict | None = None,
+                              tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _process_session_from_file_body(self, session_id, audio_path, config)
+    finally:
+        reset_tenant_schema(token)

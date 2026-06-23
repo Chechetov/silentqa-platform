@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import sys
 from logging.config import fileConfig
 from pathlib import Path
@@ -25,16 +26,48 @@ db_url = os.getenv("DATABASE_URL", "")
 if db_url:
     config.set_main_option("sqlalchemy.url", db_url)
 
+# Tenant schema: programmatic (app.migrate sets config.attributes) or CLI
+# (alembic -x tenant_schema=t_foo upgrade head). None = legacy single-tenant
+# mode against public — kept only so old dev databases can still be inspected;
+# production runs go through app.migrate which always passes a schema.
+_TENANT_SCHEMA = config.attributes.get(
+    "tenant_schema"
+) or context.get_x_argument(as_dictionary=True).get("tenant_schema")
+if _TENANT_SCHEMA and not re.fullmatch(r"t_[a-z][a-z0-9_]{1,30}", _TENANT_SCHEMA):
+    raise ValueError(f"invalid tenant_schema {_TENANT_SCHEMA!r}")
+
 
 def run_migrations_offline() -> None:
     url = config.get_main_option("sqlalchemy.url")
-    context.configure(url=url, target_metadata=target_metadata, literal_binds=True)
+    context.configure(
+        url=url,
+        target_metadata=target_metadata,
+        literal_binds=True,
+        version_table_schema=_TENANT_SCHEMA,
+    )
     with context.begin_transaction():
         context.run_migrations()
 
 
 def do_run_migrations(connection):
-    context.configure(connection=connection, target_metadata=target_metadata)
+    if _TENANT_SCHEMA:
+        # Unqualified DDL in revisions 001-012 lands in the first schema of
+        # the search_path — i.e. the tenant schema.
+        connection.exec_driver_sql(
+            f"SET search_path TO {_TENANT_SCHEMA}, shared, public"
+        )
+        # The SET above autobegins a transaction. Alembic's
+        # begin_transaction() treats an in-progress transaction as
+        # externally managed (no-op), and the async template below never
+        # commits — every migration would silently ROLL BACK on connection
+        # close. Commit here so alembic owns (and commits) the migration
+        # transaction. SET search_path is session-level: it survives.
+        connection.commit()
+    context.configure(
+        connection=connection,
+        target_metadata=target_metadata,
+        version_table_schema=_TENANT_SCHEMA,
+    )
     with context.begin_transaction():
         context.run_migrations()
 

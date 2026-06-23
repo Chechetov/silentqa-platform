@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from celery import Celery
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 
 # Make worker/tasks importable (shared codebase for AmoCRM helpers and DB ops)
@@ -15,6 +15,10 @@ if str(WORKER_PATH) not in sys.path:
 
 from tasks.amocrm_sync import get_lead_with_contacts, list_call_notes_on_entity, search_leads
 from tasks.amocrm_poll import _insert_call, reset_call_for_reprocess
+
+from tenancy.context import require_tenant_schema
+
+from ..auth_user import require_amocrm_tenant
 
 logger = logging.getLogger(__name__)
 
@@ -44,7 +48,7 @@ class ReprocessResponse(BaseModel):
     missing_recording: list[ReprocessItem]
 
 
-def _enqueue_process_call(call_id: int) -> str:
+def _enqueue_process_call(call_id: int, tenant_schema: str) -> str:
     """Send the process_amocrm_call task to the worker broker.
 
     queue="transcription" matches the decorator on the worker-side task; without
@@ -53,12 +57,14 @@ def _enqueue_process_call(call_id: int) -> str:
     res = _celery_app.send_task(
         "amocrm_poll.process_amocrm_call",
         args=[call_id],
+        kwargs={"tenant_schema": tenant_schema},
         queue="transcription",
     )
     return res.id
 
 
-@router.post("/reprocess", response_model=ReprocessResponse)
+@router.post("/reprocess", response_model=ReprocessResponse,
+             dependencies=[Depends(require_amocrm_tenant)])
 async def reprocess(body: ReprocessRequest):
     lead = get_lead_with_contacts(body.lead_id)
     if not lead:
@@ -108,9 +114,8 @@ async def reprocess(body: ReprocessRequest):
                 # Already in DB (ON CONFLICT DO NOTHING returned no row)
                 if body.force:
                     # We don't know the row id without another query; use amo_note_id to look it up
-                    from tasks.amocrm_poll import _get_sync_db_url
-                    import psycopg2
-                    conn = psycopg2.connect(_get_sync_db_url())
+                    from tenancy.db import tenant_connect
+                    conn = tenant_connect()
                     try:
                         with conn, conn.cursor() as cur:
                             cur.execute(
@@ -121,14 +126,14 @@ async def reprocess(body: ReprocessRequest):
                     finally:
                         conn.close()
                     if row and reset_call_for_reprocess(row[0]):
-                        _enqueue_process_call(row[0])
+                        _enqueue_process_call(row[0], require_tenant_schema())
                         queued.append(ReprocessItem(call_id=row[0], note_id=note_id, duration=duration, direction=direction))
                     else:
                         already.append(ReprocessItem(note_id=note_id, duration=duration, direction=direction))
                 else:
                     already.append(ReprocessItem(note_id=note_id, duration=duration, direction=direction))
             else:
-                _enqueue_process_call(call_id)
+                _enqueue_process_call(call_id, require_tenant_schema())
                 queued.append(ReprocessItem(call_id=call_id, note_id=note_id, duration=duration, direction=direction))
 
     return ReprocessResponse(
@@ -139,7 +144,7 @@ async def reprocess(body: ReprocessRequest):
     )
 
 
-@router.get("/search-leads")
+@router.get("/search-leads", dependencies=[Depends(require_amocrm_tenant)])
 async def amocrm_search_leads(
     q: str = Query(..., min_length=2, max_length=200, description="Имя, телефон или email"),
     limit: int = Query(20, ge=1, le=50),

@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>silentqa — админка платформы</title>
+  <link rel="stylesheet" href="/styles.css">
+  <style>
+    /* минимальные доп-стили поверх styles.css */
+    .pa-wrap { max-width: 1100px; margin: 0 auto; padding: 24px; }
+    .pa-card { background: var(--card-bg, #fff); border-radius: 8px;
+               padding: 20px; margin-bottom: 16px; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+    .pa-table { width: 100%; border-collapse: collapse; }
+    .pa-table th, .pa-table td { text-align: left; padding: 8px 12px;
+                                 border-bottom: 1px solid #eee; }
+    .pa-secret { font-family: monospace; background: #fff8e1; padding: 8px;
+                 border-radius: 4px; word-break: break-all; }
+    .pa-badge-suspended { color: #fff; background: #c62828; border-radius: 4px;
+                          padding: 2px 8px; font-size: 12px; }
+    .pa-row-actions button { margin-right: 6px; }
+    .pa-login { max-width: 360px; margin: 80px auto; }
+    .pa-hidden { display: none; }
+    .pa-danger { color: #c62828; }
+  </style>
+</head>
+<body>
+  <div id="admin-app" class="pa-wrap">
+    <div id="pa-login" class="pa-card pa-login pa-hidden">
+      <h2>Админка платформы</h2>
+      <form id="pa-login-form">
+        <input type="email" id="pa-email" placeholder="Email" required><br>
+        <input type="password" id="pa-password" placeholder="Пароль" required><br>
+        <button type="submit">Войти</button>
+        <div id="pa-login-error" class="pa-danger"></div>
+      </form>
+    </div>
+    <div id="pa-main" class="pa-hidden">
+      <header style="display:flex;justify-content:space-between;align-items:center">
+        <h2>Клиенты платформы</h2>
+        <div><span id="pa-whoami"></span> <button id="pa-logout">Выйти</button></div>
+      </header>
+      <div class="pa-card">
+        <button id="pa-show-create">+ Новый клиент</button>
+        <form id="pa-create-form" class="pa-hidden">
+          <input id="pa-new-slug" placeholder="slug (латиница)" required>
+          <input id="pa-new-name" placeholder="Название">
+          <input type="email" id="pa-new-email" placeholder="Email админа" required>
+          <button type="submit">Создать</button>
+          <div id="pa-create-error" class="pa-danger"></div>
+        </form>
+        <div id="pa-create-result" class="pa-hidden pa-card">
+          <h3>Клиент создан — сохрани, больше не покажем:</h3>
+          <div>Пароль админа: <span class="pa-secret" id="pa-res-password"></span></div>
+          <div>API-ключ: <span class="pa-secret" id="pa-res-key"></span></div>
+        </div>
+      </div>
+      <div class="pa-card">
+        <table class="pa-table" id="pa-tenants"></table>
+      </div>
+      <div class="pa-card pa-hidden" id="pa-tenant-card"></div>
+    </div>
+  </div>
+  <script src="/admin.js"></script>
+</body>
+</html>

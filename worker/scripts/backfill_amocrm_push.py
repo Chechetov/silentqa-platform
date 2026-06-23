@@ -19,9 +19,9 @@ landing on that lead.
 
 Usage (from /root/projects/realestate/worker):
 
-    ../.venv/bin/python3 -m scripts.backfill_amocrm_push           # dry-run
-    ../.venv/bin/python3 -m scripts.backfill_amocrm_push --apply   # actually push
-    ../.venv/bin/python3 -m scripts.backfill_amocrm_push --apply --limit 5
+    ../.venv/bin/python3 -m scripts.backfill_amocrm_push --tenant <slug>           # dry-run
+    ../.venv/bin/python3 -m scripts.backfill_amocrm_push --tenant <slug> --apply   # actually push
+    ../.venv/bin/python3 -m scripts.backfill_amocrm_push --tenant <slug> --apply --limit 5
 """
 from __future__ import annotations
 
@@ -32,11 +32,19 @@ import os
 import sys
 from pathlib import Path
 
-import psycopg2
 from psycopg2.extras import RealDictCursor
 from dotenv import load_dotenv
 
-from tasks.pipeline import RESULTS_PATH, _push_to_amocrm
+# `python -m scripts.backfill_amocrm_push` from the worker root puts cwd on
+# sys.path automatically; the repo root (for `tenancy`) has to be added by hand.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+
+from tenancy.context import require_tenant_slug, set_tenant_schema  # noqa: E402
+from tenancy.db import get_sync_db_url, tenant_connect  # noqa: E402
+from tenancy.identifiers import schema_for_slug  # noqa: E402
+from tenancy.paths import tenant_results_dir  # noqa: E402
+
+from tasks.pipeline import _push_to_amocrm  # noqa: E402
 
 load_dotenv()
 
@@ -47,11 +55,9 @@ logging.basicConfig(
 logger = logging.getLogger("backfill_amocrm_push")
 
 
-def _get_sync_db_url() -> str:
-    url = os.getenv("DATABASE_URL_SYNC", "") or os.getenv("DATABASE_URL", "")
-    url = url.replace("postgresql+psycopg2://", "postgresql://")
-    url = url.replace("postgresql+asyncpg://", "postgresql://")
-    return url
+_get_sync_db_url = get_sync_db_url
+
+RESULTS_ROOT = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
 
 
 def _find_candidates(limit: int | None) -> list[dict]:
@@ -67,14 +73,14 @@ def _find_candidates(limit: int | None) -> list[dict]:
     """
     if limit:
         sql += f" LIMIT {int(limit)}"
-    with psycopg2.connect(_get_sync_db_url()) as conn:
+    with tenant_connect() as conn:
         with conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(sql)
             return [dict(r) for r in cur.fetchall()]
 
 
 def _load_json(session_id: str, key: str) -> dict | None:
-    path = Path(RESULTS_PATH) / session_id / f"{key}.json"
+    path = tenant_results_dir(RESULTS_ROOT, require_tenant_slug(), session_id) / f"{key}.json"
     if not path.exists():
         return None
     try:
@@ -101,9 +107,12 @@ def _classify(session_id: str, meta: dict) -> tuple[str, dict | None, dict | Non
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--tenant", required=True, help="tenant slug, e.g. realestate")
     parser.add_argument("--apply", action="store_true", help="Actually push to AmoCRM (default: dry-run)")
     parser.add_argument("--limit", type=int, default=None, help="Cap number of sessions processed")
     args = parser.parse_args()
+
+    set_tenant_schema(schema_for_slug(args.tenant))
 
     mode = "APPLY" if args.apply else "DRY-RUN"
     logger.info(f"Mode: {mode}")

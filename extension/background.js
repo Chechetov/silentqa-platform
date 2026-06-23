@@ -25,8 +25,8 @@ async function startRecording(tabId) {
   });
 
   // Get server URL and auth credentials from storage
-  const { serverUrl = "http://localhost:8000", authUsername = "", authPassword = "" } =
-    await chrome.storage.local.get(["serverUrl", "authUsername", "authPassword"]);
+  const { serverUrl = "http://localhost:8000", authUsername = "", authPassword = "", apiKey = "" } =
+    await chrome.storage.local.get(["serverUrl", "authUsername", "authPassword", "apiKey"]);
 
   // Send to offscreen document to start recording
   chrome.runtime.sendMessage({
@@ -35,6 +35,7 @@ async function startRecording(tabId) {
     serverUrl,
     authUsername,
     authPassword,
+    apiKey,
     tabId,
   });
 

@@ -26,7 +26,8 @@ def test_ingest_event_new_inserts_and_enqueues(monkeypatch):
     monkeypatch.setattr(ap, "get_note_details",
                         lambda *a, **k: {"note_type": "call_out", "params": {"link": "u", "duration": 50}})
     monkeypatch.setattr(ap, "_insert_call", lambda **k: 777)            # fresh row
-    monkeypatch.setattr(ap.process_amocrm_call, "delay", lambda cid: enqueued.append(cid))
+    monkeypatch.setattr(ap.process_amocrm_call, "delay",
+                        lambda cid, **kw: enqueued.append(cid))
 
     assert ap._ingest_call_event(_event()) == 777
     assert enqueued == [777]
@@ -37,7 +38,8 @@ def test_ingest_event_duplicate_no_enqueue(monkeypatch):
     monkeypatch.setattr(ap, "get_note_details",
                         lambda *a, **k: {"note_type": "call_out", "params": {"link": "u"}})
     monkeypatch.setattr(ap, "_insert_call", lambda **k: None)           # ON CONFLICT -> already exists
-    monkeypatch.setattr(ap.process_amocrm_call, "delay", lambda cid: enqueued.append(cid))
+    monkeypatch.setattr(ap.process_amocrm_call, "delay",
+                        lambda cid, **kw: enqueued.append(cid))
 
     assert ap._ingest_call_event(_event()) is None
     assert enqueued == []
@@ -67,7 +69,7 @@ def test_reconcile_ingests_only_missing_notes(monkeypatch):
     alerts = []
     monkeypatch.setattr(rec, "send_alert", lambda msg: alerts.append(msg))
 
-    out = rec.reconcile_amocrm_calls()
+    out = rec._reconcile_for_current_tenant()
 
     assert ingested == [100, 300]            # 200 skipped (known), no get_note_details for it
     assert out["recovered"] == 2
@@ -85,7 +87,7 @@ def test_reconcile_no_recovery_no_alert(monkeypatch):
     alerts = []
     monkeypatch.setattr(rec, "send_alert", lambda msg: alerts.append(msg))
 
-    out = rec.reconcile_amocrm_calls()
+    out = rec._reconcile_for_current_tenant()
 
     assert out["recovered"] == 0
     assert out["recording_timeout"] == 2     # stuck counts surfaced in metrics
@@ -104,7 +106,7 @@ def test_reconcile_batch_cap_limits_burst(monkeypatch):
                         lambda: {"recording_timeout": 0, "failed_terminal": 0, "last_ingest_age_min": 0.0})
     monkeypatch.setattr(rec, "send_alert", lambda msg: None)
 
-    out = rec.reconcile_amocrm_calls()
+    out = rec._reconcile_for_current_tenant()
 
     assert len(ingested) == 3            # stopped at the cap
     assert out["recovered"] == 3
@@ -116,7 +118,7 @@ def test_reconcile_never_raises_into_beat(monkeypatch):
         raise RuntimeError("AmoCRM/DB down")
     monkeypatch.setattr(rec, "get_recent_call_events", boom)
 
-    out = rec.reconcile_amocrm_calls()
+    out = rec._reconcile_for_current_tenant()
     assert out == {"error": True}            # swallowed; Beat keeps running
 
 

@@ -1,4 +1,13 @@
 import os
+import sys
+from pathlib import Path
+
+# Celery starts with WorkingDirectory=<repo>/worker (run.sh and the systemd
+# unit), so only worker/ is on sys.path. Task modules import the top-level
+# `tenancy` package from the repo root — insert it explicitly, same shim as
+# backend/app/main.py. Without this the worker crash-loops on startup.
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → tenancy
+
 from celery import Celery
 
 redis_url = os.getenv("REDIS_URL", "redis://localhost:6381/0")
@@ -10,6 +19,7 @@ app = Celery(
     include=[
         "tasks.pipeline",
         "tasks.transcribe",
+        "tasks.transcribe_compare",
         "tasks.diarize",
         "tasks.sentiment",
         "tasks.quality",
