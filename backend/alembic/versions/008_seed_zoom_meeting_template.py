@@ -222,13 +222,22 @@ FULL_PROMPT = "## Регламент\n" + PROTOCOL + "\n\n" + CRITERIA_TEXT + "\
 
 
 def upgrade() -> None:
+    # Сидим этот RE-специфичный шаблон ТОЛЬКО в схемы тенантов с модулем complexes.
+    # Тенант-миграция фанится на ВСЕ схемы; гейт по current_schema()→shared.tenants
+    # не даёт шаблону протечь к не-RE тенантам (universal-knowledge-base §4.3/§9, B3).
+    # На существующих (застемпленных за 008) схемах НЕ перезапускается — затрагивает
+    # только будущие провижининги; существующие чистит scripts.cleanup_zoom_template.
     op.execute(f"""INSERT INTO extraction_templates (name, description, kind, prompt, json_schema)
-        VALUES (
+        SELECT
             'Zoom-встреча брокера (презентация ЖК)',
             'Оценка живой Zoom-встречи брокера с клиентом: проверка связи, резюмирование запроса, презентация ЖК по карте/застройщику/планировкам, обратная связь по каждому объекту, договорённость о визите к застройщику. Используется по умолчанию для записей с десктоп-приложения.',
             'evaluation',
             $${FULL_PROMPT}$$,
             $${json.dumps(SCHEMA, ensure_ascii=False)}$$::jsonb
+        WHERE EXISTS (
+            SELECT 1 FROM shared.tenants
+            WHERE schema_name = current_schema()
+              AND COALESCE((modules->>'complexes')::boolean, false) = true
         )
         ON CONFLICT (name) DO NOTHING""")
 
