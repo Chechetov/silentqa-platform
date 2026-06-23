@@ -283,7 +283,7 @@ function formatSource(metadata) {
 // ============================================
 // PAGE: Calls List
 // ============================================
-let callsFilters = { source: '', phone: '', template_id: '' };
+let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
 let callsPhoneDebounce = null;
 let _templatesCache = null;
 
@@ -309,6 +309,7 @@ async function renderCalls(page = 0) {
   if (callsFilters.source) params.set('source', callsFilters.source);
   if (callsFilters.phone) params.set('phone', callsFilters.phone);
   if (callsFilters.template_id) params.set('template_id', callsFilters.template_id);
+  if (callsFilters.kb_tag) params.set('kb_tag', callsFilters.kb_tag);
 
   try {
     const data = await api(`/api/sessions?${params.toString()}`);
@@ -322,7 +323,7 @@ async function renderCalls(page = 0) {
     const tplOptions = templates.map(t =>
       `<option value="${t.id}" ${callsFilters.template_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
     ).join('');
-    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id);
+    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag);
 
     let html = `
       <div class="page-header">
@@ -363,6 +364,7 @@ async function renderCalls(page = 0) {
               ${tplOptions}
             </select>
             <input type="search" id="callsPhoneFilter" class="table-filter" placeholder="Телефон…" value="${escapeHtml(callsFilters.phone)}">
+            ${callsFilters.kb_tag ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по тегу базы знаний">Тег: ${escapeHtml(callsFilters.kb_tag_label || callsFilters.kb_tag)} <button type="button" id="callsKbTagClear" title="Снять фильтр по тегу" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
             ${filtersActive ? '<button type="button" id="callsFiltersReset" class="table-filter-reset">Сбросить</button>' : ''}
             <input type="text" class="table-search" placeholder="Поиск на странице…" id="callSearch">
           </div>
@@ -442,7 +444,15 @@ async function renderCalls(page = 0) {
     const resetBtn = $('#callsFiltersReset');
     if (resetBtn) {
       resetBtn.addEventListener('click', () => {
-        callsFilters = { source: '', phone: '', template_id: '' };
+        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+        renderCalls(0);
+      });
+    }
+    const kbTagClear = $('#callsKbTagClear');
+    if (kbTagClear) {
+      kbTagClear.addEventListener('click', () => {
+        callsFilters.kb_tag = '';
+        callsFilters.kb_tag_label = '';
         renderCalls(0);
       });
     }
@@ -460,6 +470,13 @@ async function renderCalls(page = 0) {
   } catch (err) {
     app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки: ${escapeHtml(err.message)}</p></div>`;
   }
+}
+
+function filterByKbTag(el) {
+  // Клик по KB-тегу в карточке звонка → список звонков, отфильтрованный по этому тегу.
+  callsFilters = { source: '', phone: '', template_id: '',
+                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '' };
+  navigate('calls');
 }
 
 // ============================================
@@ -586,7 +603,7 @@ async function renderCallDetail(id) {
 
     if (kbTags.length) {
       html += `<div class="kb-tags-section" style="margin-bottom:16px"><h2>Теги базы знаний</h2>` +
-        kbTags.map(t => `<span class="badge" style="margin-right:6px">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
+        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term).replace(/"/g, '&quot;')}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
         `</div>`;
     }
 
