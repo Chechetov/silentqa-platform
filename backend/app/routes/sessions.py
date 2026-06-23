@@ -11,7 +11,6 @@ from sqlalchemy import select, func, text, table, column
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 from app.auth_jwt import get_current_broker
 from app.company_scenarios import valid_scenario
 from app.auth_user import (
@@ -26,9 +25,8 @@ from app.auth_user import (
 )
 from app.config import settings
 from app.database import get_db
-from app.modules import module_enabled
 from app.models import Chunk, Session, SessionStatus
-from app.modules import require_module
+from app.modules import module_enabled, require_module
 from app.schemas import BrokerInfo, SessionCreate, SessionResponse, SpeakerMapUpdate
 from tenancy.context import require_tenant_slug
 from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
