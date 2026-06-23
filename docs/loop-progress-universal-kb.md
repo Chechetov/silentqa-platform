@@ -36,7 +36,11 @@
 - [x] **B4** — Ретайр `AMOCRM_TENANT_SLUGS` → `tenants.modules.amocrm`: + `registry.tenant_amocrm_enabled`, worker `_push_to_amocrm`/lead-резолв, backend `link_lead` note-cleanup, удалена константа. TDD (переписан `test_push_tenant_gate`). → коммит `7dc1d8e`, backend 229 + worker 184/gate 3 зелёных (4 ошибки test_complex_match — пред-существующие, нужен DATABASE_URL_SYNC).
 - [ ] **B3** — ⚠️ ПАУЗА/решение пользователя. Не сидить Zoom-ЖК шаблон миграцией 008 в не-complexes схемы (008 фанится на все схемы, УЖЕ применена в проде). Высокий риск: правка применённой миграции опасна; правильный путь — НОВАЯ миграция/гейт. План §9 явно откладывает. Не делать автономно.
 - [ ] **B5** — `scenario_id="outbound_residential"` (amocrm_poll.py:448) в конфиг, а не worker-константа. Низкий приоритет.
-- [ ] **F7** *(опц.)* — route-level guards для `#complexes`/`#reprocess` (app.js:58,70): редирект вместо рендера 403-страницы при выключенном модуле.
+- [x] **F7** — route-level guards для `#complexes`/`#reprocess`: редирект на `#calls` при выключенном модуле (мирроринг isAdmin-гардов в роутере). Фронт-only, `node --check` OK. → коммит `acc2126`.
+- [ ] **B5** *(отложено)* — `scenario_id="outbound_residential"` (amocrm_poll.py:448) → company-config. Низкий приоритет, скорее Phase-2.
+
+## Статус лупа: ОСТАНОВЛЕН (2026-06-23)
+Ядро де-RE-ификации за module-флагами **завершено** (B1, F1/F3/F4/F2, B2, B6/F5, F6, B4, F7 — 9 фичевых коммитов, всё запушено в `multi-tenant-core-phase1`, backend-сьют 229 зелёных). Остаток сознательно НЕ делается автономно: **B3** (правка применённой в проде миграции 008 — высокий риск, план §9 откладывает; нужна отдельная миграция-чистка с проверкой на проде) и **B5** (Phase-2-ish). Возобновить — заново запустить `/loop` с этим же файлом как источником истины.
 
 ## Лог итераций
 - **Итерация 1:** загрузил план+спеку; 2 аудит-агента (backend+frontend) → карта done/remaining; составил очередь; сделал B1 (TDD, коммит+пуш `498cc75`); создал этот файл.
@@ -45,3 +49,4 @@
 - **Итерация 4:** B6+F5 — `/api/tenancy/features` эмитит `amocrm_subdomain` из company-config (гейт amocrm); добавлен helper `amocrm_subdomain_for` + инвалидация кеша; realestate.json получил субдомен; фронт-комментарий amoBase обновлён. TDD (helper + 2 features-теста), бэкенд-сьют 229 зелёных, app.js OK. Коммит `ddf536d`, запушено.
 - **Итерация 5:** F6 — kb_tag-фильтр UI в #calls (кликабельный KB-бейдж → отфильтрованный список + чип активного фильтра). Фронт-only, `node --check` OK. Коммит `c2a2d0c`, запушено.
 - **Итерация 6:** B4 — `AMOCRM_TENANT_SLUGS` ретайрнут, всё на `tenants.modules.amocrm` (registry helper + worker writeback + backend link_lead). TDD, backend 229 / worker 184+3 зелёных. Коммит `7dc1d8e`, запушено. **ЧЕКПОЙНТ:** ядро де-RE-ификации (B1, F1/F3/F4/F2, B2, B6/F5, F6, B4) закрыто. Остаток: B3 (рискованная миграция — пауза, решение пользователя), B5 (низкий), F7 (опц.). Запрошено решение по хвосту.
+- **Итерация 7:** пользователь выбрал «доделать F7, потом стоп». F7 — route-guards #complexes/#reprocess (коммит `acc2126`). **Луп остановлен** на этой точке; B3/B5 отложены.
