@@ -125,8 +125,8 @@ def test_realestate_desktop_session_gets_zoom_template(monkeypatch, fake_redis):
 
 
 def test_complexes_tenant_without_amocrm_gets_zoom_template(monkeypatch, fake_redis):
-    # Гейт по МОДУЛЮ complexes, не по слугу: тенант с complexes:true, но НЕ входящий
-    # в AMOCRM_TENANT_SLUGS, всё равно получает Zoom-шаблон. До фикса (слуг-гейт) — падает.
+    # Гейт по МОДУЛЮ complexes, не по слугу: тенант с complexes:true, но без
+    # модуля amocrm всё равно получает Zoom-шаблон. До фикса (слуг-гейт) — падал.
     from app.routes import sessions as sess_mod
 
     async def fake_resolve(db):

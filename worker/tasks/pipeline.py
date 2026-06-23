@@ -23,7 +23,7 @@ from tenancy.db import (
     tenant_engine,
 )
 from tenancy.paths import tenant_audio_sessions_dir, tenant_results_dir
-from tenancy.registry import AMOCRM_TENANT_SLUGS
+from tenancy.registry import tenant_amocrm_enabled
 
 from tasks.celery_app import app
 from tasks.transcribe import transcribe_audio
@@ -456,7 +456,7 @@ def _push_to_amocrm(
     `skip_reason` and are intentionally not published.
     """
     slug = require_tenant_slug()
-    if slug not in AMOCRM_TENANT_SLUGS:
+    if not tenant_amocrm_enabled(slug):
         logger.info(
             f"[{session_id}] AmoCRM push skipped: tenant '{slug}' has no AmoCRM integration"
         )
@@ -733,7 +733,7 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     # with lead_id=None; we need it for prior_context lookup AND for the plan gate.
     lead_id = session_meta.get("lead_id")
     phone = session_meta.get("phone", "")
-    amocrm_enabled = require_tenant_slug() in AMOCRM_TENANT_SLUGS
+    amocrm_enabled = tenant_amocrm_enabled(require_tenant_slug())
     if not lead_id and phone and amocrm_enabled:
         lead_id = find_lead_by_phone(phone)
         if lead_id:

@@ -132,8 +132,8 @@ async def require_amocrm_tenant(
 ) -> UserCtx:
     """/api/amocrm/*: admin + tenant with the amocrm module enabled (spec §5.3).
 
-    Single source of truth = tenants.modules. AMOCRM_TENANT_SLUGS остаётся для
-    внутренних RE-путей пайплайна (spec §9 — будущая полная унификация).
+    Single source of truth = tenants.modules — включая внутренние RE-пути
+    пайплайна/link-lead (через registry.tenant_amocrm_enabled / module_enabled).
     """
     from app.modules import module_enabled
 
