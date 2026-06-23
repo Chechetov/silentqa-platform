@@ -80,6 +80,70 @@ def test_features_includes_tenant_scenarios(monkeypatch, fake_redis, tmp_path):
     ]
 
 
+def test_amocrm_subdomain_helper_reads_config(monkeypatch, tmp_path):
+    # amocrm_subdomain берётся из company-config (домен-специфика → конфиг тенанта)
+    (tmp_path / "re.json").write_text(json.dumps({
+        "id": "re", "amocrm_subdomain": "rogovestate.amocrm.ru",
+    }), encoding="utf-8")
+    (tmp_path / "noamo.json").write_text(json.dumps({"id": "noamo"}), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+    assert cs.amocrm_subdomain_for("re") == "rogovestate.amocrm.ru"
+    assert cs.amocrm_subdomain_for("noamo") is None
+    assert cs.amocrm_subdomain_for(None) is None
+    assert cs.amocrm_subdomain_for("missing") is None
+
+
+def test_features_includes_amocrm_subdomain_when_module_on(monkeypatch, fake_redis, tmp_path):
+    (tmp_path / "realestate.json").write_text(json.dumps({
+        "id": "realestate", "amocrm_subdomain": "rogovestate.amocrm.ru",
+    }), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+
+    from app.tenancy_http import TenantRegistry
+    rows = [{"slug": "realestate", "schema_name": "t_realestate", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {"amocrm": True}, "company_config_id": "realestate"}]
+
+    async def fake_all(self):
+        return rows
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app
+    c = TestClient(app, base_url="https://realestate.silentqa.com")
+    r = c.get("/api/tenancy/features")
+    assert r.status_code == 200
+    assert r.json().get("amocrm_subdomain") == "rogovestate.amocrm.ru"
+
+
+def test_features_omits_amocrm_subdomain_when_module_off(monkeypatch, fake_redis, tmp_path):
+    # модуль amocrm выключен → субдомен не утекает наружу, даже если в конфиге есть
+    (tmp_path / "x.json").write_text(json.dumps({
+        "id": "x", "amocrm_subdomain": "foo.amocrm.ru",
+    }), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+
+    from app.tenancy_http import TenantRegistry
+    rows = [{"slug": "acme", "schema_name": "t_acme", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {"amocrm": False}, "company_config_id": "x"}]
+
+    async def fake_all(self):
+        return rows
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app
+    c = TestClient(app, base_url="https://acme.silentqa.com")
+    r = c.get("/api/tenancy/features")
+    assert r.status_code == 200
+    assert "amocrm_subdomain" not in r.json()
+
+
 def test_features_no_scenarios_when_no_config(monkeypatch, fake_redis, tmp_path):
     # тенант без company_config_id (или с неизвестным) → ключ scenarios отсутствует
     monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))

@@ -16,7 +16,7 @@ let currentUser = null; // {email, role} после логина
 let features = {}; // module-флаги из /api/tenancy/features
 const isAdmin = () => currentUser && currentUser.role === 'admin';
 const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
-const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // tenant-configurable (Phase 2)
+const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // из company-config через /features (фолбэк — дефолт realestate)
 
 // ---- Router ----
 function navigate(hash) {

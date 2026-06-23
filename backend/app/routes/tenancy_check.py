@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException, Request
 
-from app.company_scenarios import scenarios_for
+from app.company_scenarios import amocrm_subdomain_for, scenarios_for
 from app.config import settings
 from app.modules import MODULE_DEFAULTS, module_enabled
 from app.tenancy_http import registry as _registry
@@ -51,4 +51,10 @@ async def get_features(request: Request):
     scenarios = scenarios_for(tenant.get("company_config_id"))
     if scenarios:
         result["scenarios"] = scenarios
+    # AmoCRM deep-link субдомен — только для тенантов с включённым модулем amocrm
+    # (берётся из company-config, а не хардкод rogovestate.amocrm.ru во фронте).
+    if module_enabled(modules, "amocrm"):
+        sub = amocrm_subdomain_for(tenant.get("company_config_id"))
+        if sub:
+            result["amocrm_subdomain"] = sub
     return result

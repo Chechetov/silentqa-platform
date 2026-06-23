@@ -43,14 +43,31 @@ def _scenarios_for_config(config_id: str) -> frozenset[str]:
     return frozenset(sid for sid, _ in _scenario_list_for_config(config_id))
 
 
+@lru_cache(maxsize=64)
+def _amocrm_subdomain_for_config(config_id: str) -> str | None:
+    """Субдомен AmoCRM из company-config (ключ `amocrm_subdomain`), или None.
+
+    Толерантен к отсутствию файла / битому JSON / пустому значению → None."""
+    path = _companies_root() / f"{config_id}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    sub = data.get("amocrm_subdomain")
+    return sub.strip() if isinstance(sub, str) and sub.strip() else None
+
+
 def clear_scenario_caches() -> None:
     """Invalidate all scenario caches. Call after any company-config write.
 
-    Единая точка инвалидации: чистит КАЖДЫЙ scenario-кеш модуля. Если добавляешь
-    ещё один lru_cache по сценариям — сбрасывай его здесь же, иначе сайт записи
+    Единая точка инвалидации: чистит КАЖДЫЙ config-кеш модуля. Если добавляешь
+    ещё один lru_cache по company-config — сбрасывай его здесь же, иначе сайт записи
     конфига (routes/companies.py:_write_config) снова рассинхронизируется."""
     _scenario_list_for_config.cache_clear()
     _scenarios_for_config.cache_clear()
+    _amocrm_subdomain_for_config.cache_clear()
 
 
 def scenarios_for(config_id: str | None) -> list[dict]:
@@ -67,3 +84,11 @@ def valid_scenario(config_id: str | None, scenario_id: str | None) -> str | None
     if not config_id or not scenario_id:
         return None
     return scenario_id if scenario_id in _scenarios_for_config(config_id) else None
+
+
+def amocrm_subdomain_for(config_id: str | None) -> str | None:
+    """Субдомен AmoCRM тенанта из company-config — для deep-link в дашборде через
+    /features (гейтится модулем amocrm). None, если конфиг/ключ отсутствует."""
+    if not config_id:
+        return None
+    return _amocrm_subdomain_for_config(config_id)
