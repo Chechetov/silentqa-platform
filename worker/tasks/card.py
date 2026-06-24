@@ -37,7 +37,7 @@ def run_card_extraction(transcript: list[dict], company_config: dict) -> dict | 
         resp = client.responses.create(
             model="gpt-5.4",
             input=[{"role": "system", "content": cfg["prompt"]},
-                   {"role": "user", "content": "Транскрипт приёма:\n\n" + flat}],
+                   {"role": "user", "content": "Транскрипт разговора:\n\n" + flat}],
             text={"format": {"type": "json_schema", "name": "card",
                              "strict": True, "schema": cfg["json_schema"]}},
         )

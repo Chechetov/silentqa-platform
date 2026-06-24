@@ -59,6 +59,23 @@ def _amocrm_subdomain_for_config(config_id: str) -> str | None:
     return sub.strip() if isinstance(sub, str) and sub.strip() else None
 
 
+@lru_cache(maxsize=64)
+def _card_label_for_config(config_id: str) -> str | None:
+    """Заголовок структурированной карточки из company-config (`card_extraction.label`).
+
+    Домен-специфика (дентал «Карта приёма» vs «Итоги созвона») живёт в конфиге, а не
+    хардкодится во фронте. Толерантен к отсутствию файла / битому JSON / пустому → None."""
+    path = _companies_root() / f"{config_id}.json"
+    if not path.exists():
+        return None
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    label = (data.get("card_extraction") or {}).get("label")
+    return label.strip() if isinstance(label, str) and label.strip() else None
+
+
 def clear_scenario_caches() -> None:
     """Invalidate all scenario caches. Call after any company-config write.
 
@@ -68,6 +85,7 @@ def clear_scenario_caches() -> None:
     _scenario_list_for_config.cache_clear()
     _scenarios_for_config.cache_clear()
     _amocrm_subdomain_for_config.cache_clear()
+    _card_label_for_config.cache_clear()
 
 
 def scenarios_for(config_id: str | None) -> list[dict]:
@@ -92,3 +110,11 @@ def amocrm_subdomain_for(config_id: str | None) -> str | None:
     if not config_id:
         return None
     return _amocrm_subdomain_for_config(config_id)
+
+
+def card_label_for(config_id: str | None) -> str | None:
+    """Заголовок карточки тенанта (`card_extraction.label`) — для рендера карточки в
+    дашборде через /features. None, если конфиг/блок/label отсутствует."""
+    if not config_id:
+        return None
+    return _card_label_for_config(config_id)

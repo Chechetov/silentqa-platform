@@ -508,7 +508,9 @@ async function renderCallDetail(id) {
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
-    const _currentCardLabel = 'Карта приёма';
+    // Заголовок карточки — из company-config через /features (дентал «Карта приёма»
+    // vs «Итоги созвона»). Фолбэк отдаём рендереру (renderGenericCard → «Итоги»).
+    const _currentCardLabel = (features && features.card_label) || null;
     const meta = session.metadata || {};
     const rawScore = analysis && analysis.overall_score != null ? analysis.overall_score : null;
     const overallScore = rawScore != null ? normalizeScore(rawScore, analysis) : null;
@@ -1487,7 +1489,7 @@ async function renderUpload() {
         ${moduleOn('complexes') ? '<p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>' : ''}
       </div>
       <div class="form-group">
-        <label>Сотрудник / врач</label>
+        <label>Сотрудник</label>
         <input type="text" id="uploadEmployee" placeholder="Имя сотрудника">
       </div>
       <div class="form-group">
