@@ -552,7 +552,9 @@ async function renderCallDetail(id) {
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
         ${moduleOn('amocrm') ? `<button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>` : ''}
-        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
+        ${isAdmin() ? (moduleOn('complexes')
+          ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>`
+          : `<button class="btn btn-secondary btn-sm" onclick="reprocessScenario('${id}')">Переоценить</button>`) : ''}
         ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="compareEnginesModal('${id}')">Сравнить движки ASR…</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
       </div>
@@ -2699,6 +2701,30 @@ async function reprocessSession(sessionId) {
     await api(`/api/sessions/${sessionId}/reprocess`, {
       method: 'POST',
       body: JSON.stringify({ template_id: tpl.id }),
+    });
+    showToast('Переоценка запущена — обновите страницу через минуту');
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  }
+}
+
+async function reprocessScenario(sessionId) {
+  const scenarios = (features && features.scenarios) || [];
+  let scenarioId = null;
+  if (scenarios.length >= 2) {
+    const pick = await pickTemplateModal(scenarios.map(s => ({ name: s.name, id: s.id })), {
+      title: 'Перепрогнать под сценарий',
+      hint: 'Выберите сценарий — звонок будет переоценён по его критериям.',
+      confirmLabel: 'Запустить',
+    });
+    if (!pick) return;
+    scenarioId = pick.id;
+  }
+  // 0 или 1 сценарий → простой перепрогон (дефолтный сценарий).
+  try {
+    await api(`/api/sessions/${sessionId}/reprocess`, {
+      method: 'POST',
+      body: JSON.stringify(scenarioId ? { scenario_id: scenarioId } : {}),
     });
     showToast('Переоценка запущена — обновите страницу через минуту');
   } catch (err) {
