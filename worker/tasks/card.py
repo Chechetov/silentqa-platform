@@ -25,9 +25,25 @@ def _flatten_transcript(transcript: list[dict]) -> str:
     return "\n".join(parts)
 
 
+def _resolve_card_cfg(company_config: dict, scenario: dict | None) -> dict | None:
+    """Какой card_extraction применять. Ключ у сценария (в т.ч. явный null/{} —
+    отказ от карты) ИМЕЕТ ПРИОРИТЕТ; иначе — config-level."""
+    if scenario and "card_extraction" in scenario:
+        return scenario["card_extraction"]
+    return company_config.get("card_extraction")
+
+
+def has_card_extraction(company_config: dict, scenario: dict | None = None) -> bool:
+    """Сконфигурирована ли карта для этого прогона (scenario-override или config-level).
+
+    Нужно пайплайну, чтобы отличить «карта не нужна» (→ убрать устаревшую card.json)
+    от «карта нужна, но извлечение упало» (→ старую card.json НЕ трогать)."""
+    return bool(_resolve_card_cfg(company_config, scenario))
+
+
 def run_card_extraction(transcript: list[dict], company_config: dict,
                         scenario: dict | None = None) -> dict | None:
-    cfg = (scenario or {}).get("card_extraction") or company_config.get("card_extraction")
+    cfg = _resolve_card_cfg(company_config, scenario)
     if not cfg:
         return None
     flat = _flatten_transcript(transcript)

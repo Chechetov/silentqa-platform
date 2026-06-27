@@ -778,13 +778,15 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     save_results(session_id, "quality", quality_report)
 
     # === 6b. Structured card (config-gated, generic; clinical only — QA above) ===
-    from tasks.card import run_card_extraction
+    from tasks.card import run_card_extraction, has_card_extraction
     card = run_card_extraction(transcript_with_speakers, company_config, scenario)
     if card is not None:
         save_results(session_id, "card", card)
         logger.info(f"[{session_id}] Card extraction saved")
-    else:
-        # Переоценка под сценарий без карты не должна отдавать старую card.json.
+    elif not has_card_extraction(company_config, scenario):
+        # Для этого сценария карта НЕ сконфигурирована → убрать устаревшую card.json.
+        # NB: при сбое извлечения (карта нужна, но упала) has_card_extraction=True →
+        # старую card.json НЕ трогаем, чтобы транзиентная ошибка её не стёрла.
         delete_results(session_id, "card")
 
     # === 7. Auto-save speaker roles ===

@@ -567,7 +567,7 @@ async function renderCallDetail(id) {
         </div>` : ''}
         <div class="call-detail-meta">
           <h1 class="call-title">
-            <span id="callTitleText">${escapeHtml((meta.title || '').trim() || 'Сессия звонка')}</span>
+            <span id="callTitleText" data-title="${escapeHtml((meta.title || '').trim())}">${escapeHtml((meta.title || '').trim() || 'Сессия звонка')}</span>
             ${isAdmin() ? `<button type="button" class="btn-icon" id="callTitleEdit" title="Переименовать" onclick="editCallTitle('${id}')">✎</button>` : ''}
           </h1>
           <div class="meta-grid">
@@ -2645,7 +2645,7 @@ function editCallTitle(sessionId) {
   const span = document.getElementById('callTitleText');
   if (!span || span.dataset.editing) return;
   const editBtn = document.getElementById('callTitleEdit');
-  const current = span.textContent === 'Сессия звонка' ? '' : span.textContent;
+  const current = span.dataset.title || '';   // реальный title (не отображаемый sentinel)
   span.dataset.editing = '1';
   if (editBtn) editBtn.style.display = 'none';
 
@@ -2661,7 +2661,9 @@ function editCallTitle(sessionId) {
   const restore = (text) => {
     const s = document.createElement('span');
     s.id = 'callTitleText';
-    s.textContent = (text || '').trim() || 'Сессия звонка';
+    const t = (text || '').trim();
+    s.dataset.title = t;
+    s.textContent = t || 'Сессия звонка';
     input.replaceWith(s);
     if (editBtn) editBtn.style.display = '';
   };

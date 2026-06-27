@@ -51,6 +51,31 @@ def test_none_when_no_card():
     assert out is None
 
 
+def test_scenario_explicit_null_opts_out(monkeypatch):
+    # Явный card_extraction: null у сценария = отказ от карты, БЕЗ фолбэка на config.
+    called = {"n": 0}
+
+    def factory():
+        called["n"] += 1
+        raise RuntimeError("OpenAI не должен вызываться при card_extraction: null")
+    monkeypatch.setattr(card, "OpenAI", factory)
+    cfg = {"card_extraction": {"prompt": "CONFIG", "json_schema": {"type": "object"}}}
+    out = card.run_card_extraction([{"speaker": "A", "text": "hi"}], cfg, {"id": "s1", "card_extraction": None})
+    assert out is None
+    assert called["n"] == 0   # opt-out: OpenAI не тронут (нет фолбэка на config)
+
+
+def test_has_card_extraction():
+    cfg = {"card_extraction": {"prompt": "C", "json_schema": {"type": "object"}}}
+    # config-level есть, сценарий без ключа → есть
+    assert card.has_card_extraction(cfg, {"id": "s1"}) is True
+    assert card.has_card_extraction(cfg, None) is True
+    # сценарий явно отключил карту → нет (несмотря на config-level)
+    assert card.has_card_extraction(cfg, {"id": "s1", "card_extraction": None}) is False
+    # ни config, ни scenario → нет
+    assert card.has_card_extraction({}, {"id": "s1"}) is False
+
+
 def test_delete_results_removes_card(tmp_path, monkeypatch):
     from tasks import pipeline
     from tenancy.context import set_tenant_schema, reset_tenant_schema
