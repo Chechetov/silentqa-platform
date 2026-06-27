@@ -947,6 +947,13 @@ async function renderCallDetail(id) {
                  src="/api/sessions/${id}/audio"
                  style="width:100%; margin-bottom:16px; border-radius:8px;">
           </audio>
+          ${segments.length === 0 ? '' : `
+          <div class="transcript-search-box">
+            <input type="text" id="transcriptSearch" placeholder="Поиск по диалогу…" autocomplete="off">
+            <span class="transcript-search-count" id="transcriptSearchCount"></span>
+            <button type="button" class="btn-icon" id="transcriptSearchPrev" title="Предыдущее">↑</button>
+            <button type="button" class="btn-icon" id="transcriptSearchNext" title="Следующее">↓</button>
+          </div>`}
           <div class="transcript-container" id="transcriptContainer">
             ${segments.length === 0
               ? '<p style="color:var(--text-muted)">Транскрипт пуст</p>'
@@ -1022,6 +1029,8 @@ async function renderCallDetail(id) {
         }
       });
     }
+
+    initTranscriptSearch();
   } catch (err) {
     app.innerHTML = `
       <a href="#calls" class="back-link">
@@ -2558,6 +2567,76 @@ function renderDentalCard(card, label) {
       ${cl.visit_outcome ? `<p><b>Итог визита:</b> ${esc(cl.visit_outcome.result)} — ${esc(cl.visit_outcome.next_step || '—')}</p>` : ''}
       ${cl.summary ? `<blockquote>${esc(cl.summary)}</blockquote>` : ''}
     </div>`;
+}
+
+function initTranscriptSearch() {
+  const container = document.getElementById('transcriptContainer');
+  const input = document.getElementById('transcriptSearch');
+  const countEl = document.getElementById('transcriptSearchCount');
+  const prevBtn = document.getElementById('transcriptSearchPrev');
+  const nextBtn = document.getElementById('transcriptSearchNext');
+  if (!container || !input) return;
+
+  const texts = $$('.transcript-text', container);
+  texts.forEach((el) => { el.dataset.raw = el.textContent; });  // эагерный снимок исходника
+
+  let matches = [];
+  let cur = -1;
+  let timer = null;
+
+  const clearMarks = () => {
+    texts.forEach((el) => { el.textContent = el.dataset.raw; });  // textContent, НЕ innerHTML
+    matches = []; cur = -1;
+  };
+
+  const focusMatch = () => {
+    matches.forEach((m) => m.classList.remove('transcript-match--current'));
+    if (cur < 0 || cur >= matches.length) return;
+    const m = matches[cur];
+    m.classList.add('transcript-match--current');
+    m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  const run = (q) => {
+    clearMarks();
+    const needle = (q || '').trim().toLowerCase();
+    if (!needle) { countEl.textContent = ''; return; }
+    texts.forEach((el) => {
+      const raw = el.dataset.raw;
+      const low = raw.toLowerCase();
+      let i = low.indexOf(needle);
+      if (i === -1) return;
+      let out = '';
+      let pos = 0;
+      while (i !== -1) {
+        out += escapeHtml(raw.slice(pos, i));
+        out += '<mark class="transcript-match">' + escapeHtml(raw.slice(i, i + needle.length)) + '</mark>';
+        pos = i + needle.length;
+        i = low.indexOf(needle, pos);
+      }
+      out += escapeHtml(raw.slice(pos));
+      el.innerHTML = out;
+    });
+    matches = $$('.transcript-match', container);
+    countEl.textContent = matches.length ? `${matches.length} совпадений` : 'нет совпадений';
+    if (matches.length) { cur = 0; focusMatch(); }
+  };
+
+  const step = (delta) => {
+    if (!matches.length) return;
+    cur = (cur + delta + matches.length) % matches.length;
+    focusMatch();
+  };
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => run(input.value), 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+  });
+  if (prevBtn) prevBtn.addEventListener('click', () => step(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => step(1));
 }
 
 function editCallTitle(sessionId) {
