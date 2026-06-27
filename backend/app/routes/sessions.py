@@ -129,6 +129,9 @@ _SERVER_OWNED_METADATA = (
     # company_id/scenario_id — выбор конфига оценки принадлежит серверу
     # (берётся из shared.tenants.company_config_id), клиент подменить не может.
     "company_id", "scenario_id",
+    # title — кастомное имя звонка задаётся ТОЛЬКО через PATCH /title (admin-only),
+    # не при создании сессии клиентом.
+    "title",
 )
 
 # Seeded by migration 008 — applied by default to desktop-app recordings,
@@ -582,6 +585,41 @@ async def update_speaker_map(
 
     meta = dict(session.metadata_ or {})
     meta["speaker_map"] = {k: v.model_dump() for k, v in body.speaker_map.items()}
+    session.metadata_ = meta
+    await db.commit()
+    await db.refresh(session)
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(session, chunks_count or 0)
+
+
+class TitleUpdate(BaseModel):
+    title: str | None = None
+
+
+_TITLE_MAX_LEN = 200
+
+
+@router.patch("/{session_id}/title", response_model=SessionResponse,
+              dependencies=[Depends(require_admin)])
+async def update_session_title(
+    session_id: uuid.UUID,
+    body: TitleUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or clear a human-friendly custom title for a session (metadata.title)."""
+    session = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    meta = dict(session.metadata_ or {})
+    title = (body.title or "").strip()
+    if title:
+        meta["title"] = title[:_TITLE_MAX_LEN]
+    else:
+        meta.pop("title", None)
     session.metadata_ = meta
     await db.commit()
     await db.refresh(session)
