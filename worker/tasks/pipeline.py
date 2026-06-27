@@ -398,6 +398,12 @@ def save_results(session_id: str, key: str, data: dict | list):
     logger.info(f"Saved {key} → {output_file}")
 
 
+def delete_results(session_id: str, key: str) -> None:
+    """Удалить ранее сохранённый результат (если есть). Идемпотентно."""
+    results_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)
+    (results_dir / f"{key}.json").unlink(missing_ok=True)
+
+
 def _save_speaker_roles(session_id: str, speaker_roles: dict):
     """Save auto-detected speaker roles to session metadata (if no manual override exists)."""
     if not get_sync_db_url():
@@ -773,10 +779,13 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
 
     # === 6b. Structured card (config-gated, generic; clinical only — QA above) ===
     from tasks.card import run_card_extraction
-    card = run_card_extraction(transcript_with_speakers, company_config)
+    card = run_card_extraction(transcript_with_speakers, company_config, scenario)
     if card is not None:
         save_results(session_id, "card", card)
         logger.info(f"[{session_id}] Card extraction saved")
+    else:
+        # Переоценка под сценарий без карты не должна отдавать старую card.json.
+        delete_results(session_id, "card")
 
     # === 7. Auto-save speaker roles ===
     speaker_roles = quality_report.get("speaker_roles")

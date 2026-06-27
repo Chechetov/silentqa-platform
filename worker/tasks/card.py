@@ -25,8 +25,9 @@ def _flatten_transcript(transcript: list[dict]) -> str:
     return "\n".join(parts)
 
 
-def run_card_extraction(transcript: list[dict], company_config: dict) -> dict | None:
-    cfg = company_config.get("card_extraction")
+def run_card_extraction(transcript: list[dict], company_config: dict,
+                        scenario: dict | None = None) -> dict | None:
+    cfg = (scenario or {}).get("card_extraction") or company_config.get("card_extraction")
     if not cfg:
         return None
     flat = _flatten_transcript(transcript)
