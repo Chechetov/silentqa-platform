@@ -376,6 +376,7 @@ async function renderCalls(page = 0) {
           <thead>
             <tr>
               <th>Дата</th>
+              <th>Название</th>
               <th>Источник</th>
               <th>Шаблон</th>
               <th>Телефон</th>
@@ -387,10 +388,11 @@ async function renderCalls(page = 0) {
           </thead>
           <tbody id="callsBody">
             ${items.length === 0
-              ? '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">Нет данных</td></tr>'
+              ? '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">Нет данных</td></tr>'
               : items.map(s => `
                 <tr data-id="${s.id}" onclick="navigate('call/${s.id}')">
                   <td>${formatDate(s.created_at)}</td>
+                  <td class="call-name-cell">${escapeHtml((s.metadata && s.metadata.title) || '--')}</td>
                   <td>${formatSource(s.metadata)}</td>
                   <td>${formatTemplate(s.metadata)}</td>
                   <td>${escapeHtml((s.metadata && s.metadata.phone) || '--')}</td>
@@ -562,7 +564,10 @@ async function renderCallDetail(id) {
           <div class="score-label">/ 10</div>
         </div>` : ''}
         <div class="call-detail-meta">
-          <h1>Сессия звонка</h1>
+          <h1 class="call-title">
+            <span id="callTitleText">${escapeHtml((meta.title || '').trim() || 'Сессия звонка')}</span>
+            ${isAdmin() ? `<button type="button" class="btn-icon" id="callTitleEdit" title="Переименовать" onclick="editCallTitle('${id}')">✎</button>` : ''}
+          </h1>
           <div class="meta-grid">
             <div class="meta-item">
               <div class="meta-label">Дата</div>
@@ -2553,6 +2558,52 @@ function renderDentalCard(card, label) {
       ${cl.visit_outcome ? `<p><b>Итог визита:</b> ${esc(cl.visit_outcome.result)} — ${esc(cl.visit_outcome.next_step || '—')}</p>` : ''}
       ${cl.summary ? `<blockquote>${esc(cl.summary)}</blockquote>` : ''}
     </div>`;
+}
+
+function editCallTitle(sessionId) {
+  const span = document.getElementById('callTitleText');
+  if (!span || span.dataset.editing) return;
+  const editBtn = document.getElementById('callTitleEdit');
+  const current = span.textContent === 'Сессия звонка' ? '' : span.textContent;
+  span.dataset.editing = '1';
+  if (editBtn) editBtn.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 200;
+  input.value = current;
+  input.className = 'call-title-input';
+  span.replaceWith(input);
+  input.focus();
+
+  let done = false;
+  const restore = (text) => {
+    const s = document.createElement('span');
+    s.id = 'callTitleText';
+    s.textContent = (text || '').trim() || 'Сессия звонка';
+    input.replaceWith(s);
+    if (editBtn) editBtn.style.display = '';
+  };
+  const save = async () => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    try {
+      await api(`/api/sessions/${sessionId}/title`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: value }),
+      });
+      restore(value);
+    } catch (err) {
+      showToast('Не удалось переименовать: ' + err.message, 'error');
+      restore(current);
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    else if (e.key === 'Escape') { done = true; restore(current); }
+  });
+  input.addEventListener('blur', save);
 }
 
 async function reprocessSession(sessionId) {

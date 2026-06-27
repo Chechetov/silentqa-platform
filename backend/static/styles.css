@@ -1833,3 +1833,11 @@ tbody td {
     gap: 4px;
   }
 }
+
+/* Нейминг звонка (карточка + список) */
+.call-title { display: flex; align-items: center; gap: 10px; }
+.call-title-input { font-size: inherit; padding: 4px 8px; max-width: 480px; }
+.call-name-cell { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-icon { background: transparent; border: 1px solid var(--border); color: var(--text-secondary);
+            border-radius: 6px; cursor: pointer; padding: 2px 8px; line-height: 1.4; }
+.btn-icon:hover { background: var(--bg-card-hover); }
