@@ -320,6 +320,9 @@ class ReprocessBody(BaseModel):
     # профилю оценки сценария (см. routes/eval_profiles.py). С шаблоном —
     # как раньше: шаблон переопределяет протокол/критерии.
     template_id: uuid.UUID | None = None
+    # None → дефолтный сценарий тенанта. Иначе — переоценка под выбранный
+    # сценарий company-config (валидируется valid_scenario; невалид → 400).
+    scenario_id: str | None = None
 
 
 @router.post("/{session_id}/reprocess", response_model=SessionResponse,
@@ -349,6 +352,18 @@ async def reprocess_session(
         meta["template_id"] = str(body.template_id)
     else:
         meta.pop("template_id", None)   # plain re-eval → no template override
+
+    config: dict | None = None
+    if body.scenario_id is not None:
+        row = (await db.execute(
+            text("SELECT company_config_id FROM shared.tenants WHERE slug = :slug"),
+            {"slug": require_tenant_slug()},
+        )).first()
+        cfg_id = row[0] if row else None
+        if not valid_scenario(cfg_id, body.scenario_id):
+            raise HTTPException(status_code=400, detail="Unknown scenario")
+        config = {"scenario_id": body.scenario_id}
+
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
     await db.commit()
@@ -362,7 +377,7 @@ async def reprocess_session(
         lambda: celery_app.send_task(
             "pipeline.process_session",
             args=[str(session_id)],
-            kwargs={"tenant_schema": tenant_schema},
+            kwargs={"tenant_schema": tenant_schema, "config": config},
             queue="transcription",
         ),
     )
