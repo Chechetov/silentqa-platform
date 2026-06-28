@@ -257,7 +257,7 @@ function scoreColor(score) {
 
 function barColor(score, max = 10) {
   const pct = score / max;
-  if (pct >= 0.7) return 'var(--accent)';
+  if (pct >= 0.7) return 'var(--good)';
   if (pct >= 0.4) return 'var(--warning)';
   return 'var(--danger)';
 }
@@ -1095,7 +1095,7 @@ async function renderManagers() {
                 <tr>
                   <td><strong>${escapeHtml(m.name)}</strong></td>
                   <td>${m.total_calls}</td>
-                  <td>${m.avg_score ? `<span style="color:${m.avg_score >= 7 ? 'var(--accent)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
+                  <td>${m.avg_score ? `<span style="color:${m.avg_score >= 7 ? 'var(--good)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
                   <td>${formatDate(m.last_call_date)}</td>
                 </tr>
               `).join('')}

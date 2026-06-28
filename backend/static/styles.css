@@ -139,8 +139,8 @@ body {
 }
 
 .health-indicator.online .health-dot {
-  background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
+  background: var(--good);
+  box-shadow: 0 0 6px var(--good);
 }
 
 .health-indicator.offline .health-dot {
@@ -504,15 +504,15 @@ tbody td {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  border: 4px solid var(--accent);
-  background: var(--accent-dim);
+  border: 4px solid var(--good);
+  background: rgba(132, 168, 108, 0.15);
   flex-shrink: 0;
 }
 
 .score-circle .score-value {
   font-size: 36px;
   font-weight: 700;
-  color: var(--accent);
+  color: var(--good);
   line-height: 1;
 }
 
@@ -673,7 +673,7 @@ tbody td {
   opacity: 0.8;
 }
 
-.sentiment-positive { background: var(--accent); }
+.sentiment-positive { background: var(--good); }
 .sentiment-negative { background: var(--danger); }
 .sentiment-neutral { background: var(--text-muted); }
 
@@ -1072,7 +1072,7 @@ tbody td {
   opacity: 1;
 }
 
-.toast.success { border-left: 3px solid var(--accent); }
+.toast.success { border-left: 3px solid var(--good); }
 .toast.error { border-left: 3px solid var(--danger); }
 
 /* ---- Company Card List ---- */
@@ -1159,8 +1159,8 @@ tbody td {
 }
 
 .upload-step.success {
-  color: var(--accent);
-  border-left: 3px solid var(--accent);
+  color: var(--good);
+  border-left: 3px solid var(--good);
 }
 
 .upload-step.error {
