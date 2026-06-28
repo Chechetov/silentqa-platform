@@ -662,7 +662,7 @@ async function renderCallDetail(id) {
     if (callClassification) {
       const classColors = {
         brushoff_short: '#f85149', brushoff_with_attempt: '#d29922',
-        partial: '#58a6ff', productive: '#4CAF50', meeting_scheduled: '#238636'
+        partial: '#7ea7c4', productive: '#84a86c', meeting_scheduled: '#d97757'
       };
       const classLabels = {
         brushoff_short: 'Brush-off (короткий)', brushoff_with_attempt: 'Brush-off (с попыткой)',
@@ -690,7 +690,7 @@ async function renderCallDetail(id) {
     const followThrough = analysis && analysis.previous_recommendations_follow_through;
     if (followThrough && followThrough.total_recommendations > 0) {
       const icons = {yes: '✅', partial: '~', no: '❌'};
-      const colors = {yes: '#4CAF50', partial: '#d29922', no: '#f85149'};
+      const colors = {yes: '#84a86c', partial: '#d29922', no: '#f85149'};
       const items = (followThrough.items || []).map(it => {
         const icon = icons[it.executed] || '—';
         const color = colors[it.executed] || 'var(--text-muted)';
@@ -769,7 +769,7 @@ async function renderCallDetail(id) {
     const protocolChecklist = analysis && analysis.protocol_checklist;
     if (protocolChecklist && protocolChecklist.length > 0) {
       const statusIcons = {completed: '✓', attempted: '~', not_applicable: '—', not_reached: '✗'};
-      const statusColors = {completed: '#4CAF50', attempted: '#d29922', not_applicable: 'var(--text-muted)', not_reached: '#f85149'};
+      const statusColors = {completed: '#84a86c', attempted: '#d29922', not_applicable: 'var(--text-muted)', not_reached: '#f85149'};
       const statusLabels = {completed: 'Выполнено', attempted: 'Попытка', not_applicable: 'Не применимо', not_reached: 'Не дошли'};
 
       // Calculate progress
@@ -823,11 +823,11 @@ async function renderCallDetail(id) {
             Возражения клиента (${objections.length})
           </h3>
           ${objections.map(obj => `
-            <div style="border-left:3px solid ${obj.resolved ? '#4CAF50' : '#f85149'};padding:8px 12px;margin-bottom:8px;background:var(--bg-secondary);border-radius:0 6px 6px 0">
+            <div style="border-left:3px solid ${obj.resolved ? '#84a86c' : '#f85149'};padding:8px 12px;margin-bottom:8px;background:var(--bg-secondary);border-radius:0 6px 6px 0">
               <div style="font-weight:500;margin-bottom:4px">"${escapeHtml(obj.text)}"</div>
               <div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">
                 <span class="badge" style="font-size:11px;padding:2px 6px">${escapeHtml(obj.category)}</span>
-                ${obj.resolved ? '<span style="color:#4CAF50;margin-left:8px">Снято</span>' : '<span style="color:#f85149;margin-left:8px">Не снято</span>'}
+                ${obj.resolved ? '<span style="color:#84a86c;margin-left:8px">Снято</span>' : '<span style="color:#f85149;margin-left:8px">Не снято</span>'}
                 <span style="margin-left:8px">Отработка: ${obj.handling_quality}/10</span>
               </div>
               <div style="font-size:13px;color:var(--text-muted)">${escapeHtml(obj.broker_response)}</div>
@@ -851,7 +851,7 @@ async function renderCallDetail(id) {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
             ${generalChecks.map(check => `
               <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px">
-                <span style="color:${check.met ? '#4CAF50' : '#f85149'};font-weight:700">${check.met ? '✓' : '✗'}</span>
+                <span style="color:${check.met ? '#84a86c' : '#f85149'};font-weight:700">${check.met ? '✓' : '✗'}</span>
                 <span>${escapeHtml(check.name)}</span>
                 ${check.count != null ? `<span style="color:var(--text-muted);font-size:11px">(${check.count})</span>` : ''}
               </div>
@@ -1318,8 +1318,8 @@ function renderScenarioCard(scenario, index) {
   const s = scenario;
   const criteria = s.criteria || [];
   const typeBadge = s.type === 'in_person'
-    ? '<span class="badge" style="background:rgba(163,113,247,0.15);color:#a371f7;font-size:10px">Очно</span>'
-    : '<span class="badge" style="background:rgba(88,166,255,0.15);color:#58a6ff;font-size:10px">Звонок</span>';
+    ? '<span class="badge" style="background:rgba(181,138,166,0.15);color:#b58aa6;font-size:10px">Очно</span>'
+    : '<span class="badge" style="background:rgba(126,167,196,0.15);color:#7ea7c4;font-size:10px">Звонок</span>';
 
   return `
     <div class="scenario-card" data-scenario-index="${index}">
@@ -1894,8 +1894,8 @@ async function renderReprocess() {
         return `<div style="margin-top:8px"><strong style="color:${color}">${title} (${items.length}):</strong><ul>${listItems}</ul></div>`;
       };
       resultEl.innerHTML =
-        rows('В очередь поставлено', data.queued, '#4CAF50') +
-        rows('Уже были обработаны', data.already_processed, '#58a6ff') +
+        rows('В очередь поставлено', data.queued, '#84a86c') +
+        rows('Уже были обработаны', data.already_processed, '#7ea7c4') +
         rows('Без записи (скипнуто)', data.missing_recording, '#d29922');
     } catch (err) {
       resultEl.innerHTML = `<div style="color:#f85149">Сбой: ${escapeHtml(err.message)}</div>`;
@@ -2834,7 +2834,7 @@ function _evalHistory(history) {
   return history.map(v => `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border,#eee)">
       <div><b>v${v.version}</b> · ${escapeHtml(v.source)} · ${escapeHtml(formatDate(v.created_at))}
-        ${v.is_active ? '<span style="background:#2e7d32;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
+        ${v.is_active ? '<span style="background:#5f7d4c;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
       <div style="display:flex;gap:6px">
         ${v.is_active ? '' : `<button class="btn btn-secondary btn-sm" onclick="evalActivate('${v.id}')">Активировать</button>`}
         ${v.is_active ? '' : `<button class="btn btn-danger btn-sm" onclick="evalDeleteVersion('${v.id}')">Удалить</button>`}
