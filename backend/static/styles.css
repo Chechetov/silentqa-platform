@@ -1845,7 +1845,17 @@ tbody td {
 
 /* Поиск по диалогу (транскрипт) */
 .transcript-search-box { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
-.transcript-search-box input { flex: 1; }
+.transcript-search-box input {
+  flex: 1;
+  padding: 8px 12px;
+  background: var(--bg-input);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-primary);
+  font-size: 13px;
+  outline: none;
+}
+.transcript-search-box input:focus { border-color: var(--accent); }
 .transcript-search-count { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 mark.transcript-match { background: rgba(210,153,34,0.30); color: inherit; border-radius: 2px; }
 mark.transcript-match--current { background: rgba(210,153,34,0.65); box-shadow: 0 0 0 2px rgba(210,153,34,0.5); }
