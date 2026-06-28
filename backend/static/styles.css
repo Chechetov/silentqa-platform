@@ -9,22 +9,23 @@
 }
 
 :root {
-  --bg-primary: #0d1117;
-  --bg-secondary: #161b22;
-  --bg-card: #1c2128;
-  --bg-card-hover: #21262d;
-  --bg-input: #0d1117;
-  --border: #30363d;
-  --border-light: #21262d;
-  --text-primary: #e6edf3;
-  --text-secondary: #8b949e;
-  --text-muted: #484f58;
-  --accent: #4CAF50;
-  --accent-hover: #45a049;
-  --accent-dim: rgba(76, 175, 80, 0.15);
-  --danger: #f85149;
-  --warning: #d29922;
-  --info: #58a6ff;
+  --bg-primary: #191816;
+  --bg-secondary: #201e1b;
+  --bg-card: #252220;
+  --bg-card-hover: #2e2a27;
+  --bg-input: #191816;
+  --border: #393431;
+  --border-light: #2a2622;
+  --text-primary: #f4f1ea;
+  --text-secondary: #b2a99b;
+  --text-muted: #746b5e;
+  --accent: #d97757;
+  --accent-hover: #c4623f;
+  --accent-dim: rgba(217, 119, 87, 0.15);
+  --good: #84a86c;
+  --danger: #d64a3f;
+  --warning: #d99a3c;
+  --info: #7ea7c4;
   --sidebar-width: 220px;
   --radius: 8px;
   --radius-sm: 4px;
@@ -436,8 +437,8 @@ tbody td {
 }
 
 .badge-completed {
-  background: rgba(76, 175, 80, 0.15);
-  color: #4CAF50;
+  background: rgba(132, 168, 108, 0.15);
+  color: var(--good);
 }
 
 .badge-processing {
@@ -447,8 +448,8 @@ tbody td {
 
 .badge-created,
 .badge-uploading {
-  background: rgba(88, 166, 255, 0.15);
-  color: #58a6ff;
+  background: rgba(126, 167, 196, 0.15);
+  color: var(--info);
 }
 
 .badge-failed {
@@ -601,8 +602,8 @@ tbody td {
 }
 
 .transcript-line--active {
-  background: rgba(88,166,255,0.08);
-  border-left: 2px solid #58a6ff;
+  background: rgba(217,119,87,0.10);
+  border-left: 2px solid var(--accent);
 }
 
 .transcript-line:last-child {
@@ -622,8 +623,8 @@ tbody td {
 }
 
 .speaker-0 {
-  background: rgba(88, 166, 255, 0.15);
-  color: #58a6ff;
+  background: rgba(217, 119, 87, 0.15);
+  color: #d97757;
 }
 
 .speaker-1 {
@@ -632,8 +633,8 @@ tbody td {
 }
 
 .speaker-2 {
-  background: rgba(163, 113, 247, 0.15);
-  color: #a371f7;
+  background: rgba(181, 138, 166, 0.15);
+  color: #b58aa6;
 }
 
 .transcript-text {
@@ -1531,8 +1532,8 @@ tbody td {
   letter-spacing: 0.4px;
 }
 
-.tpl-kind-extraction { background: rgba(88, 166, 255, 0.15); color: var(--info); }
-.tpl-kind-evaluation { background: rgba(76, 175, 80, 0.18); color: var(--accent); }
+.tpl-kind-extraction { background: rgba(126, 167, 196, 0.15); color: var(--info); }
+.tpl-kind-evaluation { background: rgba(217, 119, 87, 0.18); color: var(--accent); }
 
 .icon-btn {
   display: inline-flex;
@@ -1752,9 +1753,9 @@ tbody td {
 }
 
 .cx-chip--yes {
-  border-color: rgba(76, 175, 80, 0.4);
-  color: var(--accent);
-  background: rgba(76, 175, 80, 0.08);
+  border-color: rgba(132, 168, 108, 0.4);
+  color: var(--good);
+  background: rgba(132, 168, 108, 0.08);
 }
 
 .cx-chip--yes::before {
@@ -1775,8 +1776,8 @@ tbody td {
 }
 
 .cx-badge--yes {
-  color: var(--accent);
-  background: rgba(76, 175, 80, 0.12);
+  color: var(--good);
+  background: rgba(132, 168, 108, 0.12);
 }
 
 .cx-badge--no {
