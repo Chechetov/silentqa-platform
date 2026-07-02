@@ -1,4 +1,4 @@
-import subprocess
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,10 +7,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → te
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
 from app.config import settings
+from app.migrate import check as migrate_check
 from app.routes import (
     chunks, sessions, companies, transcripts, analysis, managers,
     amocrm, templates, complexes, knowledge, auth, user_auth, tenancy_check, platform_auth,
@@ -20,17 +22,20 @@ from app.routes import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run the two-track migration runner (shared registry first, then the
-    # tenant track per active schema). Fresh process: env.py's asyncio.run
-    # would clash with the already-running loop here, hence subprocess.
-    result = subprocess.run(
-        [sys.executable, "-m", "app.migrate"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        import logging
-        logging.getLogger(__name__).error(f"Alembic migration failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
-        raise RuntimeError(f"Alembic migration failed: {result.stderr}")
+    # Миграции применяются на ДЕПЛОЕ (scripts/deploy_prod.sh, run.sh,
+    # staging ExecStartPre), не на старте: упавшая миграция одного тенанта
+    # не должна ронять бэкенд для всех. Здесь — только быстрая read-only
+    # сверка head'ов с CRITICAL-логом.
+    try:
+        mismatched = await run_in_threadpool(migrate_check)
+    except Exception:
+        logging.getLogger(__name__).critical(
+            "migrate check failed (БД недоступна?)", exc_info=True)
+    else:
+        if mismatched:
+            logging.getLogger(__name__).critical(
+                "Alembic heads расходятся: %s — запусти `python -m app.migrate`",
+                ", ".join(mismatched))
     yield
 
 
@@ -80,6 +85,28 @@ app.include_router(eval_profiles.router)
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+from sqlalchemy import text
+
+from app.database import engine
+
+
+async def _db_ping() -> None:
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+@app.get("/health/ready")
+async def health_ready():
+    # Readiness для deploy_prod.sh: процесс жив И БД доступна.
+    # /health остаётся статическим liveness.
+    try:
+        await _db_ping()
+    except Exception:
+        logging.getLogger(__name__).warning("readiness: БД недоступна", exc_info=True)
+        return JSONResponse({"status": "degraded", "db": "unreachable"}, status_code=503)
+    return {"status": "ready"}
 
 
 from tenancy.context import get_tenant_slug as _get_tenant_slug
