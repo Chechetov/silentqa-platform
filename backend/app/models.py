@@ -30,6 +30,10 @@ class Session(Base):
     )
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # Момент фактического старта стадии 1 в воркере (update_session_status "processing").
+    # Бэкенд сбрасывает в NULL при постановке в processing; воркер ставит NOW() на старте.
+    # Опора watchdog-правил 3a/3b — НЕ created_at (reprocess/ожидание слота не под нож).
+    processing_started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     duration_seconds: Mapped[float | None] = mapped_column(Float, nullable=True)
     file_size_bytes: Mapped[int | None] = mapped_column(Integer, nullable=True)
     metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)

@@ -366,6 +366,9 @@ async def reprocess_session(
 
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
+    # Сброс метки старта: воркер проставит NOW() на фактическом старте стадии.
+    # Иначе watchdog 3a убьёт reprocess по прошлой (древней) метке в ожидании слота.
+    sess.processing_started_at = None
     await db.commit()
     await db.refresh(sess)
 
@@ -479,6 +482,8 @@ async def link_lead(
     meta["lead_id"] = new_lead_id
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
+    # Сброс метки старта (см. reprocess): постановка в очередь ≠ старт стадии.
+    sess.processing_started_at = None
     await db.commit()
     await db.refresh(sess)
 
@@ -564,6 +569,9 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
             config = {"scenario_id": scen}
 
     session.status = SessionStatus.processing
+    # Сброс метки старта (см. reprocess): finish ставит processing ДО send_task,
+    # воркер проставит NOW() на фактическом старте стадии.
+    session.processing_started_at = None
     await db.commit()
     await db.refresh(session)
 

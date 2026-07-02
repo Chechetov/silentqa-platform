@@ -6,11 +6,17 @@ If the client crashes / loses network / the laptop sleeps mid-call, the session
 sits in `uploading` (or `created`) forever — the chunks we already received
 never get processed and the operator sees a permanent "uploading" badge.
 
-Two recovery rules:
+Recovery rules:
   1. Has at least one chunk AND last chunk uploaded > UPLOADING_STALE_MIN ago
      → kick the same pipeline that /finish would have, on whatever audio we have.
   2. No chunks AND created > CREATED_STALE_MIN ago
      → mark `failed`. Nothing to process.
+  3a. status=processing AND processing_started_at set > PROCESSING_STALE_HOURS ago
+     → mark `failed`. Stage started but the worker died / task got lost. Keyed on
+     the worker's start mark, NOT created_at, so reprocess of old calls and
+     fairness-slot waiting don't get killed.
+  3b. status=processing AND processing_started_at IS NULL and created > ENQUEUED_STALE_HOURS
+     → mark `failed`. Enqueued but the stage never started (task lost pre-start).
 """
 import logging
 import os
@@ -25,6 +31,14 @@ logger = logging.getLogger(__name__)
 
 UPLOADING_STALE_MIN = int(os.getenv("SESSION_UPLOADING_STALE_MIN", "15"))
 CREATED_STALE_MIN = int(os.getenv("SESSION_CREATED_STALE_MIN", "60"))
+# Rule 3a: стадия стартовала (processing_started_at проставлен воркером) и висит
+# дольше N часов — воркер умер / задача потерялась. Порог щедрый: > hard limit
+# 90 мин + ретраи analyze. НЕ по created_at: reprocess старых звонков и
+# ожидание fairness-слота не должны попадать под нож.
+PROCESSING_STALE_HOURS = int(os.getenv("SESSION_PROCESSING_STALE_HOURS", "6"))
+# Rule 3b: в processing, но стадия так и не стартовала (NULL) — задача потеряна
+# до старта. Порог суточный: ожидание слота при залпе легитимно длится часами.
+ENQUEUED_STALE_HOURS = int(os.getenv("SESSION_ENQUEUED_STALE_HOURS", "24"))
 
 
 _get_sync_db_url = get_sync_db_url
@@ -34,10 +48,12 @@ def _sweep_for_current_tenant():
     """Find stuck desktop-app sessions and either finalize or fail them."""
     if not _get_sync_db_url():
         logger.warning("DATABASE_URL not set, watchdog skipped")
-        return {"finalized": 0, "failed": 0}
+        return {"finalized": 0, "failed": 0, "stale_processing": 0, "stale_enqueued": 0}
 
     finalized: list[str] = []
     failed: list[str] = []
+    stale_processing: list[str] = []
+    stale_enqueued: list[str] = []
 
     try:
         conn = tenant_connect()
@@ -91,10 +107,39 @@ def _sweep_for_current_tenant():
                     )
                     if cur.rowcount:
                         failed.append(sid)
+
+                # 3a. Стадия стартовала и висит > N часов → failed
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'failed', finished_at = %s
+                    WHERE status = 'processing'
+                      AND processing_started_at IS NOT NULL
+                      AND processing_started_at < NOW() - (%s || ' hours')::interval
+                    RETURNING id::text
+                    """,
+                    (now, PROCESSING_STALE_HOURS),
+                )
+                stale_processing = [r[0] for r in cur.fetchall()]
+
+                # 3b. Поставлена в обработку, но стадия не стартовала > N часов → failed
+                cur.execute(
+                    """
+                    UPDATE sessions
+                    SET status = 'failed', finished_at = %s
+                    WHERE status = 'processing'
+                      AND processing_started_at IS NULL
+                      AND created_at < NOW() - (%s || ' hours')::interval
+                    RETURNING id::text
+                    """,
+                    (now, ENQUEUED_STALE_HOURS),
+                )
+                stale_enqueued = [r[0] for r in cur.fetchall()]
         conn.close()
     except Exception:
         logger.exception("Watchdog DB sweep failed")
-        return {"finalized": 0, "failed": 0, "error": True}
+        return {"finalized": 0, "failed": 0, "stale_processing": 0,
+                "stale_enqueued": 0, "error": True}
 
     # Queue pipeline tasks AFTER the DB transaction committed.
     for sid in finalized:
@@ -112,7 +157,24 @@ def _sweep_for_current_tenant():
     for sid in failed:
         logger.warning("[watchdog] failed empty session %s (no chunks)", sid)
 
-    return {"finalized": len(finalized), "failed": len(failed)}
+    for sid in stale_processing:
+        logger.warning(
+            "[watchdog] failed stale processing session %s (started >%sh ago)",
+            sid, PROCESSING_STALE_HOURS,
+        )
+
+    for sid in stale_enqueued:
+        logger.warning(
+            "[watchdog] failed stuck-enqueued session %s (never started >%sh)",
+            sid, ENQUEUED_STALE_HOURS,
+        )
+
+    return {
+        "finalized": len(finalized),
+        "failed": len(failed),
+        "stale_processing": len(stale_processing),
+        "stale_enqueued": len(stale_enqueued),
+    }
 
 
 @app.task(name="session_watchdog.sweep_stuck_sessions")

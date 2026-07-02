@@ -155,6 +155,12 @@ def update_session_status(session_id: str, status: str, **kwargs):
     sets = ["status = %s"]
     values = [status]
 
+    # Метка фактического старта стадии 1 — опора watchdog-правил 3a/3b
+    # (НЕ created_at). Ставим только при переходе в processing; на прочих
+    # статусах колонку не трогаем. Бэкенд сбрасывает её в NULL при постановке.
+    if status == "processing":
+        sets.append("processing_started_at = NOW()")
+
     for key, value in kwargs.items():
         sets.append(f"{key} = %s")
         values.append(value)
