@@ -582,7 +582,7 @@ curl -s -H "Host: stagetest.staging.silentqa.com" -H "X-API-Key: <ключ stage
 
 Полный литерал пароля живёт не только в расширениях: `INSTRUCTIONS.md:32`, `docs/superpowers/specs/2026-06-24-domain-artifacts-audit.md:64`, `docs/superpowers/specs/2026-03-21-multi-platform-recorder-prompt.md:65`. Заменить в этих трёх местах литерал на `rogov2025***` (git-историю лечит только отзыв пароля — см. «Вне scope», — но держать его в рабочем дереве незачем).
 
-Run: `git grep -n "rogov2025secure"`
+Run: `git grep -n "rogov2025s[e]cure"`
 Expected: пусто.
 
 - [ ] **Step 6: Commit**
@@ -602,7 +602,7 @@ git commit -m "docs: инструкция download сверена с settings-UI
 
 - `node --test extension/tests/` зелёный; `scripts/sync_yandex_extension.sh --check` зелёный; CI-джоба `clients` зелёная.
 - `grep -rn "rogov\|automate-it\|Basic\|btoa" extension/ extension-yandex/ --include='*.js' --include='*.html' --include='*.json'` — ноль совпадений, кроме миграционного `remove(["authUsername", "authPassword"])`.
-- `git grep -n "rogov2025secure"` по всему репо — пусто (маскированные `rogov2025***` в доках допустимы; полный литерал остаётся только в git-истории — лечится отзывом пароля на стороне старого realestate-деплоя).
+- `git grep -n "rogov2025s[e]cure"` по всему репо — пусто (маскированные `rogov2025***` в доках допустимы; полный литерал остаётся только в git-истории — лечится отзывом пароля на стороне старого realestate-деплоя).
 - Смоук Task 6: звонок из расширения дошёл до дашборда стейджинг-тенанта с правильным `employee`.
 
 ## Вне scope (сознательно)
