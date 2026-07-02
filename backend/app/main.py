@@ -36,11 +36,13 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="Meeting Recorder", version="1.0.0", lifespan=lifespan)
 
-# CORS
+# CORS: список origin'ов из настроек. Дефолт "*" — расширения и десктоп
+# ходят с origin chrome-extension://… / file://; сужать только вместе
+# с ревизией клиентов записи (план 2/3).
 origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
