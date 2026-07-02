@@ -69,8 +69,9 @@ alembic -c alembic_shared.ini upgrade head
 alembic -c alembic.ini revision -m "msg"
 alembic -c alembic.ini -x tenant_schema=t_acme upgrade head
 
-# Canonical runner: shared first, then EVERY active tenant. Idempotent. Runs automatically on backend startup.
+# Canonical runner: shared first, then EVERY active tenant. Idempotent. A deploy step (run.sh / deploy_prod.sh / staging ExecStartPre) — backend startup only runs --check (see below).
 python -m app.migrate
+python -m app.migrate --check   # read-only: какие схемы отстают от head (exit 1 при дрейфе)
 
 # Provision a new tenant: CREATE SCHEMA t_<slug>, INSERT shared.tenants, migrate it, seed admin (argon2), mint sqa_ API key
 python -m app.provision_tenant <slug> --name "Acme" --admin-email a@b.com
@@ -79,7 +80,10 @@ python -m app.provision_tenant realestate --seed-only      # for the pre-existin
 python -m app.platform_admin   # bootstrap a platform (cross-tenant) admin
 ```
 
-Backend startup runs `python -m app.migrate` in its lifespan (`backend/app/main.py:21-34`), so **a reachable Postgres is required to start the server** even though tests don't need one.
+Backend startup no longer migrates: the lifespan only runs a read-only
+`python -m app.migrate --check` head-comparison and logs CRITICAL on drift
+(it does not crash). Migrations are a deploy step: `run.sh` (local),
+`scripts/deploy_prod.sh` (prod), staging unit's `ExecStartPre`.
 
 ### Desktop app (`cd desktop-app`)
 
@@ -161,7 +165,6 @@ No bundler anywhere — raw HTML/JS/CSS served statically. Dashboard `index.html
 
 ## Gotchas & known drift
 
-- **`openai` is missing from `worker/requirements.txt`.** Quality scoring imports and calls `openai` (GPT-5.4), but only `anthropic` is listed (with a stale comment). Add `openai` if setting up a fresh worker env.
 - **Extension + desktop hardcode `rogov.automate-it.fun` + Basic-auth** (`extension/popup.js`), predating the SilentQA per-tenant API-key model that the admin SPA and `/download` assume. The recording path itself supports both `Authorization: Basic` and `X-API-Key`.
 - **AmoCRM integration is realestate-only** in Phase 1 (Beat polling, CRM writeback). Don't assume it applies to new tenants.
 - When adding a table, write the migration in the **tenant** tree (`alembic.ini`) unless it's genuinely platform-wide (then `alembic_shared.ini`), and apply it with `python -m app.migrate` so all tenants get it.
