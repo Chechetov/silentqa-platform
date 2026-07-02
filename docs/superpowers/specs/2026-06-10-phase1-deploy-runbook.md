@@ -170,8 +170,12 @@ git reset --hard <SHA из лога деплоя> && systemctl restart silentqa-
 ## io-воркер `analysis`: acks_late и редкий дубль AmoCRM-заметки
 
 У `pipeline.analyze_session` (очередь `analysis`, юнит `silentqa-worker-io`)
-`acks_late=true`: при жёсткой смерти io-воркера задача переедет к другому
-воркеру. В узком окне между созданием AmoCRM-заметки и записью `amo_note_id`
+`acks_late=true`: при жёсткой смерти io-воркера задача НЕ теряется, но
+восстаёт ТОЛЬКО по visibility_timeout Redis-брокера (~1 час; рестарт воркера
+unacked-сообщение не восстанавливает — проверено смоуком 2026-07-02). До этого
+сессия висит в processing; страховка — watchdog-правило 3a (6ч). Занижать
+visibility_timeout не надо: опция глобальная, значение ниже длительности
+analyze-прогона даст конкурентный дубль задачи. В узком окне между созданием AmoCRM-заметки и записью `amo_note_id`
 в метаданные сессии возможен редкий дубль заметки (только AmoCRM-тенанты).
 При жалобе клиента на дубль — проверять журнал `silentqa-worker-io` на этот
 момент (`journalctl -u silentqa-worker-io`).

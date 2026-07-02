@@ -935,7 +935,7 @@ git commit -m "ops(worker): очередь analysis — отдельный io-в
 
 - [ ] **Step 2: Смоук отказоустойчивости**
 
-1. Запустить обработку файла и в момент analyze-стадии `systemctl kill -s KILL silentqa-staging-worker-io` → `systemctl start` — у `analyze_session` `acks_late=True`: задача ре-доставится (при рестарте воркера или после visibility_timeout брокера, деф. 1ч) и, будучи идемпотентной, добежит до `completed`; страховка сверху — watchdog-правило 3a. Фактическое время ре-доставки зафиксировать в ранбуке.
+1. Запустить обработку файла и в момент analyze-стадии `systemctl kill -s KILL silentqa-staging-worker-io` → `systemctl start` — у `analyze_session` `acks_late=True`: задача ре-доставится ТОЛЬКО по visibility_timeout Redis-брокера (деф. ~1ч; рестарт воркера unacked-сообщение НЕ восстанавливает — подтверждено смоуком 2026-07-02) и, будучи идемпотентной, добежит до `completed`; страховка сверху — watchdog-правило 3a. Занижать visibility_timeout НЕ надо: это глобальная опция брокера, и значение ниже длительности analyze-прогона даст конкурентный дубль задачи.
 2. Короткий файл (<20 сек) → сессия завершается стадией 1 со `skip_reason=too_short`, в analysis-очередь ничего не падает (проверить `journalctl -u silentqa-staging-worker-io`).
 3. Залповая загрузка 5 файлов → в `journalctl` видно слот-ретраи (`Retry in 60s`) и то, что одновременно в работе не больше `TENANT_MAX_CONCURRENT=2` стадий-1 этого тенанта.
 4. Переоценка старого звонка: сессия с `created_at` старше 6ч (подправить в БД при необходимости) → reprocess из дашборда → доходит до `completed`, watchdog её НЕ пометил `failed` (3a ключуется по `processing_started_at`, 3b не сработал: сброс в NULL + быстрый старт стадии).
