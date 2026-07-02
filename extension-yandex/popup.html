@@ -121,6 +121,20 @@
       padding: 8px; background: rgba(239,68,68,0.1);
       border-radius: 6px; word-break: break-word;
     }
+    .settings { margin-top: 12px; border-top: 1px solid #374151; padding-top: 10px; }
+    .settings summary { font-size: 11px; color: #9ca3af; cursor: pointer; user-select: none; }
+    .settings label { display: block; font-size: 11px; color: #9ca3af; margin-top: 8px; }
+    .settings input {
+      width: 100%; margin-top: 4px; padding: 8px;
+      background: #1f2937; color: #e5e7eb;
+      border: 1px solid #374151; border-radius: 6px; font-size: 12px;
+    }
+    .btn-save {
+      margin-top: 10px; width: 100%; padding: 8px; border: none; border-radius: 6px;
+      background: #374151; color: #e5e7eb; font-size: 12px; font-weight: 600; cursor: pointer;
+    }
+    .btn-save:hover { background: #4b5563; }
+    .saved-note { font-size: 11px; color: #34d399; margin-top: 6px; text-align: center; }
   </style>
 </head>
 <body>
@@ -134,9 +148,9 @@
           <line x1="8" y1="23" x2="16" y2="23"/>
         </svg>
       </div>
-      <span class="title">Rogov Recorder</span>
+      <span class="title">SilentQA Recorder</span>
     </div>
-    <span class="version">v1.3</span>
+    <span class="version">v2.0</span>
   </div>
 
   <div class="status-badge status-idle" id="statusBadge">
@@ -187,9 +201,23 @@
 
   <div id="errorText" style="display:none" class="error-text"></div>
 
-  <!-- Server URL hidden — hardcoded -->
-  <input type="hidden" id="serverUrl" value="https://rogov.automate-it.fun">
+  <!-- Настройки: сервер тенанта + API-ключ + сотрудник -->
+  <details class="settings" id="settingsBlock">
+    <summary>Настройки сервера</summary>
+    <label>Сервер (адрес вашего тенанта)
+      <input type="text" id="serverUrl" placeholder="acme.silentqa.com">
+    </label>
+    <label>API-ключ
+      <input type="password" id="apiKey" placeholder="sqa_…">
+    </label>
+    <label>Имя сотрудника (атрибуция звонков)
+      <input type="text" id="employee" placeholder="Иван Иванов">
+    </label>
+    <button class="btn-save" id="btnSaveSettings" type="button">Сохранить</button>
+    <div class="saved-note" id="settingsSaved" style="display:none">Сохранено ✓</div>
+  </details>
 
+  <script src="config.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

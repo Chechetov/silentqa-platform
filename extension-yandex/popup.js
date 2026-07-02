@@ -18,9 +18,12 @@ const processingEta = document.getElementById("processingEta");
 const errorText = document.getElementById("errorText");
 const serverUrlInput = document.getElementById("serverUrl");
 
-const SERVER_URL = "https://rogov.automate-it.fun";
-const AUTH_USERNAME = "admin";
-const AUTH_PASSWORD = "rogov2025secure";
+// Конфиг живёт в chrome.storage (см. settings-блок ниже), не в исходнике.
+const apiKeyInput = document.getElementById("apiKey");
+const employeeInput = document.getElementById("employee");
+const btnSaveSettings = document.getElementById("btnSaveSettings");
+const settingsSaved = document.getElementById("settingsSaved");
+const settingsBlock = document.getElementById("settingsBlock");
 
 let timerInterval = null;
 
@@ -103,6 +106,36 @@ chrome.storage.local.get(
     updateUI(data);
   }
 );
+
+// --- Настройки ---
+// Легаси Basic-креды из старых установок вычищаем.
+chrome.storage.local.remove(["authUsername", "authPassword"]);
+chrome.storage.local.get(["serverUrl", "apiKey", "employee"], (cfg) => {
+  serverUrlInput.value = cfg.serverUrl || "";
+  apiKeyInput.value = cfg.apiKey || "";
+  employeeInput.value = cfg.employee || "";
+  // Не настроено — раскрыть блок сразу
+  if (!cfg.serverUrl || !cfg.apiKey) settingsBlock.open = true;
+});
+
+btnSaveSettings.addEventListener("click", () => {
+  const v = validateConfig({ serverUrl: serverUrlInput.value, apiKey: apiKeyInput.value });
+  if (!v.ok) {
+    show(errorText);
+    errorText.textContent = v.error;
+    return;
+  }
+  hide(errorText);
+  chrome.storage.local.set({
+    serverUrl: v.serverUrl,
+    apiKey: v.apiKey,
+    employee: (employeeInput.value || "").trim(),
+  }, () => {
+    serverUrlInput.value = v.serverUrl;
+    show(settingsSaved);
+    setTimeout(() => hide(settingsSaved), 1500);
+  });
+});
 
 // Listen for real-time updates
 chrome.storage.onChanged.addListener(() => {
@@ -214,7 +247,7 @@ function updateUI(data) {
   // --- Info panel ---
   if (hasSession) {
     show(infoPanel);
-    const url = SERVER_URL;
+    const url = data.serverUrl || "";
     sessionLink.textContent = data.sessionId.substring(0, 8) + "...";
     sessionLink.href = url + "/api/sessions/" + data.sessionId;
     if (isDone) {
@@ -265,10 +298,25 @@ btnStart.addEventListener("click", async () => {
     micDenied = true;
   }
 
+  // Источник истины — поля настроек: пользователь мог заполнить их,
+  // не нажав «Сохранить». Implicit-save перед стартом — иначе Start
+  // работал бы по устаревшему storage при заполненных полях.
+  const v = validateConfig({ serverUrl: serverUrlInput.value, apiKey: apiKeyInput.value });
+  if (!v.ok) {
+    settingsBlock.open = true;
+    show(errorText);
+    errorText.textContent = v.error;
+    btnStart.disabled = false;
+    return;
+  }
+  await chrome.storage.local.set({
+    serverUrl: v.serverUrl,
+    apiKey: v.apiKey,
+    employee: (employeeInput.value || "").trim(),
+  });
+  serverUrlInput.value = v.serverUrl;
+
   chrome.storage.local.set({
-    serverUrl: SERVER_URL,
-    authUsername: AUTH_USERNAME,
-    authPassword: AUTH_PASSWORD,
     recordingStartedAt: Date.now(),
     recordingEndedAt: null,
     error: null,
