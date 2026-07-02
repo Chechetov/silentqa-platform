@@ -16,6 +16,9 @@ jobs:
           cache: pip
           cache-dependency-path: backend/requirements.txt
       - run: pip install -r backend/requirements.txt
+      # pytest сознательно НЕ в backend/requirements.txt (их ставит прод-деплой
+      # как рантайм) — тестраннер ставим только в CI
+      - run: pip install pytest==8.3.4
       - run: python -m pytest tests/ -v
         working-directory: backend
 
