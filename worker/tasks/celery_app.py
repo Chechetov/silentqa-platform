@@ -41,6 +41,7 @@ app.conf.update(
     task_queues={
         "default": {"exchange": "default", "routing_key": "default"},
         "transcription": {"exchange": "transcription", "routing_key": "transcription"},
+        "analysis": {"exchange": "analysis", "routing_key": "analysis"},
     },
     # Таймауты — обработка часового звонка может занять 30+ минут
     task_soft_time_limit=3600,   # 60 мин soft limit

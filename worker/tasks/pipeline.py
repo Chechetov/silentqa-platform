@@ -15,7 +15,7 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
-from tenancy.context import require_tenant_slug, reset_tenant_schema, set_tenant_schema
+from tenancy.context import get_tenant_schema, require_tenant_slug, reset_tenant_schema, set_tenant_schema
 from tenancy.db import (
     get_sync_db_url,
     get_sync_dialect_url,
@@ -35,10 +35,26 @@ from tasks.company_config import load_company_config, get_word_boost, get_protoc
 from tasks.amocrm_sync import find_lead_by_phone, create_enriched_note, update_note, format_enriched_note, tag_lead, format_next_call_plan, create_plain_note
 from tasks.deal_summary import build_deal_summary, push_deal_summary
 from tasks.lead_lock import lead_lock
+from tasks.tenant_slots import try_acquire, release
 
 logger = logging.getLogger(__name__)
 
 SHORT_CALL_THRESHOLD_SEC = 20
+
+# Нет свободного слота тенанта → retry с этим countdown (слот воркера
+# освобождается для других тенантов).
+TENANT_SLOT_RETRY_SEC = int(os.getenv("TENANT_SLOT_RETRY_SEC", "60"))
+
+# Транзиентные ошибки (сеть/лимиты OpenAI, AmoCRM, httpx) — кандидаты на
+# retry analyze-стадии. Матчим по имени класса, чтобы не тащить импорты
+# всех клиентских SDK.
+_TRANSIENT_MARKERS = ("Timeout", "Connection", "RateLimit",
+                      "ServiceUnavailable", "InternalServerError", "TryAgain")
+
+
+def _is_transient(exc: BaseException) -> bool:
+    name = type(exc).__name__
+    return any(m in name for m in _TRANSIENT_MARKERS)
 
 # Silence-dominance gate. Protects against broken desktop-app recordings:
 # when the mic stream dies mid-call (e.g. user toggled headphones) the
@@ -552,11 +568,13 @@ def _push_to_amocrm(
         push_deal_summary(lead_id, summary)
 
 
-def _run_pipeline(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict):
-    """
-    Shared pipeline: transcription → diarization → sentiment → quality → save → AmoCRM.
-    Called by both process_session (browser recordings) and process_session_from_file (AmoCRM calls).
-    """
+def _run_gates(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict) -> dict | None:
+    """Пред-CPU гейты: короткий звонок / битая запись.
+
+    Возвращает готовый результат (в том же контракте, что и полный прогон:
+    transcript_with_speakers/quality_report/use_extended) либо None, если
+    гейты пройдены и надо идти в транскрипцию. audio_duration вычисляется
+    здесь (сигнатура совпадает с _run_pipeline)."""
     # === 1.5 Short-call gate ===
     audio_duration = _get_audio_duration(audio_path)
     if 0 < audio_duration < SHORT_CALL_THRESHOLD_SEC:
@@ -599,14 +617,11 @@ def _run_pipeline(task, session_id: str, audio_path: str, config: dict, company_
             "use_extended": use_extended,
         }
 
-    # Serialise concurrent pipelines on the same lead (prevents prior_context
-    # races when a manual reprocess overlaps with polling, etc.)
-    with lead_lock(session_meta.get("lead_id")):
-        return _run_pipeline_inner(task, session_id, audio_path, config, company_config, scenario, session_meta, audio_duration)
+    return None
 
 
-def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict, audio_duration: float):
-    """Steps 2–8 of the pipeline, wrapped by a per-lead lock in the caller."""
+def _transcribe_and_merge(task, session_id: str, audio_path: str, company_config: dict) -> list:
+    """Шаги 2-4 (CPU): ASR (с кэшем transcript.json при reprocess) + диаризация + merge."""
     # === 2. Transcription (skipped if transcript already on disk — reprocess) ===
     transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
     if transcript_path.exists():
@@ -641,6 +656,65 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
         logger.info(f"[{session_id}] Step 4: Merging transcript with speakers...")
         transcript_with_speakers = merge_transcript_with_speakers(transcript, diarization)
 
+    return transcript_with_speakers
+
+
+def _run_stage1(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict):
+    """Стадия 1 (CPU): гейты → ASR+диаризация+merge → save transcript → handoff в analysis.
+
+    Возвращает гейт-результат (сессия завершится в вызывающем body) либо
+    {"handed_off": True} — тяжёлая CPU-часть закончена, IO/LLM ушли на
+    очередь analysis."""
+    gate = _run_gates(task, session_id, audio_path, config, company_config, scenario, session_meta)
+    if gate is not None:
+        return gate
+
+    # === 2-4 (CPU): транскрипция + диаризация + merge ===
+    transcript_with_speakers = _transcribe_and_merge(task, session_id, audio_path, company_config)
+    # transcript.json ДО KB-нормализации: analyze нормализует идемпотентно
+    # (KB layer-1, см. комментарий в _analyze_inner) и пересохранит.
+    save_results(session_id, "transcript", transcript_with_speakers)
+
+    # Handoff: CPU-часть кончилась; LLM/AmoCRM уходят на IO-очередь analysis,
+    # не занимая слот тяжёлого воркера.
+    app.send_task(
+        "pipeline.analyze_session",
+        kwargs={
+            "session_id": session_id,
+            "audio_path": audio_path,
+            "config": config,
+            "tenant_schema": get_tenant_schema(),
+        },
+        queue="analysis",
+    )
+    return {"handed_off": True}
+
+
+def _run_pipeline(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict):
+    """Синхронный полный прогон БЕЗ handoff — путь AmoCRM-поллинга
+    (amocrm_poll.py:473 читает quality_report/use_extended из результата).
+    Контракт возврата НЕ менять.
+
+    Called by process_amocrm_call (AmoCRM inbound/outbound). Browser and
+    file-upload paths now go through stage-1 + analyze_session handoff.
+    """
+    gate = _run_gates(task, session_id, audio_path, config, company_config, scenario, session_meta)
+    if gate is not None:
+        return gate
+
+    transcript_with_speakers = _transcribe_and_merge(task, session_id, audio_path, company_config)
+    save_results(session_id, "transcript", transcript_with_speakers)
+
+    # Serialise concurrent pipelines on the same lead (prevents prior_context
+    # races when a manual reprocess overlaps with polling, etc.)
+    with lead_lock(session_meta.get("lead_id")):
+        return _analyze_inner(task, session_id, audio_path, config, company_config,
+                              scenario, session_meta, transcript_with_speakers)
+
+
+def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company_config: dict,
+                   scenario: dict | None, session_meta: dict, transcript_with_speakers: list):
+    """KB → (extraction | sentiment → quality → card → plan → AmoCRM). Вызывается под lead_lock."""
     # KB layer-1: engine-agnostic correction + tagging. Idempotent → safe for reprocess.
     try:
         from tasks.knowledge_base import kb_build_matcher, normalize_transcript
@@ -838,57 +912,133 @@ def _run_pipeline_inner(task, session_id: str, audio_path: str, config: dict, co
     }
 
 
-def _process_session_body(task, session_id: str, config: dict | None = None):
-    """Full pipeline for browser-recorded sessions (WebM chunks)."""
+def _analyze_session_body(task, session_id: str, audio_path: str, config: dict | None = None):
+    """IO-стадия: грузит transcript.json со стадии 1 и доводит сессию до completed."""
     config = config or {}
-    logger.info(f"[{session_id}] Starting processing pipeline...")
+    logger.info(f"[{session_id}] Analyze stage starting...")
     start_time = datetime.now(timezone.utc)
-    update_session_status(session_id, "processing")
 
     session_meta = _get_session_metadata(session_id)
-    # company/scenario — server-owned (спека 5.6): из клиентских метаданных
-    # сессии НЕ читаются. company — из shared.tenants, scenario — только из
-    # явного config (ops-скрипты/reprocess).
     company_id = config.get("company_id") or tenant_company_config_id()
     scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
     scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
-    logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
 
     try:
-        # Step 1: Merge chunks
-        task.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
-        logger.info(f"[{session_id}] Step 1: Merging audio chunks...")
-        audio_path = merge_chunks(session_id)
+        transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
+        with transcript_path.open(encoding="utf-8") as f:
+            transcript_with_speakers = json.load(f)
 
-        # Steps 2-8: shared pipeline
-        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
+        # lead_lock здесь, а не в стадии 1: только analyze трогает
+        # prior_context/метаданные лида/AmoCRM.
+        with lead_lock(session_meta.get("lead_id")):
+            result = _analyze_inner(task, session_id, audio_path, config, company_config,
+                                    scenario, session_meta, transcript_with_speakers)
 
-        # Done
         finished_at = datetime.now(timezone.utc)
         audio_duration = _get_audio_duration(audio_path)
         processing_duration = (finished_at - start_time).total_seconds()
-        logger.info(f"[{session_id}] Audio duration: {audio_duration:.1f}s, processing time: {processing_duration:.1f}s")
         update_session_status(
             session_id, "completed",
             finished_at=finished_at,
             duration_seconds=audio_duration or processing_duration,
         )
-        logger.info(f"[{session_id}] Pipeline completed successfully!")
+        logger.info(f"[{session_id}] Analyze stage completed!")
 
-        transcript_with_speakers = result["transcript_with_speakers"]
+        tws = result["transcript_with_speakers"]
         return {
             "session_id": session_id,
             "status": "completed",
-            "segments_count": len(transcript_with_speakers),
-            "speakers_count": len(set(s.get("speaker", "") for s in transcript_with_speakers)),
+            "segments_count": len(tws),
+            "speakers_count": len(set(s.get("speaker", "") for s in tws)),
             "quality_score": result["quality_report"].get("overall_score"),
         }
 
     except Exception as e:
+        if _is_transient(e) and task.request.retries < 2:
+            logger.warning(f"[{session_id}] Analyze transient failure (retry {task.request.retries + 1}/2): {e}")
+            raise task.retry(countdown=120, exc=e)
         update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
-        logger.exception(f"[{session_id}] Pipeline failed: {e}")
+        logger.exception(f"[{session_id}] Analyze stage failed: {e}")
         raise
+
+
+# acks_late: analyze идемпотентна (вход — transcript.json с диска) → at-least-once
+# безопасен; убитый io-воркер не теряет задачу (ре-доставка после
+# visibility_timeout Redis-брокера, по умолчанию 1 час).
+@app.task(bind=True, queue="analysis", name="pipeline.analyze_session",
+          acks_late=True, reject_on_worker_lost=True)
+def analyze_session(self, session_id: str, audio_path: str, config: dict | None = None,
+                    tenant_schema: str | None = None):
+    if not tenant_schema:
+        raise ValueError("tenant_schema is required (fail fast: a task without "
+                         "tenant context would read/write the wrong schema)")
+    token = set_tenant_schema(tenant_schema)
+    try:
+        return _analyze_session_body(self, session_id, audio_path, config)
+    finally:
+        reset_tenant_schema(token)
+
+
+def _process_session_body(task, session_id: str, config: dict | None = None):
+    """Стадия 1 для browser-записей: merge чанков + гейты + ASR + handoff."""
+    config = config or {}
+    # Fairness: не больше TENANT_MAX_CONCURRENT тяжёлых задач на тенанта.
+    slot = try_acquire(require_tenant_slug())
+    if slot is None:
+        raise task.retry(countdown=TENANT_SLOT_RETRY_SEC, max_retries=None)
+    try:
+        logger.info(f"[{session_id}] Starting processing pipeline...")
+        start_time = datetime.now(timezone.utc)
+        update_session_status(session_id, "processing")
+
+        session_meta = _get_session_metadata(session_id)
+        # company/scenario — server-owned (спека 5.6): из клиентских метаданных
+        # сессии НЕ читаются. company — из shared.tenants, scenario — только из
+        # явного config (ops-скрипты/reprocess).
+        company_id = config.get("company_id") or tenant_company_config_id()
+        scenario_id = config.get("scenario_id")
+        company_config = load_company_config(company_id)
+        scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
+        logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, "
+                    f"Scenario: {scenario.get('name') if scenario else 'default'}")
+
+        try:
+            # Step 1: Merge chunks
+            task.update_state(state="PROGRESS", meta={"step": "merging", "progress": 5})
+            logger.info(f"[{session_id}] Step 1: Merging audio chunks...")
+            audio_path = merge_chunks(session_id)
+
+            result = _run_stage1(task, session_id, audio_path, config, company_config, scenario, session_meta)
+
+            if result.get("handed_off"):
+                logger.info(f"[{session_id}] Stage 1 done — analyze queued")
+                return {"session_id": session_id, "status": "analyzing"}
+
+            # Гейт (short-call / broken recording) уже сохранил quality.json —
+            # завершаем сессию прямо здесь, analyze не нужен.
+            finished_at = datetime.now(timezone.utc)
+            audio_duration = _get_audio_duration(audio_path)
+            processing_duration = (finished_at - start_time).total_seconds()
+            update_session_status(
+                session_id, "completed",
+                finished_at=finished_at,
+                duration_seconds=audio_duration or processing_duration,
+            )
+            return {
+                "session_id": session_id,
+                "status": "completed",
+                "segments_count": 0,
+                "speakers_count": 0,
+                "quality_score": result["quality_report"].get("overall_score"),
+            }
+        except Exception as e:
+            update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
+            logger.exception(f"[{session_id}] Pipeline stage 1 failed: {e}")
+            raise
+    finally:
+        if slot is not None:
+            release(*slot)
 
 
 @app.task(bind=True, queue="transcription", name="pipeline.process_session")
@@ -905,48 +1055,58 @@ def process_session(self, session_id: str, config: dict | None = None,
 
 
 def _process_session_from_file_body(task, session_id: str, audio_path: str, config: dict | None = None):
-    """Pipeline for pre-existing audio files (AmoCRM calls, uploaded files)."""
+    """Стадия 1 для готовых аудиофайлов (uploaded files): гейты + ASR + handoff."""
     config = config or {}
-    logger.info(f"[{session_id}] Starting file-based pipeline for {audio_path}...")
-    start_time = datetime.now(timezone.utc)
-    update_session_status(session_id, "processing")
-
-    session_meta = _get_session_metadata(session_id)
-    # company/scenario — server-owned (спека 5.6): клиентские фоллбеки из
-    # метаданных сессии убраны; см. _process_session_body.
-    company_id = config.get("company_id") or tenant_company_config_id()
-    scenario_id = config.get("scenario_id")
-    company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
-    logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, Scenario: {scenario.get('name') if scenario else 'default'}")
-
+    # Fairness: не больше TENANT_MAX_CONCURRENT тяжёлых задач на тенанта.
+    slot = try_acquire(require_tenant_slug())
+    if slot is None:
+        raise task.retry(countdown=TENANT_SLOT_RETRY_SEC, max_retries=None)
     try:
-        result = _run_pipeline(task, session_id, audio_path, config, company_config, scenario, session_meta)
+        logger.info(f"[{session_id}] Starting file-based pipeline for {audio_path}...")
+        start_time = datetime.now(timezone.utc)
+        update_session_status(session_id, "processing")
 
-        finished_at = datetime.now(timezone.utc)
-        audio_duration = _get_audio_duration(audio_path)
-        processing_duration = (finished_at - start_time).total_seconds()
-        logger.info(f"[{session_id}] Audio duration: {audio_duration:.1f}s, processing time: {processing_duration:.1f}s")
-        update_session_status(
-            session_id, "completed",
-            finished_at=finished_at,
-            duration_seconds=audio_duration or processing_duration,
-        )
-        logger.info(f"[{session_id}] File-based pipeline completed!")
+        session_meta = _get_session_metadata(session_id)
+        # company/scenario — server-owned (спека 5.6): клиентские фоллбеки из
+        # метаданных сессии убраны; см. _process_session_body.
+        company_id = config.get("company_id") or tenant_company_config_id()
+        scenario_id = config.get("scenario_id")
+        company_config = load_company_config(company_id)
+        scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
+        logger.info(f"[{session_id}] Company: {company_config.get('name', company_id)}, "
+                    f"Scenario: {scenario.get('name') if scenario else 'default'}")
 
-        transcript_with_speakers = result["transcript_with_speakers"]
-        return {
-            "session_id": session_id,
-            "status": "completed",
-            "segments_count": len(transcript_with_speakers),
-            "speakers_count": len(set(s.get("speaker", "") for s in transcript_with_speakers)),
-            "quality_score": result["quality_report"].get("overall_score"),
-        }
+        try:
+            result = _run_stage1(task, session_id, audio_path, config, company_config, scenario, session_meta)
 
-    except Exception as e:
-        update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
-        logger.exception(f"[{session_id}] File-based pipeline failed: {e}")
-        raise
+            if result.get("handed_off"):
+                logger.info(f"[{session_id}] Stage 1 done — analyze queued")
+                return {"session_id": session_id, "status": "analyzing"}
+
+            # Гейт (short-call / broken recording) уже сохранил quality.json —
+            # завершаем сессию прямо здесь, analyze не нужен.
+            finished_at = datetime.now(timezone.utc)
+            audio_duration = _get_audio_duration(audio_path)
+            processing_duration = (finished_at - start_time).total_seconds()
+            update_session_status(
+                session_id, "completed",
+                finished_at=finished_at,
+                duration_seconds=audio_duration or processing_duration,
+            )
+            return {
+                "session_id": session_id,
+                "status": "completed",
+                "segments_count": 0,
+                "speakers_count": 0,
+                "quality_score": result["quality_report"].get("overall_score"),
+            }
+        except Exception as e:
+            update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
+            logger.exception(f"[{session_id}] Pipeline stage 1 failed: {e}")
+            raise
+    finally:
+        if slot is not None:
+            release(*slot)
 
 
 @app.task(bind=True, queue="transcription", name="pipeline.process_session_from_file")
