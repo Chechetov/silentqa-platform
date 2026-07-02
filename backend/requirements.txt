@@ -21,3 +21,6 @@ aiofiles==24.1.0
 jsonschema==4.26.0
 # LLM: переработка eval-промпта из «пожеланий» (app/eval_prompt_rewrite.py).
 openai>=2.26.0
+# routes/amocrm.py импортирует worker/tasks/amocrm_sync (кросс-сервисный импорт),
+# которому нужен requests. Без пина свежая backend-only установка падает на импорте.
+requests==2.31.0
