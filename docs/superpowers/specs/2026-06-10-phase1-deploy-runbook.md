@@ -116,7 +116,7 @@
   (401/403/201), изоляция сессий и cookie между тенантами, ghost-хост 404.
 
 Обновление платформы: коммит в ветку (worktree /root/projects/meet-mt) →
-`cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1` →
+`cd /root/projects/silentqa && git pull github multi-tenant-core-phase1` (remote прода называется github) →
 `systemctl restart silentqa-backend silentqa-worker` (backend сам гонит
 миграции на старте).
 
@@ -131,7 +131,7 @@ DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
 
 ### Деплой Plan 3b (админка + команда + роль manager)
 
-1. `cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1`
+1. `cd /root/projects/silentqa && git pull github multi-tenant-core-phase1` (remote прода называется github)
 2. `systemctl restart silentqa-backend silentqa-worker` — S003+013 накатятся
    на старте (journalctl: "[migrate] done").
 3. Бутстрап владельца:
