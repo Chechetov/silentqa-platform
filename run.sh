@@ -48,7 +48,7 @@ start_worker() {
         --loglevel=info \
         --concurrency="${CELERY_CONCURRENCY:-1}" \
         --max-tasks-per-child=10 \
-        -Q default,transcription "$@"
+        -Q default,transcription,analysis "$@"
 }
 
 start_all() {
@@ -66,7 +66,7 @@ start_all() {
         --loglevel=info \
         --concurrency="${CELERY_CONCURRENCY:-1}" \
         --max-tasks-per-child=10 \
-        -Q default,transcription &
+        -Q default,transcription,analysis &
     echo $! > "../$PIDFILE_WORKER"
     cd ..
 

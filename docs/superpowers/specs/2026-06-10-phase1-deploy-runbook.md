@@ -166,3 +166,12 @@ git reset --hard <SHA из лога деплоя> && systemctl restart silentqa-
 `https://github.com/Chechetov/silentqa-platform.git`). Скрипт по умолчанию
 фетчит `github` (`REMOTE="${REMOTE:-github}"`); при иной раскладке —
 `REMOTE=origin scripts/deploy_prod.sh`.
+
+## io-воркер `analysis`: acks_late и редкий дубль AmoCRM-заметки
+
+У `pipeline.analyze_session` (очередь `analysis`, юнит `silentqa-worker-io`)
+`acks_late=true`: при жёсткой смерти io-воркера задача переедет к другому
+воркеру. В узком окне между созданием AmoCRM-заметки и записью `amo_note_id`
+в метаданные сессии возможен редкий дубль заметки (только AmoCRM-тенанты).
+При жалобе клиента на дубль — проверять журнал `silentqa-worker-io` на этот
+момент (`journalctl -u silentqa-worker-io`).

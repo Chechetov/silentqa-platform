@@ -12,7 +12,7 @@ REMOTE="${REMOTE:-github}"
 
 cd "$PROD_DIR"
 PREV_SHA=$(git rev-parse HEAD)
-echo "rollback point: $PREV_SHA (откат: git reset --hard $PREV_SHA && systemctl restart silentqa-backend silentqa-worker)"
+echo "rollback point: $PREV_SHA (откат: git reset --hard $PREV_SHA && systemctl restart silentqa-backend silentqa-worker silentqa-worker-io)"
 git fetch "$REMOTE"
 git merge --ff-only "$REMOTE/$BRANCH"
 
@@ -23,7 +23,7 @@ git merge --ff-only "$REMOTE/$BRANCH"
 set -a; source .env; set +a
 (cd backend && "$PROD_DIR/.venv/bin/python" -m app.migrate)
 
-systemctl restart silentqa-backend silentqa-worker
+systemctl restart silentqa-backend silentqa-worker silentqa-worker-io
 
 # Readiness с ретраями (до ~30с): /health/ready = процесс жив И БД доступна
 for i in $(seq 1 15); do
@@ -34,5 +34,5 @@ for i in $(seq 1 15); do
     fi
 done
 echo "deploy FAILED: /health/ready не отвечает 30с — journalctl -u silentqa-backend -n 50"
-echo "откат: git reset --hard $PREV_SHA && systemctl restart silentqa-backend silentqa-worker"
+echo "откат: git reset --hard $PREV_SHA && systemctl restart silentqa-backend silentqa-worker silentqa-worker-io"
 exit 1
