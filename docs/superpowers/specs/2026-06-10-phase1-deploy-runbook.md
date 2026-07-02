@@ -145,3 +145,24 @@ DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
 6. Смоук: https://admin.silentqa.com → логин → список клиентов со
    статистикой; impersonate в fulldent (бейдж «режим поддержки»);
    suspend/activate тестом НЕ на живом клиенте; «Команда» у fulldent.
+
+## Деплой после 2026-07: миграции — шаг деплоя, не старта
+
+С коммита «feat(startup): lifespan — check-only …» рестарт юнита сам
+миграции НЕ применяет (старт делает только read-only сверку и CRITICAL-лог).
+Канонический деплой прода:
+
+    /root/projects/silentqa-dev/scripts/deploy_prod.sh
+
+(rollback-SHA в лог → FF-merge origin/multi-tenant-core-phase1 → pip install
+→ python -m app.migrate → systemctl restart silentqa-backend silentqa-worker
+→ curl /health/ready с ретраями до 30с).
+Откат миграции при фейле: старый код продолжает работать; чинить миграцию
+на стейджинге (silentqa-staging-*, :8008) и повторять деплой. Откат кода:
+git reset --hard <SHA из лога деплоя> && systemctl restart silentqa-backend silentqa-worker.
+
+Прим.: прод-remote назван `github`, а не `origin` (проверено 2026-07-02
+`git -C /root/projects/silentqa remote -v` →
+`https://github.com/Chechetov/silentqa-platform.git`). Скрипт по умолчанию
+фетчит `github` (`REMOTE="${REMOTE:-github}"`); при иной раскладке —
+`REMOTE=origin scripts/deploy_prod.sh`.
