@@ -26,10 +26,16 @@ export RESULTS_STORAGE_PATH="${RESULTS_STORAGE_PATH:-./data/results}"
 # Создать директории для данных
 mkdir -p "$AUDIO_STORAGE_PATH" "$RESULTS_STORAGE_PATH"
 
+run_migrations() {
+    echo "Applying migrations (shared + все тенанты)..."
+    (cd backend && python -m app.migrate)
+}
+
 PIDFILE_BACKEND=".pid.backend"
 PIDFILE_WORKER=".pid.worker"
 
 start_backend() {
+    run_migrations
     echo "Starting backend on :8002..."
     cd backend
     uvicorn app.main:app --host 0.0.0.0 --port 8002 "$@"
@@ -48,6 +54,7 @@ start_worker() {
 start_all() {
     echo "Starting all services..."
     mkdir -p data/audio data/results
+    run_migrations
 
     cd backend
     uvicorn app.main:app --host 0.0.0.0 --port 8002 &
