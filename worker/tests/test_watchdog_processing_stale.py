@@ -59,9 +59,20 @@ def test_stale_rules(monkeypatch):
     # 3a — по метке старта стадии, НЕ по created_at
     assert "processing_started_at IS NOT NULL" in joined
     assert "processing_started_at <" in joined
-    # 3b — потерянные до старта: по created_at, но ТОЛЬКО при IS NULL
-    assert "processing_started_at IS NULL" in joined
     assert "'failed'" in joined
+
+    # 3b — изолируем именно этот UPDATE (единственный с IS NULL), чтобы не путаться
+    # с created_at из правила 2 (SELECT пустых сессий).
+    stmt_3b = next(
+        s for s in cur.executed
+        if s.startswith("UPDATE sessions")
+        and "'processing'" in s
+        and "processing_started_at IS NULL" in s
+    )
+    # Якорь 3b — enqueued_at с fallback на created_at, а НЕ голый created_at
+    assert "COALESCE(enqueued_at, created_at)" in stmt_3b
+    assert "processing_started_at IS NULL" in stmt_3b
+    assert "created_at <" not in stmt_3b  # голого created_at < в 3b быть не должно
 
 
 def test_default_thresholds():

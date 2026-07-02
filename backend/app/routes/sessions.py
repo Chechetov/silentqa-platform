@@ -2,6 +2,7 @@ import asyncio
 import logging
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import Celery
@@ -369,6 +370,8 @@ async def reprocess_session(
     # Сброс метки старта: воркер проставит NOW() на фактическом старте стадии.
     # Иначе watchdog 3a убьёт reprocess по прошлой (древней) метке в ожидании слота.
     sess.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    sess.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(sess)
 
@@ -484,6 +487,8 @@ async def link_lead(
     sess.status = SessionStatus.processing
     # Сброс метки старта (см. reprocess): постановка в очередь ≠ старт стадии.
     sess.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    sess.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(sess)
 
@@ -572,6 +577,8 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
     # Сброс метки старта (см. reprocess): finish ставит processing ДО send_task,
     # воркер проставит NOW() на фактическом старте стадии.
     session.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    session.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(session)
 

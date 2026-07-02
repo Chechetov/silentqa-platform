@@ -183,7 +183,7 @@ git commit -m "feat(worker): tenant_slots — per-tenant лимит одновр
 - Test: `worker/tests/test_watchdog_processing_stale.py` (создать), `backend/tests/test_processing_started_reset.py` (создать)
 
 **Interfaces:**
-- Produces: `sessions.processing_started_at TIMESTAMPTZ NULL` — момент фактического старта стадии 1 в воркере. Бэкенд СБРАСЫВАЕТ её в NULL везде, где ставит `status='processing'` при постановке в обработку; воркер проставляет `NOW()` внутри `update_session_status(sid, "processing")`. Watchdog-правила: **3a** — `processing AND processing_started_at IS NOT NULL AND processing_started_at < NOW()-6h → failed` (env `SESSION_PROCESSING_STALE_HOURS`, default 6 — щедро больше hard limit 90 мин + ретраи analyze); **3b** — `processing AND processing_started_at IS NULL AND created_at < NOW()-24h → failed` (env `SESSION_ENQUEUED_STALE_HOURS`, default 24 — задача потерялась до старта / вечное ожидание слота). Возврат `_sweep_for_current_tenant()` получает ключи `stale_processing: int` и `stale_enqueued: int`.
+- Produces: `sessions.processing_started_at TIMESTAMPTZ NULL` — момент фактического старта стадии 1 в воркере. Бэкенд СБРАСЫВАЕТ её в NULL везде, где ставит `status='processing'` при постановке в обработку; воркер проставляет `NOW()` внутри `update_session_status(sid, "processing")`. Дополнительно бэкенд в тех же местах ставит **`enqueued_at = NOW()`** (миграция 017) — якорь момента постановки. Watchdog-правила: **3a** — `processing AND processing_started_at IS NOT NULL AND processing_started_at < NOW()-6h → failed` (env `SESSION_PROCESSING_STALE_HOURS`, default 6 — щедро больше hard limit 90 мин + ретраи analyze); **3b** — `processing AND processing_started_at IS NULL AND COALESCE(enqueued_at, created_at) < NOW()-24h → failed` (env `SESSION_ENQUEUED_STALE_HOURS`, default 24 — задача потерялась до старта). Якорь 3b — `enqueued_at`, НЕ `created_at`: у reprocess-сессии `created_at` древний, и правило по нему выкашивало бы всю очередь массовой переоценки за один свип (подтверждено адверсариальным ревью); COALESCE-fallback на `created_at` сознательный — легаси-строки, зависшие в processing до миграции, прибираются по нему. Возврат `_sweep_for_current_tenant()` получает ключи `stale_processing: int` и `stale_enqueued: int`.
 - **Почему НЕ по `created_at`:** reprocess старого звонка (продовая фича «переоценка по scenario_id») ставит `processing`, не трогая `created_at` (`sessions.py:368`), а finish ставит `processing` ДО `send_task` (`:566`) — сессия, ждущая fairness-слот, тоже стоит в `processing`. Правило по `created_at` убивало бы обоих первым же 5-минутным свипом. Сброс в NULL при постановке обязателен: без него у reprocess останется `processing_started_at` ПРЕДЫДУЩЕГО прогона (старше 6ч) и 3a убьёт сессию, пока она ждёт слот.
 - Constraint: у модели Session нет ни `updated_at`, ни `started_at` (`models.py:22-37`) — без новой колонки правило опереть не на что. Watchdog-SQL с новой колонкой выкатывается тем же деплоем, что миграция: `deploy_prod.sh`/staging `ExecStartPre` применяют миграции ДО рестарта воркеров.
 
@@ -323,14 +323,17 @@ ENQUEUED_STALE_HOURS = int(os.getenv("SESSION_ENQUEUED_STALE_HOURS", "24"))
                 )
                 stale_processing = [r[0] for r in cur.fetchall()]
 
-                # 3b. Поставлена в обработку, но стадия не стартовала > N часов → failed
+                # 3b. Поставлена в обработку, но стадия не стартовала > N часов → failed.
+                #     Якорь — enqueued_at (момент постановки), НЕ created_at: у reprocess
+                #     старого звонка created_at древний. COALESCE-fallback прибирает
+                #     легаси-зависших (NULL enqueued_at до миграции 017).
                 cur.execute(
                     """
                     UPDATE sessions
                     SET status = 'failed', finished_at = %s
                     WHERE status = 'processing'
                       AND processing_started_at IS NULL
-                      AND created_at < NOW() - (%s || ' hours')::interval
+                      AND COALESCE(enqueued_at, created_at) < NOW() - (%s || ' hours')::interval
                     RETURNING id::text
                     """,
                     (now, ENQUEUED_STALE_HOURS),

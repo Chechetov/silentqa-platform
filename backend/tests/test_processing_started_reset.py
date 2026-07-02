@@ -105,21 +105,25 @@ def test_reprocess_resets_processing_started_at(monkeypatch, fake_redis):
     _capture_send(monkeypatch)
     sess = Session(id=SID, status=SessionStatus.completed,
                    created_at=_dt.datetime(2026, 6, 27, tzinfo=_dt.timezone.utc),
-                   processing_started_at=_STALE, metadata_={})
+                   processing_started_at=_STALE, enqueued_at=None, metadata_={})
     c = _client(monkeypatch, fake_redis, sess)
     r = c.post(f"/api/sessions/{SID}/reprocess", json={}, cookies=_cookie(fake_redis))
     assert r.status_code == 200, r.text
     assert sess.status == SessionStatus.processing
     assert sess.processing_started_at is None
+    # enqueued_at — свежий якорь постановки в обработку (для watchdog 3b)
+    assert sess.enqueued_at is not None
 
 
 def test_finish_resets_processing_started_at(monkeypatch, fake_redis):
     _capture_send(monkeypatch)
     sess = Session(id=SID, status=SessionStatus.uploading,
                    created_at=_dt.datetime(2026, 6, 27, tzinfo=_dt.timezone.utc),
-                   processing_started_at=_STALE, metadata_={})
+                   processing_started_at=_STALE, enqueued_at=None, metadata_={})
     c = _client(monkeypatch, fake_redis, sess)
     r = c.post(f"/api/sessions/{SID}/finish", cookies=_cookie(fake_redis))
     assert r.status_code == 200, r.text
     assert sess.status == SessionStatus.processing
     assert sess.processing_started_at is None
+    # enqueued_at — свежий якорь постановки в обработку (для watchdog 3b)
+    assert sess.enqueued_at is not None

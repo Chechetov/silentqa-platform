@@ -15,8 +15,13 @@ Recovery rules:
      → mark `failed`. Stage started but the worker died / task got lost. Keyed on
      the worker's start mark, NOT created_at, so reprocess of old calls and
      fairness-slot waiting don't get killed.
-  3b. status=processing AND processing_started_at IS NULL and created > ENQUEUED_STALE_HOURS
+  3b. status=processing AND processing_started_at IS NULL and
+      COALESCE(enqueued_at, created_at) > ENQUEUED_STALE_HOURS
      → mark `failed`. Enqueued but the stage never started (task lost pre-start).
+     Keyed on enqueued_at (moment we flipped to processing), NOT created_at, so a
+     reprocess of an old call waiting in the queue is not falsely killed by its
+     ancient created_at. Fallback to created_at is only for legacy rows stuck in
+     processing before migration 017 (enqueued_at still NULL).
 """
 import logging
 import os
@@ -122,14 +127,19 @@ def _sweep_for_current_tenant():
                 )
                 stale_processing = [r[0] for r in cur.fetchall()]
 
-                # 3b. Поставлена в обработку, но стадия не стартовала > N часов → failed
+                # 3b. Поставлена в обработку, но стадия не стартовала > N часов → failed.
+                # Якорь — enqueued_at (момент постановки в обработку), НЕ created_at:
+                # reprocess старого звонка в очереди не убивается по древнему created_at,
+                # пока ждёт слот. COALESCE-fallback на created_at — только для легаси-строк,
+                # зависших в processing до миграции 017 (enqueued_at ещё NULL): их гасим
+                # по created_at как исторически зависшие.
                 cur.execute(
                     """
                     UPDATE sessions
                     SET status = 'failed', finished_at = %s
                     WHERE status = 'processing'
                       AND processing_started_at IS NULL
-                      AND created_at < NOW() - (%s || ' hours')::interval
+                      AND COALESCE(enqueued_at, created_at) < NOW() - (%s || ' hours')::interval
                     RETURNING id::text
                     """,
                     (now, ENQUEUED_STALE_HOURS),
