@@ -61,7 +61,7 @@ realestate «брокер»/«ЖК») протекают в общие клие�
 | Место | Артефакт | Замечание |
 |---|---|---|
 | `popup.js:21` | `SERVER_URL = "https://rogov.automate-it.fun"` | Вся extension — realestate-эра, не знает про per-tenant API-key (известный дрифт, CLAUDE.md). |
-| `popup.js:23` | `AUTH_PASSWORD = "rogov2025secure"` | хардкод Basic-пароля. |
+| `popup.js:23` | `AUTH_PASSWORD = "rogov2025***"` | хардкод Basic-пароля. |
 
 ---
 

@@ -62,7 +62,7 @@ Use this prompt in a new Claude Code session with Dangerously Skip Permissions e
 - **НЕ используй** `nodeIntegration: true` — только secure mode через preload + IPC
 - `getDisplayMedia` требует `video: true` — strip video tracks после получения stream
 - Код загрузки чанков переиспользуй из `extension/offscreen.js` — та же логика sequential queue
-- **Никаких захардкоженных URL и credentials в коде** — всё через настройки при первом запуске. Для тестирования можешь использовать `https://rogov.automate-it.fun`, admin / rogov2025secure, но эти значения НЕ должны быть в исходниках, только вводятся руками в UI
+- **Никаких захардкоженных URL и credentials в коде** — всё через настройки при первом запуске. Для тестирования можешь использовать `https://rogov.automate-it.fun`, admin / rogov2025***, но эти значения НЕ должны быть в исходниках, только вводятся руками в UI
 - Используй Context7 MCP сервер для получения актуальной документации по Electron и electron-audio-loopback
 
 ### Чего НЕ делать
