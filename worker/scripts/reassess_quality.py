@@ -10,6 +10,8 @@ side-by-side comparison.
 Usage (from /root/projects/realestate/worker):
 
     ../.venv/bin/python3 -m scripts.reassess_quality --tenant <slug> [--limit N] [--only SESSION_ID]
+
+После массовой переоценки прогони backfill_quality_results.py --apply — таблица quality_results обновится из файлов.
 """
 from __future__ import annotations
 
