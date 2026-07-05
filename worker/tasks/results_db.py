@@ -6,7 +6,12 @@ best-effort: сбой записи НИКОГДА не валит пайплай
 """
 from __future__ import annotations
 
+import json
 import logging
+from datetime import datetime, timezone
+
+from tenancy.context import get_tenant_slug
+from tenancy.db import tenant_connect
 
 logger = logging.getLogger(__name__)
 
@@ -120,3 +125,136 @@ def compute_risk_flags(overall_score, sentiment_counts, objections, thresholds: 
     if any(o.get("resolved") is False for o in (objections or [])):
         flags.append("unresolved_objections")
     return flags
+
+
+_UPSERT_SQL = """
+INSERT INTO quality_results (
+    session_id, overall_score, version, scenario_id, employee,
+    session_created_at, duration_seconds, skip_reason,
+    criteria, objections, talk_metrics, sentiment_counts, risk_flags, updated_at
+) VALUES (
+    %(session_id)s, %(overall_score)s, %(version)s, %(scenario_id)s, %(employee)s,
+    %(session_created_at)s, %(duration_seconds)s, %(skip_reason)s,
+    %(criteria)s, %(objections)s, %(talk_metrics)s, %(sentiment_counts)s,
+    %(risk_flags)s, now()
+)
+ON CONFLICT (session_id) DO UPDATE SET
+    overall_score = EXCLUDED.overall_score,
+    version = EXCLUDED.version,
+    scenario_id = EXCLUDED.scenario_id,
+    employee = EXCLUDED.employee,
+    session_created_at = EXCLUDED.session_created_at,
+    duration_seconds = EXCLUDED.duration_seconds,
+    skip_reason = EXCLUDED.skip_reason,
+    criteria = EXCLUDED.criteria,
+    objections = EXCLUDED.objections,
+    talk_metrics = EXCLUDED.talk_metrics,
+    sentiment_counts = EXCLUDED.sentiment_counts,
+    risk_flags = EXCLUDED.risk_flags,
+    updated_at = now()
+"""
+
+
+def _jsonb(value):
+    return json.dumps(value, ensure_ascii=False) if value is not None else None
+
+
+def upsert_quality_result(session_id: str, *, overall_score, version, scenario_id,
+                          employee, session_created_at, duration_seconds, skip_reason,
+                          criteria, objections, talk_metrics, sentiment_counts,
+                          risk_flags) -> bool:
+    """Голый идемпотентный upsert. Исключения НЕ глотает — ловит вызывающий."""
+    conn = tenant_connect()
+    try:
+        with conn:
+            with conn.cursor() as cur:
+                cur.execute(_UPSERT_SQL, {
+                    "session_id": session_id,
+                    "overall_score": overall_score,
+                    "version": version,
+                    "scenario_id": scenario_id,
+                    "employee": employee,
+                    "session_created_at": session_created_at,
+                    "duration_seconds": duration_seconds,
+                    "skip_reason": skip_reason,
+                    "criteria": _jsonb(criteria),
+                    "objections": _jsonb(objections),
+                    "talk_metrics": _jsonb(talk_metrics),
+                    "sentiment_counts": _jsonb(sentiment_counts),
+                    "risk_flags": _jsonb(risk_flags or []),
+                })
+    finally:
+        conn.close()
+    return True
+
+
+def _fetch_session_row(session_id: str):
+    conn = tenant_connect()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT metadata, created_at, duration_seconds FROM sessions WHERE id = %s",
+                (session_id,))
+            return cur.fetchone()
+    finally:
+        conn.close()
+
+
+def _send_risk_alert_safe(**kwargs) -> None:
+    """Локальный импорт: alerts появляется в соседней таске; без него — молчим."""
+    try:
+        from tasks.alerts import send_risk_alert
+        send_risk_alert(**kwargs)
+    except ImportError:
+        pass
+    except Exception:
+        logger.exception("risk alert failed (continuing)")
+
+
+def record_quality_result(session_id: str, quality_report: dict | None, *,
+                          card: dict | None = None, transcript: list | None = None,
+                          sentiment_results: list | None = None,
+                          company_config: dict | None = None,
+                          skip_reason: str | None = None,
+                          duration_seconds: float | None = None) -> list[str]:
+    """Единая best-effort точка записи аналитики (пайплайн зовёт только её)."""
+    try:
+        row = _fetch_session_row(session_id)
+        if row is None:
+            logger.warning(f"[{session_id}] quality_results: сессия не найдена — скип")
+            return []
+        meta = row[0] if isinstance(row[0], dict) else json.loads(row[0] or "{}")
+        report = quality_report or {}
+
+        objections = extract_objections(report, card)
+        talk = compute_talk_metrics(transcript, report.get("speaker_roles"))
+        counts = sentiment_counts_from(sentiment_results)
+        thresholds = (company_config or {}).get("alerts")
+        flags = [] if skip_reason else compute_risk_flags(
+            report.get("overall_score"), counts, objections, thresholds)
+
+        upsert_quality_result(
+            session_id,
+            overall_score=report.get("overall_score"),
+            version=report.get("version"),
+            scenario_id=meta.get("scenario_id"),
+            employee=meta.get("employee"),
+            session_created_at=row[1] or datetime.now(timezone.utc),
+            duration_seconds=duration_seconds if duration_seconds is not None else row[2],
+            skip_reason=skip_reason,
+            criteria=report.get("criteria"),
+            objections=objections,
+            talk_metrics=talk,
+            sentiment_counts=counts,
+            risk_flags=flags,
+        )
+        if flags:
+            _send_risk_alert_safe(
+                slug=get_tenant_slug(), session_id=session_id,
+                employee=meta.get("employee"),
+                score=report.get("overall_score"), flags=flags,
+                company_config=company_config)
+        return flags
+    except Exception:
+        logger.exception(f"[{session_id}] quality_results запись не удалась (пайплайн продолжает)")
+        return []
