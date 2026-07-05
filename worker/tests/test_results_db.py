@@ -65,6 +65,23 @@ def test_talk_without_roles_top2_heuristic():
     assert m["unattributed"] is True
 
 
+def test_talk_object_shaped_roles_parity():
+    # реальная форма из прода: {spk: {"role": ..., "name": ...}} — паритет с плоской
+    obj = compute_talk_metrics(SEGS, {"A": {"role": "manager", "name": "Иван"},
+                                      "B": {"role": "client", "name": None}})
+    flat = compute_talk_metrics(SEGS, {"A": "manager", "B": "client"})
+    assert obj == flat
+    assert obj["manager_sec"] == 21.0 and obj["client_sec"] == 4.0
+    assert obj["unattributed"] is False
+
+
+def test_talk_mixed_shape_roles():
+    # смешанная форма: строка + объект — обе нормализуются в role
+    m = compute_talk_metrics(SEGS, {"A": "manager", "B": {"role": "client"}})
+    assert m["manager_sec"] == 21.0 and m["client_sec"] == 4.0
+    assert m["unattributed"] is False
+
+
 def test_talk_third_speaker_goes_other():
     segs = SEGS + [{"speaker": "C", "start": 25.0, "end": 27.0, "text": "…"}]
     m = compute_talk_metrics(segs, {"A": "manager", "B": "client", "C": "other"})

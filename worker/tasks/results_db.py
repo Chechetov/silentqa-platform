@@ -64,7 +64,12 @@ def compute_talk_metrics(transcript: list | None, speaker_roles: dict | None) ->
         sp = str(s.get("speaker") or "UNKNOWN")
         per_speaker[sp] = per_speaker.get(sp, 0.0) + (s["end"] - s["start"])
 
-    roles = {str(k): str(v) for k, v in (speaker_roles or {}).items()}
+    # Реальная форма ролей — {spk: {"role": ..., "name": ...}}; терпим и плоскую
+    # {spk: "manager"}. Из объекта берём ключ role, строку — как есть.
+    roles = {}
+    for k, v in (speaker_roles or {}).items():
+        role_val = v.get("role") if isinstance(v, dict) else v
+        roles[str(k)] = str(role_val or "")
     unattributed = not any(v == "manager" for v in roles.values())
     if unattributed:
         ranked = sorted(per_speaker, key=per_speaker.get, reverse=True)
@@ -236,7 +241,7 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
         upsert_quality_result(
             session_id,
             overall_score=report.get("overall_score"),
-            version=report.get("version"),
+            version=report.get("score_version") or report.get("version"),
             scenario_id=meta.get("scenario_id"),
             employee=meta.get("employee"),
             session_created_at=row[1] or datetime.now(timezone.utc),

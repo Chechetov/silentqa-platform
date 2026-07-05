@@ -48,3 +48,22 @@ test('computeTalkMetrics — паритет с worker-версией', () => {
   assert.equal(computeTalkMetrics([], null), null);
   assert.equal(computeTalkMetrics(segs, null).unattributed, true);
 });
+
+test('computeTalkMetrics — object-shaped speaker_map паритет с плоской формой', () => {
+  const segs = [
+    { speaker: 'A', start: 0, end: 10 },
+    { speaker: 'B', start: 10, end: 14 },
+    { speaker: 'A', start: 14, end: 20 },
+    { speaker: 'A', start: 20, end: 25 },
+  ];
+  // реальная форма session.metadata.speaker_map: {spk: {name, role}}
+  const obj = computeTalkMetrics(segs, {
+    A: { name: 'Иван', role: 'manager' },
+    B: { name: null, role: 'client' },
+  });
+  const flat = computeTalkMetrics(segs, { A: 'manager', B: 'client' });
+  assert.deepEqual(obj, flat);
+  assert.equal(obj.manager_sec, 21);
+  assert.equal(obj.client_sec, 4);
+  assert.equal(obj.unattributed, false);
+});

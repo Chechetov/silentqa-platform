@@ -87,6 +87,15 @@ def test_record_reads_session_and_upserts(monkeypatch):
     assert ins[0]["skip_reason"] is None
 
 
+def test_record_reads_score_version_into_version(monkeypatch):
+    # отчёт качества несёт ключ score_version — он должен попасть в колонку version
+    cur = FakeCursor(session_row=SESSION_ROW)
+    _wire(monkeypatch, cur)
+    rdb.record_quality_result("sid-1", {"overall_score": 7, "score_version": 4})
+    ins = [p for s, p in cur.executed if "INSERT INTO quality_results" in s]
+    assert ins and ins[0]["version"] == 4
+
+
 def test_record_skip_reason_no_risk_flags(monkeypatch):
     cur = FakeCursor(session_row=SESSION_ROW)
     _wire(monkeypatch, cur)

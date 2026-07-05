@@ -76,8 +76,12 @@ function computeTalkMetrics(segments, speakerMap) {
     perSpeaker[sp] = (perSpeaker[sp] || 0) + (s.end - s.start);
   });
 
+  // Реальная форма speaker_map — {spk: {name, role}}; терпим и плоскую {spk: 'manager'}.
   let roles = {};
-  Object.entries(speakerMap || {}).forEach(([k, v]) => { roles[k] = String(v); });
+  Object.entries(speakerMap || {}).forEach(([k, v]) => {
+    const rv = (v && typeof v === 'object') ? v.role : v;
+    roles[k] = String(rv || '');
+  });
   const unattributed = !Object.values(roles).some(v => v === 'manager');
   if (unattributed) {
     const ranked = Object.keys(perSpeaker).sort((a, b) => perSpeaker[b] - perSpeaker[a]);
