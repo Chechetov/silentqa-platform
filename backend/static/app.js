@@ -41,7 +41,9 @@ async function router() {
   currentRoute = route;
   updateNav(route);
 
-  if (route === 'calls') {
+  if (route === 'dashboard') {
+    await renderDashboard();
+  } else if (route === 'calls') {
     await renderCalls();
   } else if (route.startsWith('call/')) {
     const id = route.slice(5);
@@ -641,6 +643,27 @@ async function renderCallDetail(id) {
       `;
     }
 
+    // Кто говорил (клиентский расчёт из транскрипта; паритет с worker-метриками)
+    const _talkSegs = Array.isArray(transcript) ? transcript : (transcript && (transcript.segments || transcript.utterances)) || [];
+    const _tm = (typeof computeTalkMetrics === 'function' && Array.isArray(_talkSegs))
+      ? computeTalkMetrics(_talkSegs, (session.metadata || {}).speaker_map) : null;
+    const talkBlock = _tm ? `
+      <div class="card">
+        <div class="card-header"><h3>Кто говорил</h3></div>
+        <div class="talk-split">
+          <div class="talk-bar">
+            <div class="talk-manager" style="width:${Math.round((_tm.talk_ratio || 0) * 100)}%"></div>
+          </div>
+          <div class="talk-legend">
+            Менеджер${_tm.unattributed ? '*' : ''}: ${Math.round((_tm.talk_ratio || 0) * 100)}% ·
+            Клиент: ${Math.round((1 - (_tm.talk_ratio || 0)) * 100)}% ·
+            Длиннейший монолог: ${Math.round(_tm.longest_monologue_sec)}с
+            ${_tm.unattributed ? '<div class="talk-note">* роли определены эвристикой (кто говорил больше)</div>' : ''}
+          </div>
+        </div>
+      </div>` : '';
+    html += talkBlock;
+
     // Summary
     if (summary || detailedSummary) {
       html += `
@@ -1047,10 +1070,130 @@ async function renderCallDetail(id) {
 // ============================================
 // PAGE: Managers
 // ============================================
+// ---- Дашборд руководителя ----
+let _dashDays = 30;
+
+const OBJECTION_RU = {
+  already_contacted: 'Уже общались', no_time: 'Нет времени',
+  not_interested: 'Не интересно', too_expensive: 'Дорого',
+  has_broker: 'Есть свой брокер', just_looking: 'Просто смотрю',
+  send_info: 'Пришлите информацию', other: 'Другое',
+};
+
+function _delta(cur, prev, invert = false) {
+  if (cur == null || prev == null || prev === 0) return '';
+  const d = cur - prev;
+  if (Math.abs(d) < 1e-9) return '';
+  const up = d > 0;
+  const good = invert ? !up : up;
+  const cls = good ? 'delta-good' : 'delta-bad';
+  return `<span class="kpi-delta ${cls}">${up ? '↑' : '↓'} ${Math.abs(Math.round(d * 100) / 100)}</span>`;
+}
+
+async function renderDashboard() {
+  showLoading();
+  try {
+    const granularity = _dashDays >= 90 ? 'week' : 'day';
+    const [ov, managers, objections, risks] = await Promise.all([
+      api(`/api/stats/overview?days=${_dashDays}&granularity=${granularity}`),
+      api(`/api/stats/managers?days=${_dashDays}`),
+      api(`/api/stats/objections?days=${_dashDays}`),
+      api(`/api/stats/risk-calls?days=${_dashDays}&limit=10`),
+    ]);
+    const k = ov.kpi, p = ov.prev_kpi;
+    const hasData = k.calls > 0;
+
+    const kpiRow = `
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-value">${k.calls}${_delta(k.calls, p.calls)}</div><div class="stat-label">Звонков за период</div></div>
+        <div class="stat-card"><div class="stat-value">${k.avg_score != null ? k.avg_score : '--'}${_delta(k.avg_score, p.avg_score)}</div><div class="stat-label">Средняя оценка</div></div>
+        <div class="stat-card"><div class="stat-value">${k.risk_calls}${_delta(k.risk_calls, p.risk_calls, true)}</div><div class="stat-label">Рисковых звонков</div></div>
+        <div class="stat-card"><div class="stat-value">${k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) + '%' : '--'}</div><div class="stat-label">Доля речи менеджера</div></div>
+      </div>`;
+
+    const series = (ov.series || []).map(b => ({ label: b.bucket, value: b.avg_score }));
+    const trend = `
+      <div class="card">
+        <div class="card-header"><h3>Тренд средней оценки</h3></div>
+        ${svgLineChart(series, { yMax: 10 })}
+      </div>`;
+
+    const mgrRows = managers.map(m => `
+      <tr>
+        <td>${escapeHtml(m.name)}</td>
+        <td>${m.calls}</td>
+        <td>${m.avg_score != null ? `<span style="color:${m.avg_score >= 7 ? 'var(--good)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
+        <td>${svgSparkline(m.spark)}</td>
+        <td>${m.risk_calls || 0}</td>
+        <td>${m.avg_talk_ratio != null ? Math.round(m.avg_talk_ratio * 100) + '%' : '--'}</td>
+      </tr>`).join('');
+    const mgrTable = `
+      <div class="card">
+        <div class="card-header"><h3>Менеджеры</h3></div>
+        <table class="data-table"><thead><tr>
+          <th>Менеджер</th><th>Звонки</th><th>Ср. оценка</th><th>Динамика</th><th>Риск</th><th>Речь</th>
+        </tr></thead><tbody>${mgrRows || '<tr><td colspan="6">Нет данных</td></tr>'}</tbody></table>
+      </div>`;
+
+    const maxObj = Math.max(1, ...objections.map(o => o.count));
+    const objRows = objections.map(o => `
+      <tr>
+        <td>${escapeHtml(OBJECTION_RU[o.category] || o.category)}</td>
+        <td>${o.count} ${svgBarRow(o.count, maxObj)}</td>
+        <td>${o.resolved_rate != null ? Math.round(o.resolved_rate * 100) + '%' : '--'}</td>
+        <td class="obj-examples">${(o.examples || []).map(e => escapeHtml(e)).join(' · ')}</td>
+      </tr>`).join('');
+    const objBlock = `
+      <div class="card">
+        <div class="card-header"><h3>Возражения</h3></div>
+        <table class="data-table"><thead><tr>
+          <th>Категория</th><th>Сколько</th><th>Отработано</th><th>Примеры</th>
+        </tr></thead><tbody>${objRows || '<tr><td colspan="4">Возражений не зафиксировано</td></tr>'}</tbody></table>
+      </div>`;
+
+    const riskRows = risks.map(r => `
+      <tr class="clickable" data-sid="${escapeHtml(r.session_id)}">
+        <td>${new Date(r.created_at).toLocaleDateString('ru-RU')}</td>
+        <td>${escapeHtml(r.employee || '—')}</td>
+        <td>${r.score != null ? r.score + '/10' : '--'}</td>
+        <td>${(r.risk_flags || []).map(f => escapeHtml({low_score: 'низкая оценка', negative_sentiment: 'негатив', unresolved_objections: 'возражения'}[f] || f)).join(', ')}</td>
+      </tr>`).join('');
+    const riskBlock = `
+      <div class="card">
+        <div class="card-header"><h3>Рисковые звонки</h3></div>
+        <table class="data-table" id="riskTable"><thead><tr>
+          <th>Дата</th><th>Менеджер</th><th>Оценка</th><th>Причина</th>
+        </tr></thead><tbody>${riskRows || '<tr><td colspan="4">Рисковых звонков нет 🎉</td></tr>'}</tbody></table>
+      </div>`;
+
+    app.innerHTML = `
+      <div class="page-header">
+        <h2>Дашборд</h2>
+        <div class="dash-period">
+          ${[7, 30, 90].map(d => `<button class="btn btn-sm ${d === _dashDays ? 'btn-primary' : ''}" data-days="${d}">${d} дн</button>`).join('')}
+        </div>
+      </div>
+      ${hasData ? kpiRow + trend + mgrTable + objBlock + riskBlock
+        : '<div class="empty-state"><p>Нет данных за период — обработайте звонки или запустите бэкфилл (worker/scripts/backfill_quality_results.py)</p></div>'}`;
+
+    $$('.dash-period button').forEach(b => b.addEventListener('click', () => {
+      _dashDays = parseInt(b.dataset.days, 10);
+      renderDashboard();
+    }));
+    $$('#riskTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
+      navigate('#call/' + tr.dataset.sid);
+    }));
+  } catch (err) {
+    app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки дашборда: ${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
 async function renderManagers() {
   showLoading();
   try {
     const managers = await api('/api/managers');
+    const _totCalls = managers.reduce((s, m) => s + (m.total_calls || 0), 0);
+    const _wAvg = _totCalls ? managers.reduce((s, m) => s + (m.avg_score || 0) * (m.total_calls || 0), 0) / _totCalls : null;
 
     app.innerHTML = `
       <div class="page-header">
@@ -1068,7 +1211,7 @@ async function renderManagers() {
         </div>
         <div class="stat-card">
           <div class="stat-label">Средний балл</div>
-          <div class="stat-value">${managers.length ? (managers.reduce((s, m) => s + m.avg_score, 0) / managers.length).toFixed(1) : '--'}</div>
+          <div class="stat-value">${_wAvg != null && _wAvg > 0 ? _wAvg.toFixed(1) : '--'}</div>
         </div>
       </div>
       <div class="table-container">

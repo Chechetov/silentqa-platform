@@ -1859,3 +1859,20 @@ tbody td {
 .transcript-search-count { color: var(--text-secondary); font-size: 13px; white-space: nowrap; }
 mark.transcript-match { background: rgba(210,153,34,0.30); color: inherit; border-radius: 2px; }
 mark.transcript-match--current { background: rgba(210,153,34,0.65); box-shadow: 0 0 0 2px rgba(210,153,34,0.5); }
+
+/* --- Дашборд руководителя --- */
+.dash-period { display: flex; gap: 6px; }
+.kpi-delta { font-size: 0.65em; margin-left: 6px; vertical-align: middle; }
+.delta-good { color: var(--good); }
+.delta-bad { color: var(--danger); }
+.chart-line .chart-grid { stroke: var(--border, #393431); stroke-width: 0.5; opacity: 0.4; }
+.chart-line .chart-axis, .chart-line .chart-empty { fill: var(--text-secondary, #b2a99b); font-size: 10px; }
+.sparkline { color: var(--accent, #d97757); }
+.bar-row .bar-bg { fill: var(--border, #393431); opacity: 0.35; }
+.bar-row .bar-fill { fill: var(--accent, #d97757); }
+.obj-examples { font-size: 0.85em; color: var(--text-secondary, #b2a99b); max-width: 380px; }
+.talk-split { padding: 12px 16px; }
+.talk-bar { height: 14px; border-radius: 7px; background: var(--border, #393431); overflow: hidden; }
+.talk-manager { height: 100%; background: var(--accent, #d97757); }
+.talk-legend { margin-top: 8px; font-size: 0.9em; color: var(--text-secondary, #b2a99b); }
+.talk-note { font-size: 0.8em; opacity: 0.7; }
