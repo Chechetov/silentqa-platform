@@ -157,6 +157,7 @@ ON CONFLICT (session_id) DO UPDATE SET
     sentiment_counts = EXCLUDED.sentiment_counts,
     risk_flags = EXCLUDED.risk_flags,
     updated_at = now()
+RETURNING (xmax = 0) AS inserted
 """
 
 
@@ -168,7 +169,10 @@ def upsert_quality_result(session_id: str, *, overall_score, version, scenario_i
                           employee, session_created_at, duration_seconds, skip_reason,
                           criteria, objections, talk_metrics, sentiment_counts,
                           risk_flags) -> bool:
-    """Голый идемпотентный upsert. Исключения НЕ глотает — ловит вызывающий."""
+    """Голый идемпотентный upsert. Исключения НЕ глотает — ловит вызывающий.
+
+    Возвращает True при ПЕРВОЙ вставке строки (xmax = 0), False при UPDATE
+    по ON CONFLICT (редоставка/reprocess) — нужно для однократного алерта."""
     conn = tenant_connect()
     try:
         with conn:
@@ -188,9 +192,10 @@ def upsert_quality_result(session_id: str, *, overall_score, version, scenario_i
                     "sentiment_counts": _jsonb(sentiment_counts),
                     "risk_flags": _jsonb(risk_flags or []),
                 })
+                inserted = bool(cur.fetchone()[0])
     finally:
         conn.close()
-    return True
+    return inserted
 
 
 def _fetch_session_row(session_id: str):
@@ -221,8 +226,12 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
                           sentiment_results: list | None = None,
                           company_config: dict | None = None,
                           skip_reason: str | None = None,
-                          duration_seconds: float | None = None) -> list[str]:
-    """Единая best-effort точка записи аналитики (пайплайн зовёт только её)."""
+                          duration_seconds: float | None = None,
+                          suppress_alert: bool = False) -> list[str]:
+    """Единая best-effort точка записи аналитики (пайплайн зовёт только её).
+
+    Алерт шлём только при ПЕРВОЙ вставке строки и при suppress_alert=False:
+    редоставка/reprocess (UPDATE по конфликту) и бэкфилл истории не спамят."""
     try:
         row = _fetch_session_row(session_id)
         if row is None:
@@ -238,7 +247,7 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
         flags = [] if skip_reason else compute_risk_flags(
             report.get("overall_score"), counts, objections, thresholds)
 
-        upsert_quality_result(
+        inserted = upsert_quality_result(
             session_id,
             overall_score=report.get("overall_score"),
             version=report.get("score_version") or report.get("version"),
@@ -253,7 +262,7 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
             sentiment_counts=counts,
             risk_flags=flags,
         )
-        if flags:
+        if flags and inserted and not suppress_alert:
             _send_risk_alert_safe(
                 slug=get_tenant_slug(), session_id=session_id,
                 employee=meta.get("employee"),

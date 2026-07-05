@@ -4,12 +4,12 @@
 для SQL-агрегаций дашборда руководителя (тренды/лидерборд/возражения/риски).
 Пишет worker (results_db.record_quality_result), читает backend (/api/stats).
 
-Revision ID: 018_quality_results
+Revision ID: 018
 Revises: 017
 """
 from alembic import op
 
-revision = "018_quality_results"
+revision = "018"
 down_revision = "017"
 branch_labels = None
 depends_on = None

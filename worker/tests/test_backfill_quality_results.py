@@ -33,11 +33,24 @@ def test_apply_upserts(tmp_path, monkeypatch):
                     sentiment=[{"sentiment": "positive"}])
     seen = {}
     monkeypatch.setattr(bf, "_upsert_from_files",
-                        lambda sid, quality, transcript, sentiment, card: seen.update(
-                            sid=sid, q=quality) or True)
+                        lambda sid, quality, transcript, sentiment, card, company_config=None:
+                        seen.update(sid=sid, q=quality, cfg=company_config) or True)
     monkeypatch.setattr(bf, "_session_exists", lambda sid: True)
-    stats = bf.backfill_tenant("acme", tmp_path, apply=True)
+    stats = bf.backfill_tenant("acme", tmp_path, apply=True,
+                               company_config={"id": "acme"})
     assert stats["upserted"] == 1 and seen["sid"] == "sid-1"
+    assert seen["cfg"] == {"id": "acme"}   # конфиг прокинут в _upsert_from_files
+
+
+def test_upsert_from_files_passes_company_config_and_suppresses_alert(monkeypatch):
+    # _upsert_from_files должен прокинуть company_config и suppress_alert=True в record
+    seen = {}
+    monkeypatch.setattr(bf, "record_quality_result",
+                        lambda *a, **k: seen.update(k) or [])
+    bf._upsert_from_files("sid-1", {"overall_score": 5}, None, None, None,
+                          company_config={"id": "acme"})
+    assert seen["company_config"] == {"id": "acme"}
+    assert seen["suppress_alert"] is True
 
 
 def test_missing_session_row_skipped(tmp_path, monkeypatch):

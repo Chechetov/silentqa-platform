@@ -1865,6 +1865,7 @@ mark.transcript-match--current { background: rgba(210,153,34,0.65); box-shadow: 
 .kpi-delta { font-size: 0.65em; margin-left: 6px; vertical-align: middle; }
 .delta-good { color: var(--good); }
 .delta-bad { color: var(--danger); }
+.delta-neutral { color: var(--text-secondary); }
 .chart-line .chart-grid { stroke: var(--border, #393431); stroke-width: 0.5; opacity: 0.4; }
 .chart-line .chart-axis, .chart-line .chart-empty { fill: var(--text-secondary, #b2a99b); font-size: 10px; }
 .sparkline { color: var(--accent, #d97757); }

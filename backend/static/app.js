@@ -1080,13 +1080,13 @@ const OBJECTION_RU = {
   send_info: 'Пришлите информацию', other: 'Другое',
 };
 
-function _delta(cur, prev, invert = false) {
+function _delta(cur, prev, invert = false, neutral = false) {
   if (cur == null || prev == null || prev === 0) return '';
   const d = cur - prev;
   if (Math.abs(d) < 1e-9) return '';
   const up = d > 0;
-  const good = invert ? !up : up;
-  const cls = good ? 'delta-good' : 'delta-bad';
+  // neutral: полярность неоднозначна (talk-ratio) — показываем дельту без good/bad-окраски
+  const cls = neutral ? 'delta-neutral' : ((invert ? !up : up) ? 'delta-good' : 'delta-bad');
   return `<span class="kpi-delta ${cls}">${up ? '↑' : '↓'} ${Math.abs(Math.round(d * 100) / 100)}</span>`;
 }
 
@@ -1108,7 +1108,7 @@ async function renderDashboard() {
         <div class="stat-card"><div class="stat-value">${k.calls}${_delta(k.calls, p.calls)}</div><div class="stat-label">Звонков за период</div></div>
         <div class="stat-card"><div class="stat-value">${k.avg_score != null ? k.avg_score : '--'}${_delta(k.avg_score, p.avg_score)}</div><div class="stat-label">Средняя оценка</div></div>
         <div class="stat-card"><div class="stat-value">${k.risk_calls}${_delta(k.risk_calls, p.risk_calls, true)}</div><div class="stat-label">Рисковых звонков</div></div>
-        <div class="stat-card"><div class="stat-value">${k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) + '%' : '--'}</div><div class="stat-label">Доля речи менеджера</div></div>
+        <div class="stat-card"><div class="stat-value">${k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) + '%' : '--'}${_delta(k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) : null, p.avg_talk_ratio != null ? Math.round(p.avg_talk_ratio * 100) : null, false, true)}</div><div class="stat-label">Доля речи менеджера</div></div>
       </div>`;
 
     const series = (ov.series || []).map(b => ({ label: b.bucket, value: b.avg_score }));
@@ -1119,7 +1119,7 @@ async function renderDashboard() {
       </div>`;
 
     const mgrRows = managers.map(m => `
-      <tr>
+      <tr class="clickable" data-name="${escapeHtml(m.name)}">
         <td>${escapeHtml(m.name)}</td>
         <td>${m.calls}</td>
         <td>${m.avg_score != null ? `<span style="color:${m.avg_score >= 7 ? 'var(--good)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
@@ -1130,7 +1130,7 @@ async function renderDashboard() {
     const mgrTable = `
       <div class="card">
         <div class="card-header"><h3>Менеджеры</h3></div>
-        <table class="data-table"><thead><tr>
+        <table class="data-table" id="mgrTable"><thead><tr>
           <th>Менеджер</th><th>Звонки</th><th>Ср. оценка</th><th>Динамика</th><th>Риск</th><th>Речь</th>
         </tr></thead><tbody>${mgrRows || '<tr><td colspan="6">Нет данных</td></tr>'}</tbody></table>
       </div>`;
@@ -1182,6 +1182,10 @@ async function renderDashboard() {
     }));
     $$('#riskTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
       navigate('#call/' + tr.dataset.sid);
+    }));
+    // Точечного роута #managers/<name> в SPA нет — ведём на общий #managers (спек §7).
+    $$('#mgrTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
+      navigate('#managers');
     }));
   } catch (err) {
     app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки дашборда: ${escapeHtml(err.message)}</p></div>`;

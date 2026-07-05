@@ -28,7 +28,7 @@ def send_risk_alert(*, slug: str | None, session_id: str, employee: str | None,
                     score, flags: list[str], company_config: dict | None = None) -> bool:
     reasons = ", ".join(FLAG_RU.get(f, f) for f in flags)
     who = employee or "менеджер не указан"
-    score_txt = f"{score}/10" if score is not None else "без оценки"
+    score_txt = f"{score:g}/10" if score is not None else "без оценки"
     url = f"https://{slug}.silentqa.com/#call/{session_id}" if slug else f"#call/{session_id}"
     msg = f"⚠️ SilentQA [{slug or '?'}]: рисковый звонок — {who}, оценка {score_txt} ({reasons})\n{url}"
 

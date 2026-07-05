@@ -9,14 +9,20 @@ import tasks.results_db as rdb
 
 
 class FakeCursor:
-    def __init__(self, session_row=None):
+    def __init__(self, session_row=None, inserted=True):
         self.executed = []
         self._session_row = session_row
+        self._inserted = inserted
+        self._last_sql = ""
 
     def execute(self, sql, params=None):
         self.executed.append((sql, params))
+        self._last_sql = sql
 
     def fetchone(self):
+        # INSERT ... RETURNING (xmax = 0) → (inserted,); SELECT ... → session_row
+        if "INSERT INTO quality_results" in self._last_sql:
+            return (self._inserted,)
         return self._session_row
 
     def __enter__(self):
@@ -130,3 +136,43 @@ def test_record_calls_alert_on_risk(monkeypatch):
                         lambda **kw: called.update(kw))
     rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
     assert called["session_id"] == "sid-1" and "low_score" in called["flags"]
+
+
+def test_upsert_returns_inserted_flag(monkeypatch):
+    # первая вставка (xmax=0 → True) → inserted=True; UPDATE по конфликту → False
+    ins = FakeCursor(inserted=True)
+    _wire(monkeypatch, ins)
+    assert rdb.upsert_quality_result(
+        "sid-1", overall_score=7, version=4, scenario_id=None, employee=None,
+        session_created_at=SESSION_ROW[1], duration_seconds=1.0, skip_reason=None,
+        criteria=None, objections=[], talk_metrics=None, sentiment_counts=None,
+        risk_flags=[]) is True
+    upd = FakeCursor(inserted=False)
+    _wire(monkeypatch, upd)
+    assert rdb.upsert_quality_result(
+        "sid-1", overall_score=7, version=4, scenario_id=None, employee=None,
+        session_created_at=SESSION_ROW[1], duration_seconds=1.0, skip_reason=None,
+        criteria=None, objections=[], talk_metrics=None, sentiment_counts=None,
+        risk_flags=[]) is False
+
+
+def test_record_no_alert_on_update(monkeypatch):
+    # редоставка/повтор: строка уже была (INSERT→UPDATE, inserted=False) → без алерта
+    cur = FakeCursor(session_row=SESSION_ROW, inserted=False)
+    _wire(monkeypatch, cur)
+    called = {}
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: called.update(kw))
+    flags = rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert "low_score" in flags   # флаги всё равно возвращаются
+    assert not called             # но алерт НЕ зван — это не первая вставка
+
+
+def test_record_suppress_alert_even_when_inserted(monkeypatch):
+    cur = FakeCursor(session_row=SESSION_ROW, inserted=True)
+    _wire(monkeypatch, cur)
+    called = {}
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: called.update(kw))
+    flags = rdb.record_quality_result(
+        "sid-1", {"overall_score": 1, "version": 4}, suppress_alert=True)
+    assert "low_score" in flags
+    assert not called

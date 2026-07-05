@@ -26,6 +26,7 @@ from tenancy.db import tenant_connect
 from tenancy.identifiers import schema_for_slug
 from tenancy.registry import iter_active_tenants
 
+from tasks.company_config import load_company_config, tenant_company_config_id  # noqa: E402
 from tasks.results_db import record_quality_result  # noqa: E402
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
@@ -55,17 +56,21 @@ def _session_exists(session_id: str) -> bool:
         conn.close()
 
 
-def _upsert_from_files(session_id: str, quality, transcript, sentiment, card) -> bool:
+def _upsert_from_files(session_id: str, quality, transcript, sentiment, card,
+                       company_config=None) -> bool:
     # record_quality_result сам читает сессию, считает метрики и upsert'ит;
     # skip_reason достаём из самого отчёта (гейтовые отчёты его содержат).
+    # suppress_alert=True: бэкфилл истории НЕ шлёт алерты (иначе спам-волна).
     flags = record_quality_result(
         session_id, quality, card=card, transcript=transcript,
-        sentiment_results=sentiment,
-        skip_reason=(quality or {}).get("skip_reason"))
+        sentiment_results=sentiment, company_config=company_config,
+        skip_reason=(quality or {}).get("skip_reason"),
+        suppress_alert=True)
     return True  # best-effort: ошибки уже залогированы внутри
 
 
-def backfill_tenant(slug: str, results_root, apply: bool = False) -> dict:
+def backfill_tenant(slug: str, results_root, apply: bool = False,
+                    company_config=None) -> dict:
     stats = {"found": 0, "upserted": 0, "skipped": 0}
     tenant_dir = Path(results_root) / slug
     if not tenant_dir.is_dir():
@@ -86,7 +91,8 @@ def backfill_tenant(slug: str, results_root, apply: bool = False) -> dict:
         _upsert_from_files(sid, quality,
                            _load(session_dir, "transcript.json"),
                            _load(session_dir, "sentiment.json"),
-                           _load(session_dir, "card.json"))
+                           _load(session_dir, "card.json"),
+                           company_config)
         stats["upserted"] += 1
     return stats
 
@@ -107,7 +113,11 @@ def main() -> None:
     for slug in slugs:
         token = set_tenant_schema(schema_for_slug(slug))
         try:
-            stats = backfill_tenant(slug, RESULTS_ROOT, apply=args.apply)
+            # Конфиг тенанта нужен, чтобы risk_flags истории считались теми же
+            # порогами (alerts.*), что и live-путь — иначе история разъедется.
+            cfg = load_company_config(tenant_company_config_id())
+            stats = backfill_tenant(slug, RESULTS_ROOT, apply=args.apply,
+                                    company_config=cfg)
         finally:
             reset_tenant_schema(token)
         logger.info(f"[{mode}] {slug}: найдено {stats['found']}, "

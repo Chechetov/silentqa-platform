@@ -888,7 +888,7 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
         transcript=transcript_with_speakers,
         sentiment_results=sentiment_results,
         company_config=company_config,
-        duration_seconds=_get_audio_duration(audio_path),
+        duration_seconds=_get_audio_duration(audio_path) or None,
     )
     if risk_flags:
         logger.info(f"[{session_id}] Рисковые флаги: {risk_flags}")
