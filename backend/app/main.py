@@ -14,7 +14,7 @@ from starlette.concurrency import run_in_threadpool
 from app.config import settings
 from app.migrate import check as migrate_check
 from app.routes import (
-    chunks, sessions, companies, transcripts, analysis, managers,
+    chunks, sessions, companies, transcripts, analysis, managers, stats,
     amocrm, templates, complexes, knowledge, auth, user_auth, tenancy_check, platform_auth,
     platform_tenants, users, eval_profiles,
 )
@@ -69,6 +69,7 @@ app.include_router(transcripts.router)
 app.include_router(companies.router)
 app.include_router(analysis.router)
 app.include_router(managers.router)
+app.include_router(stats.router)
 app.include_router(amocrm.router)
 app.include_router(templates.router)
 app.include_router(complexes.router)
