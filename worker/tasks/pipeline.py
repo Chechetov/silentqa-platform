@@ -36,6 +36,7 @@ from tasks.amocrm_sync import find_lead_by_phone, create_enriched_note, update_n
 from tasks.deal_summary import build_deal_summary, push_deal_summary
 from tasks.lead_lock import lead_lock
 from tasks.tenant_slots import try_acquire, release
+from tasks.results_db import record_quality_result
 
 logger = logging.getLogger(__name__)
 
@@ -581,6 +582,9 @@ def _run_gates(task, session_id: str, audio_path: str, config: dict, company_con
         logger.info(f"[{session_id}] Short call ({audio_duration:.1f}s < {SHORT_CALL_THRESHOLD_SEC}s), skipping full evaluation")
         quality_report = _build_short_call_report(audio_duration)
         save_results(session_id, "quality", quality_report)
+        record_quality_result(session_id, quality_report,
+                              skip_reason="too_short",
+                              duration_seconds=audio_duration)
 
         use_extended = bool(scenario and scenario.get("prompt"))
         if use_extended:
@@ -605,6 +609,9 @@ def _run_gates(task, session_id: str, audio_path: str, config: dict, company_con
         )
         quality_report = _build_broken_recording_report(audio_duration, silence_stats)
         save_results(session_id, "quality", quality_report)
+        record_quality_result(session_id, quality_report,
+                              skip_reason="broken_recording",
+                              duration_seconds=audio_duration)
 
         use_extended = bool(scenario and scenario.get("prompt"))
         if use_extended:
@@ -873,6 +880,18 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
     speaker_roles = quality_report.get("speaker_roles")
     if speaker_roles:
         _save_speaker_roles(session_id, speaker_roles)
+
+    # === 7.6 Аналитика дашборда (best-effort, не влияет на пайплайн) ===
+    risk_flags = record_quality_result(
+        session_id, quality_report,
+        card=card,
+        transcript=transcript_with_speakers,
+        sentiment_results=sentiment_results,
+        company_config=company_config,
+        duration_seconds=_get_audio_duration(audio_path),
+    )
+    if risk_flags:
+        logger.info(f"[{session_id}] Рисковые флаги: {risk_flags}")
 
     # === 7.5 Next-call plan (LLM call 2) ===
     next_call_plan = None
