@@ -1,8 +1,10 @@
 """Бэкфилл quality_results из исторических JSON-файлов результатов.
 
 Dry-run по умолчанию; --apply для записи. Идемпотентен (upsert) — безопасно
-гонять повторно, в т.ч. после reassess_quality.py (тот пишет только файлы,
-эта команда доносит изменения до таблицы).
+гонять повторно, в т.ч. после reprocess-потока (тот перезаписывает quality.json,
+и повторный прогон доносит изменения до таблицы). NB: reassess_quality.py пишет
+только quality_v2.json и не трогает quality.json, поэтому его результаты этот
+бэкфилл НЕ подхватывает.
 
   python scripts/backfill_quality_results.py --tenant acme          # dry-run
   python scripts/backfill_quality_results.py --all --apply

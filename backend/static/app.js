@@ -646,7 +646,7 @@ async function renderCallDetail(id) {
     // Кто говорил (клиентский расчёт из транскрипта; паритет с worker-метриками)
     const _talkSegs = Array.isArray(transcript) ? transcript : (transcript && (transcript.segments || transcript.utterances)) || [];
     const _tm = (typeof computeTalkMetrics === 'function' && Array.isArray(_talkSegs))
-      ? computeTalkMetrics(_talkSegs, (session.metadata || {}).speaker_map) : null;
+      ? computeTalkMetrics(_talkSegs, _getSpeakerMap()) : null;
     const talkBlock = _tm ? `
       <div class="card">
         <div class="card-header"><h3>Кто говорил</h3></div>

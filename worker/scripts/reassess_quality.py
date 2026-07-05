@@ -11,7 +11,10 @@ Usage (from /root/projects/realestate/worker):
 
     ../.venv/bin/python3 -m scripts.reassess_quality --tenant <slug> [--limit N] [--only SESSION_ID]
 
-После массовой переоценки прогони backfill_quality_results.py --apply — таблица quality_results обновится из файлов.
+NB: этот скрипт пишет quality_v2.json и НЕ обновляет quality.json/таблицу
+quality_results; в таблицу попадают только результаты reprocess-потока (который
+перезаписывает quality.json — после него можно прогнать
+scripts/backfill_quality_results.py --apply).
 """
 from __future__ import annotations
 
