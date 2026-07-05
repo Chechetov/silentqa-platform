@@ -45,10 +45,10 @@ def test_manager_own_name_passes_scope_gate(client, fake_redis, monkeypatch):
     """Своё имя НЕ отбивается 403 (дальше штатный 404 — звонков нет)."""
     from app.routes import managers as managers_mod
 
-    async def fake_all_sessions(db):
+    async def fake_sessions_for(db, name):
         return []
 
-    monkeypatch.setattr(managers_mod, "_all_sessions", fake_all_sessions)
+    monkeypatch.setattr(managers_mod, "_sessions_for", fake_sessions_for)
     r = client.get("/api/managers/Иванов/sessions",
                    cookies=_cookie(fake_redis, employee="Иванов"))
     assert r.status_code == 404  # не 403: scope пройден, данных нет
@@ -57,13 +57,10 @@ def test_manager_own_name_passes_scope_gate(client, fake_redis, monkeypatch):
 def test_manager_unbound_sees_empty(client, fake_redis, monkeypatch):
     from app.routes import managers as managers_mod
 
-    async def fake_all_sessions(db):
-        class S:  # минимальный стаб Session
-            metadata_ = {"employee": "Иванов"}
-            created_at = None
-        return [S()]
+    async def fake_agg_rows(db, scope):
+        return []
 
-    monkeypatch.setattr(managers_mod, "_all_sessions", fake_all_sessions)
+    monkeypatch.setattr(managers_mod, "_manager_agg_rows", fake_agg_rows)
     r = client.get("/api/managers", cookies=_cookie(fake_redis, employee=None))
     assert r.status_code == 200
     assert r.json() == []
