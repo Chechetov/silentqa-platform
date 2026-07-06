@@ -19,7 +19,11 @@ _VALID_OUT = {"headline": "h", "strengths": [], "growth_areas": [], "drill": "d"
 
 
 def _patch_capture(monkeypatch):
-    """Патчит structured_completion капчером; возвращает список kwargs-вызовов."""
+    """Патчит structured_completion капчером; возвращает список kwargs-вызовов.
+
+    Ставит OPENAI_API_KEY, чтобы api_key-гейт не отсекал вызов до фейка.
+    """
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key")
     calls = []
 
     def fake(**kwargs):
@@ -129,6 +133,58 @@ def test_compact_report_filters(monkeypatch):
     assert "ЗАКРЫТОЕ_ВОЗРАЖЕНИЕ" not in user        # resolved — не тянем
 
 
+# === Легенда ролей спикеров (Q-1) ===
+
+def test_speaker_legend_dict_roles_in_user(monkeypatch):
+    calls = _patch_capture(monkeypatch)
+    report = {
+        "overall_score": 5,
+        "speaker_roles": {
+            "SPEAKER_00": {"role": "manager", "name": "Анна"},
+            "SPEAKER_01": {"role": "client", "name": None},
+        },
+    }
+    coaching.generate_coaching(_TRANSCRIPT, report)
+    user = calls[0]["user"]
+    assert "Роли спикеров:" in user
+    assert "SPEAKER_00 — менеджер (Анна)" in user
+    assert "SPEAKER_01 — клиент" in user             # name=None → без скобок
+
+
+def test_speaker_legend_legacy_string_roles(monkeypatch):
+    calls = _patch_capture(monkeypatch)
+    # Легаси-формат: значение — голая строка-роль, не dict. Не должно ронять.
+    report = {
+        "overall_score": 5,
+        "speaker_roles": {"SPEAKER_00": "manager", "SPEAKER_01": "client"},
+    }
+    coaching.generate_coaching(_TRANSCRIPT, report)
+    user = calls[0]["user"]
+    assert "Роли спикеров:" in user
+    assert "SPEAKER_00 — менеджер" in user
+    assert "SPEAKER_01 — клиент" in user
+
+
+def test_no_speaker_roles_no_legend(monkeypatch):
+    calls = _patch_capture(monkeypatch)
+    coaching.generate_coaching(_TRANSCRIPT, {"overall_score": 5})   # нет speaker_roles
+    assert "Роли спикеров" not in calls[0]["user"]
+
+
+def test_empty_speaker_roles_no_legend(monkeypatch):
+    calls = _patch_capture(monkeypatch)
+    coaching.generate_coaching(_TRANSCRIPT, {"overall_score": 5, "speaker_roles": {}})
+    assert "Роли спикеров" not in calls[0]["user"]
+
+
+def test_system_has_manager_only_and_counters(monkeypatch):
+    # Правило «цитаты только из реплик менеджера» + явные счётчики strengths/growth_areas.
+    assert "менеджера" in coaching._SYSTEM
+    assert "strengths: 1-2" in coaching._SYSTEM
+    assert "growth_areas: 1-3" in coaching._SYSTEM
+    assert "минимум 1" in coaching._SYSTEM
+
+
 # === Гейт пустого транскрипта ===
 
 def test_empty_transcript_returns_none(monkeypatch):
@@ -141,6 +197,14 @@ def test_speechless_transcript_returns_none(monkeypatch):
     calls = _patch_capture(monkeypatch)
     speechless = [{"speaker": "m", "start": 0, "end": 1, "text": "   "}]
     assert coaching.generate_coaching(speechless, {"overall_score": 5}) is None
+    assert calls == []
+
+
+def test_missing_api_key_returns_none(monkeypatch):
+    # Q-2: без OPENAI_API_KEY — тихо None, без вызова LLM (как plan_next_call).
+    calls = _patch_capture(monkeypatch)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    assert coaching.generate_coaching(_TRANSCRIPT, {"overall_score": 5}) is None
     assert calls == []
 
 

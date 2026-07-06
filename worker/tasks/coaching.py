@@ -85,12 +85,54 @@ _SYSTEM = """Ты — коуч по продажам/переговорам. П�
 
 Правила:
 - Цитаты — ДОСЛОВНО из транскрипта (копируй, не пересказывай).
+- moment_quote и better_version бери ТОЛЬКО из реплик менеджера — коучим менеджера, не клиента (если приведена легенда ролей — ориентируйся на неё; иначе определи менеджера по контексту разговора).
 - time — число секунд из скобок [t] у процитированной реплики.
 - Тон — поддерживающий и конкретный, без общих слов ("будь внимательнее" — запрещено, только конкретика "вместо X скажи Y").
 - better_version — 1-2 живые фразы от первого лица, готовые к произнесению.
 - headline — самое важное одно.
 - drill — одно микро-упражнение на следующий звонок.
+- strengths: 1-2 пункта. growth_areas: 1-3 пункта, минимум 1 — даже на сильном звонке найди зону роста.
 - Не дублируй generic-рекомендации из отчёта — давай именно разбор моментов этого разговора."""
+
+
+# Роли из speaker_roles (quality.py) → человекочитаемо для легенды в user-промпте.
+_ROLE_RU = {
+    "manager": "менеджер",
+    "broker": "менеджер",
+    "client": "клиент",
+    "doctor": "врач",
+    "other": "другой",
+}
+
+
+def _speaker_legend(speaker_roles) -> str:
+    """Строит легенду ролей спикеров для user-промпта.
+
+    На проде transcript[].speaker = сырые ID (SPEAKER_00…), а карта ролей лежит в
+    quality_report["speaker_roles"]. Нормализует оба формата значения:
+    `{id: {"role": str, "name": str|null}}` (после _convert_speaker_roles) и легаси
+    `{id: "role"}`-строку. Пусто/не dict/нет валидных записей → "" (легенду не печатаем).
+    """
+    if not isinstance(speaker_roles, dict) or not speaker_roles:
+        return ""
+    parts: list[str] = []
+    for sid, val in speaker_roles.items():
+        if isinstance(val, dict):
+            role = (val.get("role") or "").strip()
+            name = (val.get("name") or "").strip()
+        else:  # легаси: голая строка-роль
+            role = str(val or "").strip()
+            name = ""
+        if not sid:
+            continue
+        role_ru = _ROLE_RU.get(role.lower(), role) if role else "?"
+        entry = f"{sid} — {role_ru}"
+        if name:
+            entry += f" ({name})"
+        parts.append(entry)
+    if not parts:
+        return ""
+    return "Роли спикеров: " + "; ".join(parts)
 
 
 def _format_transcript(transcript: list[dict]) -> str:
@@ -162,19 +204,27 @@ def _compact_report(quality_report: dict) -> str:
 def generate_coaching(transcript_with_speakers: list[dict], quality_report: dict) -> dict | None:
     """Генерирует коучинг-инсайт по звонку.
 
-    Returns dict (контракт coaching.json) либо None — только при пустом/безречевом
-    транскрипте (тогда LLM не зовётся). Любой сбой LLM всплывает наверх — вызывающий
-    (pipeline / бэкфилл) держит best-effort try/except.
+    Returns dict (контракт coaching.json) либо None — при пустом/безречевом
+    транскрипте или отсутствии OPENAI_API_KEY (тогда LLM не зовётся). Любой сбой
+    LLM всплывает наверх — вызывающий (pipeline / бэкфилл) держит best-effort try/except.
     """
     transcript_text = _format_transcript(transcript_with_speakers)
     if not transcript_text:
         logger.info("Coaching: пустой транскрипт — пропускаю без вызова LLM")
         return None
 
-    user = (
-        "## Транскрипт разговора\n" + transcript_text
-        + "\n\n## Оценка звонка\n" + _compact_report(quality_report)
-    )
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning("OPENAI_API_KEY not set, skipping coaching")
+        return None
+
+    sections = []
+    legend = _speaker_legend(quality_report.get("speaker_roles"))
+    if legend:
+        sections.append(legend)
+    sections.append("## Транскрипт разговора\n" + transcript_text)
+    sections.append("## Оценка звонка\n" + _compact_report(quality_report))
+    user = "\n\n".join(sections)
 
     return structured_completion(
         system=_SYSTEM,
@@ -184,4 +234,5 @@ def generate_coaching(transcript_with_speakers: list[dict], quality_report: dict
         max_output_tokens=COACH_MAX_OUTPUT_TOKENS,
         cache_key="sqa-coach",
         model=os.getenv("SQA_LLM_MODEL_COACH", "gpt-5.4"),
+        api_key=api_key,
     )

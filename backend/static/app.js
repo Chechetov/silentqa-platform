@@ -711,7 +711,7 @@ async function renderCallDetail(id) {
               <div class="coach-quote">«${escapeHtml(g.moment_quote)}»</div>
               ${g.why_it_matters ? `<div class="coach-line"><span class="coach-line-label">Почему важно:</span> ${escapeHtml(g.why_it_matters)}</div>` : ''}
               ${g.better_version ? `<div class="coach-better"><span class="coach-line-label">Лучше так:</span> ${escapeHtml(g.better_version)}</div>` : ''}
-              ${g.time != null ? `<button class="btn btn-sm coach-seek" data-t="${g.time}">▶ к моменту</button>` : ''}
+              ${g.time != null ? `<button class="btn btn-sm btn-secondary coach-seek" data-t="${g.time}">▶ к моменту</button>` : ''}
             </div>
           `).join('') : ''}
           ${coaching.drill ? `<div class="coach-drill">🏋️ Фокус на следующий звонок: ${escapeHtml(coaching.drill)}</div>` : ''}
