@@ -52,6 +52,7 @@ async def list_sessions(
     offset: int = 0,
     source: str | None = None,
     phone: str | None = None,
+    employee: str | None = None,
     template_id: str | None = None,
     kb_tag: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
@@ -62,6 +63,7 @@ async def list_sessions(
     Optional filters:
     - source: exact match on metadata.source (e.g. 'amocrm', 'desktop-app')
     - phone: substring match on metadata.phone (case-insensitive, digits-friendly)
+    - employee: exact match on metadata.employee (attribution filter)
     - template_id: 'none' = sessions without any template (regular broker calls);
                    UUID = sessions with that exact template
     """
@@ -70,6 +72,8 @@ async def list_sessions(
         filters.append(Session.metadata_["source"].astext == source)
     if phone:
         filters.append(Session.metadata_["phone"].astext.ilike(f"%{phone.strip()}%"))
+    if employee:
+        filters.append(Session.metadata_["employee"].astext == employee.strip())
     if template_id:
         if template_id == "none":
             filters.append(Session.metadata_["template_id"].astext.is_(None))
