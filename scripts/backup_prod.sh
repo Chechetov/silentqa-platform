@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Ежедневный off-box бэкап платформы SilentQA (/root/projects/silentqa) на релей-VPS.
-# Дампит Postgres (pg_dump -Fc + pg_dumpall --globals-only), копирует Redis dump.rdb,
+# Дампит Postgres (pg_dump -Fc + pg_dumpall --globals-only --no-role-passwords), копирует Redis dump.rdb,
 # тарит .env + companies/ в приватный архив, rsync-ит дампы дня и зеркалит медиа
 # (data/) на релей, ротирует старые daily-каталоги (локально и на релее).
 # Идемпотентен, безопасен к повторному запуску. Секреты в stdout НЕ печатаются.
@@ -57,8 +57,8 @@ export PGPASSWORD="${_db[3]}"; PGDATABASE="${_db[4]}"
 # --- 1. Postgres: дамп БД (custom format) + глобальные объекты (роли/tablespaces) ---
 log "pg_dump $PGDATABASE → db.dump (-Fc)"
 pg_dump -Fc -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -d "$PGDATABASE" -f "$STAGING/db.dump"
-log "pg_dumpall --globals-only → globals.sql"
-pg_dumpall --globals-only -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -l "$PGDATABASE" -f "$STAGING/globals.sql"
+log "pg_dumpall --globals-only --no-role-passwords → globals.sql"
+pg_dumpall --globals-only --no-role-passwords -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -l "$PGDATABASE" -f "$STAGING/globals.sql"
 
 # --- 2. Redis: копия dump.rdb (best-effort — основная durability переведена на AOF) ---
 REDIS_STAT="skipped"

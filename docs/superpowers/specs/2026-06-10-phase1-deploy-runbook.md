@@ -202,7 +202,7 @@ analyze-прогона даст конкурентный дубль задачи
 **Что бэкапится** (локальный staging `/root/backups/daily/YYYY-MM-DD/`, umask 077):
 
 - `db.dump` — `pg_dump -Fc` БД из `DATABASE_URL_SYNC` (прод `localhost:5432/silentqa`).
-- `globals.sql` — `pg_dumpall --globals-only` (роли/tablespaces; восстановить ДО pg_restore).
+- `globals.sql` — `pg_dumpall --globals-only --no-role-passwords` (роли/tablespaces БЕЗ паролей — non-superuser не читает pg_authid; восстановить ДО pg_restore, пароли ролей задать заново вручную).
 - `redis-dump.rdb` — копия `dump.rdb` (путь из `redis-cli CONFIG GET dir/dbfilename`).
   **Best-effort**: основная durability Redis переведена на **AOF** (`appendonly yes`,
   выставлено контроллером в `redis.conf` + `redis-cli CONFIG SET appendonly yes`);
