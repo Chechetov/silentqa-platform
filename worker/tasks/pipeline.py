@@ -15,6 +15,10 @@ import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+import openai
+import redis.exceptions
+
 from tenancy.context import get_tenant_schema, require_tenant_slug, reset_tenant_schema, set_tenant_schema
 from tenancy.db import (
     get_sync_db_url,
@@ -46,14 +50,35 @@ SHORT_CALL_THRESHOLD_SEC = 20
 # освобождается для других тенантов).
 TENANT_SLOT_RETRY_SEC = int(os.getenv("TENANT_SLOT_RETRY_SEC", "60"))
 
-# Транзиентные ошибки (сеть/лимиты OpenAI, AmoCRM, httpx) — кандидаты на
-# retry analyze-стадии. Матчим по имени класса, чтобы не тащить импорты
-# всех клиентских SDK.
+# Транзиентный сбой analyze-стадии → retry с экспоненциальным бэкофом:
+# countdown = ANALYZE_RETRY_BASE_SEC * 2**retries (120 → 240 → …).
+ANALYZE_RETRY_BASE_SEC = int(os.getenv("ANALYZE_RETRY_BASE_SEC", "120"))
+
+# Транзиентные ошибки (сеть/лимиты OpenAI, AmoCRM, httpx, Redis) — кандидаты на
+# retry analyze-стадии. Приоритет — isinstance по реальным классам SDK; ниже
+# фолбэк по имени класса ловит обёртки библиотек, которые здесь не импортируются
+# (requests/urllib3 и пр.). Двухслойность осознанная: llm/egress уже ретраит
+# транзиент внутри адаптера — сюда всплывает лишь то, что исчерпало те ретраи.
+_TRANSIENT_TYPES = (
+    openai.APITimeoutError,
+    openai.APIConnectionError,
+    openai.RateLimitError,
+    openai.InternalServerError,
+    httpx.TimeoutException,
+    httpx.ConnectError,
+    httpx.ReadError,
+    ConnectionError,                    # builtin (сокет-уровень)
+    redis.exceptions.ConnectionError,
+    redis.exceptions.TimeoutError,
+)
+
 _TRANSIENT_MARKERS = ("Timeout", "Connection", "RateLimit",
                       "ServiceUnavailable", "InternalServerError", "TryAgain")
 
 
 def _is_transient(exc: BaseException) -> bool:
+    if isinstance(exc, _TRANSIENT_TYPES):
+        return True
     name = type(exc).__name__
     return any(m in name for m in _TRANSIENT_MARKERS)
 
@@ -333,6 +358,24 @@ def _get_session_created_at(session_id: str):
         return None
 
 
+def _get_session_status(session_id: str) -> str | None:
+    """Return status (str or None) for a session. Mirrors _get_session_created_at."""
+    if not get_sync_db_url():
+        return None
+    try:
+        conn = tenant_connect()
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT status FROM sessions WHERE id = %s", (session_id,))
+                row = cur.fetchone()
+        finally:
+            conn.close()
+        return row[0] if row else None
+    except Exception:
+        logger.exception(f"Failed to read status for session {session_id}")
+        return None
+
+
 def _merge_kb_keyterms(word_boost: list[str]) -> list[str]:
     """Union config word_boost with KB feeds_asr keyterms; dedup; survive KB errors."""
     try:
@@ -570,15 +613,24 @@ def _push_to_amocrm(
     if score is not None:
         tag_lead(lead_id, "AI оценка звонка")
 
-    # Second note: next-call plan (if generated)
+    # Second note: next-call plan (if generated). Дедуп зеркально main-ноте
+    # (amo_note_id): plan_amo_note_id в метаданных → план уже создан на прошлом
+    # прогоне (репроцесс/редоставка) — повторно не создаём, иначе дубль-нота
+    # на каждый прогон.
     if next_call_plan:
-        plan_text = format_next_call_plan(next_call_plan)
-        result = create_plain_note(lead_id, plan_text)
-        if result.get("ok"):
-            _update_session_metadata(session_id, {"plan_amo_note_id": result["note_id"]})
-            logger.info(f"[{session_id}] Created plan note {result['note_id']} for lead {lead_id}")
+        if session_meta.get("plan_amo_note_id"):
+            logger.info(
+                f"[{session_id}] Plan note already exists "
+                f"({session_meta['plan_amo_note_id']}), skipping create"
+            )
         else:
-            logger.warning(f"[{session_id}] Failed to create plan note: {result}")
+            plan_text = format_next_call_plan(next_call_plan)
+            result = create_plain_note(lead_id, plan_text)
+            if result.get("ok"):
+                _update_session_metadata(session_id, {"plan_amo_note_id": result["note_id"]})
+                logger.info(f"[{session_id}] Created plan note {result['note_id']} for lead {lead_id}")
+            else:
+                logger.warning(f"[{session_id}] Failed to create plan note: {result}")
 
     # Third note (singleton per lead): deal summary — update-in-place
     if quality_report.get("skip_reason") != "too_short":
@@ -1002,6 +1054,15 @@ def _analyze_session_body(task, session_id: str, audio_path: str, config: dict |
     logger.info(f"[{session_id}] Analyze stage starting...")
     start_time = datetime.now(timezone.utc)
 
+    # B-2 guard: acks_late может ре-доставить УЖЕ завершённую сессию после
+    # истечения visibility_timeout брокера (~1ч). Полный analyze — это 1-2
+    # LLM-вызова; не жжём их повторно, если работа уже сделана (статус
+    # completed И quality.json на диске).
+    quality_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "quality.json"
+    if _get_session_status(session_id) == "completed" and quality_path.exists():
+        logger.info(f"[{session_id}] Redelivery of completed session — skipping (acks_late)")
+        return {"session_id": session_id, "status": "completed", "skipped": "redelivery"}
+
     session_meta = _get_session_metadata(session_id)
     company_id = config.get("company_id") or tenant_company_config_id()
     scenario_id = config.get("scenario_id")
@@ -1040,8 +1101,10 @@ def _analyze_session_body(task, session_id: str, audio_path: str, config: dict |
 
     except Exception as e:
         if _is_transient(e) and task.request.retries < 2:
-            logger.warning(f"[{session_id}] Analyze transient failure (retry {task.request.retries + 1}/2): {e}")
-            raise task.retry(countdown=120, exc=e)
+            countdown = ANALYZE_RETRY_BASE_SEC * (2 ** task.request.retries)
+            logger.warning(f"[{session_id}] Analyze transient failure "
+                           f"(retry {task.request.retries + 1}/2, countdown={countdown}s): {e}")
+            raise task.retry(countdown=countdown, exc=e)
         update_session_status(session_id, "failed", finished_at=datetime.now(timezone.utc))
         logger.exception(f"[{session_id}] Analyze stage failed: {e}")
         raise

@@ -121,6 +121,9 @@ def _stub_analyze_deps(monkeypatch):
     monkeypatch.setattr(pl, "tenant_amocrm_enabled", lambda slug: False)
     monkeypatch.setattr(pl, "_get_audio_duration", lambda p: 300.0)
     monkeypatch.setattr(pl, "_get_session_created_at", lambda sid: None)
+    # По умолчанию сессия не completed → B-2 guard редоставки не срабатывает,
+    # тесты идут полным analyze-путём (guard-тесты переопределяют статус явно).
+    monkeypatch.setattr(pl, "_get_session_status", lambda sid: None)
 
 
 def _write_transcript(sid):
@@ -215,3 +218,172 @@ def test_run_pipeline_compat_for_amocrm(tenant_ctx, monkeypatch, tmp_path):
     assert calls == []                                    # БЕЗ handoff
     assert "quality_report" in result and "use_extended" in result
     assert "transcript_with_speakers" in result
+
+
+# ── B-3: isinstance-транзиентность на реальных классах SDK ──────────────────
+
+def test_is_transient_real_sdk_classes():
+    import httpx
+    import openai
+    import redis.exceptions as rexc
+
+    req = httpx.Request("POST", "http://x")
+    resp429 = httpx.Response(429, request=req)
+    resp500 = httpx.Response(500, request=req)
+
+    assert pl._is_transient(openai.APITimeoutError(request=req))
+    assert pl._is_transient(openai.APIConnectionError(message="m", request=req))
+    assert pl._is_transient(openai.RateLimitError("m", response=resp429, body=None))
+    assert pl._is_transient(openai.InternalServerError("m", response=resp500, body=None))
+    assert pl._is_transient(httpx.TimeoutException("x"))
+    assert pl._is_transient(httpx.ConnectError("x"))
+    assert pl._is_transient(httpx.ReadError("x"))
+    assert pl._is_transient(rexc.ConnectionError("x"))
+    assert pl._is_transient(rexc.TimeoutError("x"))
+    assert pl._is_transient(ConnectionError())
+    assert pl._is_transient(TimeoutError())
+
+
+def test_is_transient_readerror_only_via_isinstance():
+    # httpx.ReadError.__name__ не содержит ни одного substring-маркера —
+    # доказывает, что isinstance ловит то, что фолбэк бы пропустил.
+    import httpx
+    assert not any(m in "ReadError" for m in pl._TRANSIENT_MARKERS)
+    assert pl._is_transient(httpx.ReadError("x"))
+
+
+def test_is_transient_substring_fallback():
+    # Обёртки библиотек, которые здесь НЕ импортируются (requests/urllib3 и пр.),
+    # ловятся фолбэком по имени класса.
+    class ServiceUnavailableError(Exception):
+        pass
+
+    class ReadTimeout(Exception):
+        pass
+
+    assert pl._is_transient(ServiceUnavailableError())
+    assert pl._is_transient(ReadTimeout())
+
+
+def test_is_transient_non_transient_false():
+    assert not pl._is_transient(ValueError("bad schema"))
+    assert not pl._is_transient(KeyError("x"))
+    assert not pl._is_transient(RuntimeError("boom"))
+
+
+# ── B-3: экспоненциальный бэкоф ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("retries,expected", [(0, 120), (1, 240), (2, 480)])
+def test_backoff_formula(retries, expected):
+    assert pl.ANALYZE_RETRY_BASE_SEC * (2 ** retries) == expected
+
+
+@pytest.mark.parametrize("retries,expected", [(0, 120), (1, 240)])
+def test_analyze_transient_backoff_countdown(tenant_ctx, monkeypatch, tmp_path,
+                                             retries, expected):
+    sid = f"sid-bk-{retries}"
+    _write_transcript(sid)
+    _stub_analyze_deps(monkeypatch)
+
+    class APITimeoutError(Exception):
+        pass
+
+    def boom(t):
+        raise APITimeoutError("connect timeout")
+
+    monkeypatch.setattr(pl, "analyze_sentiment", boom)
+    with pytest.raises(RetryCalled) as ei:
+        pl._analyze_session_body(StubTask(retries=retries), sid,
+                                 str(tmp_path / "f.wav"), None)
+    assert ei.value.countdown == expected
+
+
+# ── B-2: guard редоставки завершённой сессии (acks_late) ────────────────────
+
+def test_analyze_body_skips_redelivery_completed(tenant_ctx, monkeypatch, tmp_path):
+    statuses = tenant_ctx
+    rd = _write_transcript("sid-rd")
+    _stub_analyze_deps(monkeypatch)
+    # Сессия уже completed И quality.json на диске — редоставка acks_late.
+    (rd / "quality.json").write_text('{"overall_score": 9}', encoding="utf-8")
+    monkeypatch.setattr(pl, "_get_session_status", lambda sid: "completed")
+    called = []
+    monkeypatch.setattr(pl, "analyze_sentiment",
+                        lambda t: called.append("sentiment") or [])
+
+    result = pl._analyze_session_body(StubTask(), "sid-rd", str(tmp_path / "f.wav"), None)
+
+    assert result["status"] == "completed"
+    assert called == []                          # LLM/analyze НЕ запускались
+    assert statuses == []                         # completed повторно не писали
+    assert json.loads((rd / "quality.json").read_text())["overall_score"] == 9
+
+
+def test_analyze_body_runs_when_not_completed(tenant_ctx, monkeypatch, tmp_path):
+    # Статус не completed → guard не срабатывает, идём полным путём (переоценка).
+    rd = _write_transcript("sid-rd2")
+    _stub_analyze_deps(monkeypatch)
+    (rd / "quality.json").write_text('{"overall_score": 1}', encoding="utf-8")
+    monkeypatch.setattr(pl, "_get_session_status", lambda sid: "processing")
+
+    result = pl._analyze_session_body(StubTask(), "sid-rd2", str(tmp_path / "f.wav"), None)
+
+    assert result["status"] == "completed"
+    # assess_quality застабан на overall_score=7 → quality.json перезаписан.
+    assert json.loads((rd / "quality.json").read_text())["overall_score"] == 7
+
+
+def test_analyze_body_runs_when_completed_but_no_quality(tenant_ctx, monkeypatch, tmp_path):
+    # Guard требует ОБА условия: completed без quality.json → полный путь.
+    rd = _write_transcript("sid-rd3")
+    _stub_analyze_deps(monkeypatch)
+    monkeypatch.setattr(pl, "_get_session_status", lambda sid: "completed")
+
+    result = pl._analyze_session_body(StubTask(), "sid-rd3", str(tmp_path / "f.wav"), None)
+
+    assert result["status"] == "completed"
+    assert json.loads((rd / "quality.json").read_text())["overall_score"] == 7
+
+
+# ── B-2: дедуп plan-ноты (зеркально main-ноте amo_note_id) ──────────────────
+
+def _stub_push_deps(monkeypatch):
+    monkeypatch.setattr(pl, "tenant_amocrm_enabled", lambda slug: True)
+    monkeypatch.setattr(pl, "_get_audio_duration", lambda p: 100.0)
+    monkeypatch.setattr(pl, "tag_lead", lambda *a, **k: None)
+    monkeypatch.setattr(pl, "update_note", lambda *a, **k: {"ok": True})
+    monkeypatch.setattr(pl, "format_enriched_note", lambda *a, **k: "note")
+    monkeypatch.setattr(pl, "format_next_call_plan", lambda p: "plan")
+    monkeypatch.setattr(pl, "build_deal_summary", lambda *a, **k: {})
+    monkeypatch.setattr(pl, "push_deal_summary", lambda *a, **k: None)
+
+
+def test_plan_note_dedup_skips_when_already_created(tenant_ctx, monkeypatch, tmp_path):
+    _stub_push_deps(monkeypatch)
+    plan_calls = []
+    monkeypatch.setattr(
+        pl, "create_plain_note",
+        lambda lead_id, text: plan_calls.append((lead_id, text)) or {"ok": True, "note_id": 999})
+    # plan_amo_note_id уже в метаданных → повторный прогон не создаёт дубль.
+    meta = {"lead_id": 5, "amo_note_id": 42, "plan_amo_note_id": 777}
+    pl._push_to_amocrm("sid-pn", {"overall_score": 8}, meta,
+                       str(tmp_path / "f.wav"), next_call_plan={"steps": []})
+
+    assert plan_calls == []                       # create_plain_note НЕ звался
+
+
+def test_plan_note_created_and_persisted_first_run(tenant_ctx, monkeypatch, tmp_path):
+    _stub_push_deps(monkeypatch)
+    plan_calls = []
+    monkeypatch.setattr(
+        pl, "create_plain_note",
+        lambda lead_id, text: plan_calls.append((lead_id, text)) or {"ok": True, "note_id": 999})
+    saved = {}
+    monkeypatch.setattr(pl, "_update_session_metadata",
+                        lambda sid, upd: saved.update(upd))
+    meta = {"lead_id": 5, "amo_note_id": 42}      # нет plan_amo_note_id
+    pl._push_to_amocrm("sid-pn2", {"overall_score": 8}, meta,
+                       str(tmp_path / "f.wav"), next_call_plan={"steps": []})
+
+    assert len(plan_calls) == 1                    # создали единожды
+    assert saved.get("plan_amo_note_id") == 999    # id сохранён для дедупа
