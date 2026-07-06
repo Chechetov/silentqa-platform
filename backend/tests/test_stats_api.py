@@ -130,11 +130,13 @@ def test_scenario_sql_in_all_helpers():
 def test_scenario_id_propagated_to_helpers(client, fake_redis, monkeypatch):
     """scenario_id из каждого из 4 роутов долетает до соответствующих хелперов."""
     from app.routes import stats as st
-    captured: dict[str, str | None] = {}
+    # list-append, а не last-write-wins: overview зовёт _kpi_row дважды
+    # (kpi + prev_kpi) — scenario обязан долететь до ОБОИХ вызовов.
+    captured: dict[str, list] = {}
 
     def _cap(name, shape):
         async def _fn(*a, **k):
-            captured[name] = k.get("scenario")
+            captured.setdefault(name, []).append(k.get("scenario"))
             return shape
         return _fn
 
@@ -148,18 +150,18 @@ def test_scenario_id_propagated_to_helpers(client, fake_redis, monkeypatch):
     cookies = _cookie(fake_redis)
     assert client.get("/api/stats/overview?scenario_id=general",
                       cookies=cookies).status_code == 200
-    assert captured["kpi"] == "general"      # прокинут и в kpi, и в prev_kpi
-    assert captured["series"] == "general"
+    assert captured["kpi"] == ["general", "general"]   # kpi И prev_kpi
+    assert captured["series"] == ["general"]
 
     assert client.get("/api/stats/managers?scenario_id=general",
                       cookies=cookies).status_code == 200
-    assert captured["managers"] == "general"
-    assert captured["spark"] == "general"
+    assert captured["managers"] == ["general"]
+    assert captured["spark"] == ["general"]
 
     assert client.get("/api/stats/objections?scenario_id=general",
                       cookies=cookies).status_code == 200
-    assert captured["objections"] == "general"
+    assert captured["objections"] == ["general"]
 
     assert client.get("/api/stats/risk-calls?scenario_id=general",
                       cookies=cookies).status_code == 200
-    assert captured["risk"] == "general"
+    assert captured["risk"] == ["general"]

@@ -1859,13 +1859,13 @@ function copyCallSummary() {
   const a = _currentCallData && _currentCallData.analysis;
   const s = _currentCallData && _currentCallData.session;
   if (!a) { showToast('Резюме ещё нет', 'error'); return; }
+  const sugg = (a.improvement_suggestions || []).map(x => `— ${typeof x === 'string' ? x : (x.text || '')}`);
   const lines = [
     `Звонок ${s && s.created_at ? new Date(s.created_at).toLocaleString('ru-RU') : ''}`,
-    a.overall_score != null ? `Оценка: ${a.overall_score}/10` : '',
-    '', a.brief_summary || a.summary || '',
-    '', (a.improvement_suggestions || []).length ? 'Рекомендации:' : '',
-    ...(a.improvement_suggestions || []).map(x => `— ${typeof x === 'string' ? x : (x.text || '')}`),
-  ].filter(Boolean);
+    ...(a.overall_score != null ? [`Оценка: ${a.overall_score}/10`] : []),
+    ...((a.brief_summary || a.summary) ? ['', a.brief_summary || a.summary] : []),
+    ...(sugg.length ? ['', 'Рекомендации:', ...sugg] : []),
+  ];
   navigator.clipboard.writeText(lines.join('\n'))
     .then(() => showToast('Резюме скопировано'))
     .catch(() => showToast('Не удалось скопировать', 'error'));
