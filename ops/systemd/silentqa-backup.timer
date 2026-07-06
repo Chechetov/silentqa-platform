@@ -1,0 +1,14 @@
+# Таймер ежедневного бэкапа (см. silentqa-backup.service).
+# Установка (контроллер):
+#   cp ops/systemd/silentqa-backup.* /etc/systemd/system/ \
+#     && systemctl daemon-reload && systemctl enable --now silentqa-backup.timer
+[Unit]
+Description=Ежедневный запуск silentqa-backup.service (03:30 + джиттер)
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+RandomizedDelaySec=15m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

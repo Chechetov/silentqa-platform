@@ -1,0 +1,14 @@
+# Ежедневный off-box бэкап SilentQA на релей-VPS (см. scripts/backup_prod.sh).
+# Установка (контроллер):
+#   cp ops/systemd/silentqa-backup.* /etc/systemd/system/ \
+#     && systemctl daemon-reload && systemctl enable --now silentqa-backup.timer
+[Unit]
+Description=SilentQA off-box backup (Postgres+Redis+config+media → релей-VPS)
+After=network-online.target postgresql.service redis-server.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/root/projects/silentqa-dev/scripts/backup_prod.sh
+Nice=10
+IOSchedulingClass=idle

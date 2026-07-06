@@ -192,3 +192,59 @@ analyze-прогона даст конкурентный дубль задачи
 
 и `systemctl reload caddy`. ✅ **Применено на проде 2026-07-06** (validate + reload,
 все контуры 200) — блок выше оставлен как справка для новых окружений.
+
+## Бэкапы (B-4, 2026-07-06)
+
+Ежедневный off-box бэкап платформы `/root/projects/silentqa` на релей-VPS
+(`root@89.207.255.231`, SSH-ключ `/root/.ssh/rogov_relay`). Скрипт —
+`scripts/backup_prod.sh`; юниты — `ops/systemd/silentqa-backup.{service,timer}`.
+
+**Что бэкапится** (локальный staging `/root/backups/daily/YYYY-MM-DD/`, umask 077):
+
+- `db.dump` — `pg_dump -Fc` БД из `DATABASE_URL_SYNC` (прод `localhost:5432/silentqa`).
+- `globals.sql` — `pg_dumpall --globals-only` (роли/tablespaces; восстановить ДО pg_restore).
+- `redis-dump.rdb` — копия `dump.rdb` (путь из `redis-cli CONFIG GET dir/dbfilename`).
+  **Best-effort**: основная durability Redis переведена на **AOF** (`appendonly yes`,
+  выставлено контроллером в `redis.conf` + `redis-cli CONFIG SET appendonly yes`);
+  если snapshot-а нет — шаг пропускается с WARN, бэкап не падает.
+- `config.tar.gz` (0600) — прод `.env` + `companies/`.
+
+**Куда / ротация**: rsync на релей — (а) дампы дня → `…/silentqa-box/daily/YYYY-MM-DD/`,
+(б) зеркало медиа `data/` → `…/silentqa-box/data-mirror/` (`rsync -az --delete`).
+Держатся последние `BACKUP_KEEP_DAILY=7` daily-каталогов **и локально, и на релее**
+(старше — удаляются по имени-дате). Конфиг скрипта — env с дефолтами
+(`BACKUP_SSH_KEY/BACKUP_REMOTE/BACKUP_REMOTE_DIR/BACKUP_KEEP_DAILY/PROD_DIR`).
+
+**⚠️ Безопасность**: `config.tar.gz` содержит прод-секреты (`.env`) → на релее лежат
+секреты. Каталог `…/silentqa-box` и все дампы создаются с правами 0700/0600; держать
+`/root/backups` на релее только root-доступным.
+
+**Установка (контроллер, один раз)**:
+
+    cp ops/systemd/silentqa-backup.* /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now silentqa-backup.timer
+
+Таймер: `OnCalendar=*-*-* 03:30:00`, `RandomizedDelaySec=15m`, `Persistent=true`
+(пропущенный из-за простоя запуск догоняется). Первый прогон вручную:
+`systemctl start silentqa-backup.service` → проверить файлы на релее.
+
+**Проверка**:
+
+    systemctl list-timers | grep silentqa-backup     # next/last запуск
+    journalctl -u silentqa-backup -n 50               # лог + итоговая строка [backup] OK …
+    ssh -i /root/.ssh/rogov_relay root@89.207.255.231 'ls -la /root/backups/silentqa-box/daily'
+
+**Восстановление**:
+
+- Роли/tablespaces: `psql -h localhost -p 5432 -U <su> -f globals.sql`.
+- БД: `pg_restore -Fc -h localhost -p 5432 -U <user> -d silentqa --clean --if-exists db.dump`
+  (или в свежую БД без `--clean`). `db.dump` — custom-format, не SQL-текст.
+- Конфиг: `tar -xzf config.tar.gz -C /root/projects/silentqa` (перезапишет `.env`+`companies/`).
+- Медиа: `rsync -az root@89.207.255.231:/root/backups/silentqa-box/data-mirror/ /root/projects/silentqa/data/`
+  (обратное направление; ключ `-i /root/.ssh/rogov_relay`).
+- Redis: обычно не восстанавливается (сессии/кеш/брокер — эфемерны); при нужде
+  остановить redis, положить `redis-dump.rdb` в `dir` как `dbfilename`, стартовать.
+
+**Верификация тулинга** (агент, 2026-07-06): `bash -n scripts/backup_prod.sh` — чисто;
+`systemd-analyze verify` обоих юнитов — exit 0; shellcheck на боксе не установлен (не прогнан).
