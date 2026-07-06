@@ -100,6 +100,11 @@ def test_no_slot_retries(tenant_ctx, monkeypatch):
 
 
 def _stub_analyze_deps(monkeypatch):
+    # Фикстуры ниже используют минимальный односпикерный транскрипт ("х"),
+    # который пост-ASR гейт «нет диалога» (D-2) закоротил бы до skip_reason —
+    # а эти тесты проверяют именно полный analyze-путь (sentiment→quality).
+    # Отключаем гейт (легитимно: тест не про него).
+    monkeypatch.setenv("NO_DIALOGUE_GATE", "0")
     import tasks.card as card_mod
     import tasks.knowledge_base as kb
     monkeypatch.setattr(kb, "kb_build_matcher", lambda: None)

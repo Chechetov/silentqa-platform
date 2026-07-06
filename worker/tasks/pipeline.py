@@ -81,6 +81,29 @@ def _build_short_call_report(duration: float) -> dict:
     }
 
 
+def _build_no_dialogue_report(stats: dict) -> dict:
+    """Отчёт-заглушка для звонков без диалога (гудки/автоответчик/монолог).
+
+    Зеркалит _build_short_call_report: overall_score=None + skip_reason,
+    чтобы дашборд/AmoCRM трактовали его как непрооценённый (see _push_to_amocrm)."""
+    speakers = stats.get("speakers")
+    segments = stats.get("segments")
+    return {
+        "overall_score": None,
+        "skip_reason": "no_dialogue",
+        "brief_summary": (
+            f"⚠️ Диалог не состоялся ({speakers} спикер(а), {segments} реплик). "
+            f"Оценка не проводилась — вероятно, гудки/автоответчик/монолог."
+        ),
+        "summary": (
+            f"Диалог не состоялся ({speakers} спикер(а), {segments} реплик), "
+            f"оценка пропущена."
+        ),
+        "dialogue_stats": stats,
+        "score_version": "no_dialogue_v1",
+    }
+
+
 def _build_broken_recording_report(duration: float, stats: dict) -> dict:
     """Quality report for recordings where audio died after the start."""
     secs = int(duration)
@@ -569,6 +592,39 @@ def _push_to_amocrm(
         push_deal_summary(lead_id, summary)
 
 
+def _no_dialogue_gate(task, session_id, audio_path, scenario, session_meta,
+                      transcript_with_speakers) -> dict | None:
+    """Пост-ASR гейт (ревью D-2): гудки/автоответчик/монолог не жгут LLM.
+
+    Дешёвая эвристика по готовому транскрипту: <2 спикеров с речью, либо
+    слишком мало реплик/символов. Персист — зеркально гейтам _run_gates."""
+    if os.getenv("NO_DIALOGUE_GATE", "1") == "0":
+        return None
+    min_segments = int(os.getenv("NO_DIALOGUE_MIN_SEGMENTS", "4"))
+    min_chars = int(os.getenv("NO_DIALOGUE_MIN_CHARS", "200"))
+    voiced = [s for s in (transcript_with_speakers or [])
+              if (s.get("text") or "").strip()]
+    speakers = {s.get("speaker") for s in voiced}
+    total_chars = sum(len((s.get("text") or "").strip()) for s in voiced)
+    if len(speakers) >= 2 and len(voiced) >= min_segments and total_chars >= min_chars:
+        return None
+    stats = {"speakers": len(speakers), "segments": len(voiced), "chars": total_chars}
+    logger.info(f"[{session_id}] No-dialogue gate: {stats} — пропускаем LLM-оценку")
+    quality_report = _build_no_dialogue_report(stats)
+    save_results(session_id, "quality", quality_report)
+    record_quality_result(session_id, quality_report, skip_reason="no_dialogue",
+                          duration_seconds=_get_audio_duration(audio_path) or None)
+    use_extended = bool(scenario and scenario.get("prompt"))
+    if use_extended:
+        task.update_state(state="PROGRESS", meta={"step": "amocrm_sync", "progress": 95})
+        _push_to_amocrm(session_id, quality_report, session_meta, audio_path)
+    return {
+        "transcript_with_speakers": transcript_with_speakers,
+        "quality_report": quality_report,
+        "use_extended": use_extended,
+    }
+
+
 def _run_gates(task, session_id: str, audio_path: str, config: dict, company_config: dict, scenario: dict | None, session_meta: dict) -> dict | None:
     """Пред-CPU гейты: короткий звонок / битая запись.
 
@@ -759,6 +815,14 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
             "quality_report": {"skip_reason": "extraction_template"},
             "use_extended": False,
         }
+
+    # === Пост-ASR гейт «нет диалога» (ревью D-2) ===
+    # Гудки/автоответчик/монолог: ранний return доводит сессию до completed
+    # тем же путём, что extraction-ветка (см. _analyze_session_body / _run_pipeline).
+    gate = _no_dialogue_gate(task, session_id, audio_path, scenario, session_meta,
+                             transcript_with_speakers)
+    if gate is not None:
+        return gate
 
     # === 5. Sentiment Analysis ===
     task.update_state(state="PROGRESS", meta={"step": "sentiment", "progress": 80})
