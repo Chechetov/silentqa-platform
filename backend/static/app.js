@@ -16,7 +16,7 @@ let currentUser = null; // {email, role} после логина
 let features = {}; // module-флаги из /api/tenancy/features
 const isAdmin = () => currentUser && currentUser.role === 'admin';
 const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
-const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // из company-config через /features (фолбэк — дефолт realestate)
+const amoBase = () => features.amocrm_subdomain || null; // из company-config через /features; без субдомена ссылку не рендерим
 
 // ---- Router ----
 function navigate(hash) {
@@ -265,9 +265,12 @@ function barColor(score, max = 10) {
 }
 
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const SOURCE_LABELS = {
@@ -494,21 +497,18 @@ async function renderCallDetail(id) {
 
   try {
     const session = await api(`/api/sessions/${id}`);
-    let transcript = null;
-    let analysis = null;
-
-    try { transcript = await api(`/api/sessions/${id}/transcript`); } catch {}
-    try { analysis = await api(`/api/sessions/${id}/analysis`); } catch {}
-    let sentiment = null;
-    try { sentiment = await api(`/api/sessions/${id}/sentiment`); } catch {}
-    let extraction = null;
-    if (moduleOn('complexes')) { try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {} }
-    let kbTags = [];
-    if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
-    let card = null;
-    try { card = await api(`/api/sessions/${id}/card`); } catch {}
-    let asrVariants = null;  // ASR-сравнение (админ-тюнинг)
-    if (isAdmin()) { try { asrVariants = await api(`/api/sessions/${id}/transcript-variants`); } catch {} }
+    // Независимые куски карточки — параллельно (латентность = max, не сумма)
+    const opt = (p) => p.catch(() => null);
+    let [transcript, analysis, sentiment, extraction, kbTags, card, asrVariants] =
+      await Promise.all([
+        opt(api(`/api/sessions/${id}/transcript`)),
+        opt(api(`/api/sessions/${id}/analysis`)),
+        opt(api(`/api/sessions/${id}/sentiment`)),
+        moduleOn('complexes') ? opt(api(`/api/sessions/${id}/extraction`)) : null,
+        moduleOn('knowledge_base') ? api(`/api/sessions/${id}/tags`).catch(() => []) : [],
+        opt(api(`/api/sessions/${id}/card`)),
+        isAdmin() ? opt(api(`/api/sessions/${id}/transcript-variants`)) : null,  // ASR-сравнение (админ-тюнинг)
+      ]);
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
@@ -617,7 +617,7 @@ async function renderCallDetail(id) {
 
     if (kbTags.length) {
       html += `<div class="kb-tags-section" style="margin-bottom:16px"><h2>Теги базы знаний</h2>` +
-        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term).replace(/"/g, '&quot;')}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
+        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term)}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
         `</div>`;
     }
 
@@ -2090,7 +2090,7 @@ function kbCategoryCard(cat) {
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <h3 style="margin:0">${escapeHtml(cat.name)} <span class="muted" style="font-weight:400">(${escapeHtml(cat.slug)})</span></h3>
-        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" onclick="kbDeleteCategory('${cat.id}', ${JSON.stringify(cat.name)})">✕</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" onclick="kbDeleteCategory(this)">✕</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
         ${kbFlagBadge(cat, 'feeds_asr', 'ASR')}
@@ -2107,8 +2107,8 @@ function kbCategoryCard(cat) {
               <td>${escapeHtml((e.aliases || []).join(', '))}</td>
               <td>${escapeHtml(e.description || '')}</td>
               <td style="white-space:nowrap;text-align:right">
-                <button class="btn btn-secondary btn-sm" onclick="kbShowMentions('${e.id}', ${JSON.stringify(e.term)})">Упоминания</button>
-                ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="kbDeleteEntry('${e.id}', ${JSON.stringify(e.term)})">✕</button>` : ''}
+                <button class="btn btn-secondary btn-sm" data-id="${e.id}" data-term="${escapeHtml(e.term)}" onclick="kbShowMentions(this)">Упоминания</button>
+                ${isAdmin() ? `<button class="btn btn-danger btn-sm" data-id="${e.id}" data-term="${escapeHtml(e.term)}" onclick="kbDeleteEntry(this)">✕</button>` : ''}
               </td>
             </tr>`).join('') : `<tr><td colspan="4" class="muted">Записей пока нет</td></tr>`}
         </tbody>
@@ -2160,7 +2160,8 @@ async function kbToggleFlag(catId, key, value) {
   }
 }
 
-async function kbDeleteCategory(catId, name) {
+async function kbDeleteCategory(btn) {
+  const { id: catId, name } = btn.dataset;
   if (!confirm(`Удалить категорию "${name}" со всеми записями?`)) return;
   try {
     await api(`/api/knowledge/categories/${catId}`, { method: 'DELETE' });
@@ -2189,7 +2190,8 @@ async function kbAddEntry(catId, form) {
   }
 }
 
-async function kbDeleteEntry(entryId, term) {
+async function kbDeleteEntry(btn) {
+  const { id: entryId, term } = btn.dataset;
   if (!confirm(`Удалить запись "${term}"?`)) return;
   try {
     await api(`/api/knowledge/entries/${entryId}`, { method: 'DELETE' });
@@ -2221,7 +2223,8 @@ async function kbImport(catId, form) {
   }
 }
 
-async function kbShowMentions(entryId, term) {
+async function kbShowMentions(btn) {
+  const { id: entryId, term } = btn.dataset;
   try {
     const rows = await api(`/api/knowledge/entries/${entryId}/mentions`);
     if (!rows.length) { showToast(`«${term}»: упоминаний нет`); return; }
@@ -2259,7 +2262,7 @@ async function renderTemplates() {
             <a class="tpl-card" href="#template/${t.id}">
               <div class="tpl-card-head">
                 <span class="tpl-kind tpl-kind-${escapeHtml(t.kind)}">${escapeHtml(_kindLabel(t.kind))}</span>
-                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
+                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" data-id="${t.id}" data-name="${escapeHtml(t.name)}" onclick="event.preventDefault();event.stopPropagation();deleteTemplate(this)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
                 </button>` : ''}
               </div>
@@ -2380,7 +2383,8 @@ function validateSchemaInline() {
   }
 }
 
-async function deleteTemplate(id, name) {
+async function deleteTemplate(btn) {
+  const { id, name } = btn.dataset;
   if (!confirm(`Удалить шаблон "${name}"?`)) return;
   try {
     await api(`/api/templates/${id}`, {
@@ -3136,7 +3140,7 @@ async function linkLeadModal(sessionId) {
           <p class="modal-hint">Вставьте ссылку на сделку (https://…amocrm.ru/leads/detail/12345) или ищите по имени / телефону / email. После привязки оценка будет пересчитана с учётом истории по клиенту, а в карточку сделки уйдут заметки со ссылкой, выжимкой и планом.</p>
           ${currentLeadId ? `
             <div class="link-current">
-              Текущая привязка: ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
+              Текущая привязка: ${moduleOn('amocrm') && amoBase() ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
               <button type="button" id="leadUnlink" class="link-action">Отвязать</button>
             </div>
           ` : ''}
@@ -3183,7 +3187,7 @@ async function linkLeadModal(sessionId) {
           </div>
           <div class="lead-result-sub">
             <span>Открыть в AmoCRM:&nbsp;</span>
-            ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
+            ${moduleOn('amocrm') && amoBase() ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
           </div>
         </button>`;
       results.querySelector('.lead-result').addEventListener('click', () => linkAndClose(leadId, `сделке #${leadId}`));
@@ -3441,8 +3445,8 @@ async function renderComplexDetail(id) {
       </div>
       ${isAdmin() ? `
       <div style="margin-bottom:16px;display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="renameComplex('${c.id}', ${JSON.stringify(c.name)})">Переименовать</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteComplex('${c.id}', ${JSON.stringify(c.name)})">Удалить профиль</button>
+        <button class="btn btn-secondary btn-sm" data-id="${c.id}" data-name="${escapeHtml(c.name)}" onclick="renameComplex(this)">Переименовать</button>
+        <button class="btn btn-danger btn-sm" data-id="${c.id}" data-name="${escapeHtml(c.name)}" onclick="deleteComplex(this)">Удалить профиль</button>
       </div>` : ''}
       <div class="cx-profile">
         ${renderComplexProfile(c.aggregated_data)}
@@ -3457,7 +3461,8 @@ async function renderComplexDetail(id) {
   }
 }
 
-async function renameComplex(id, currentName) {
+async function renameComplex(btn) {
+  const { id, name: currentName } = btn.dataset;
   const newName = prompt('Новое имя ЖК:', currentName);
   if (!newName || newName === currentName) return;
   try {
@@ -3472,7 +3477,8 @@ async function renameComplex(id, currentName) {
   }
 }
 
-async function deleteComplex(id, name) {
+async function deleteComplex(btn) {
+  const { id, name } = btn.dataset;
   if (!confirm(`Удалить профиль "${name}"? Сами записи останутся, но будут отвязаны.`)) return;
   try {
     await api(`/api/complexes/${id}`, { method: 'DELETE' });
