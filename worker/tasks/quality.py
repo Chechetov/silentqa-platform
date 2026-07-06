@@ -15,8 +15,7 @@ import json
 import logging
 import os
 
-from openai import OpenAI
-
+from llm.egress import LLMBadOutput, LLMTruncated, structured_completion
 from prompts.sales_playbook import get_meeting_playbook_prompt
 
 logger = logging.getLogger(__name__)
@@ -662,8 +661,6 @@ def plan_next_call(
         logger.warning("OPENAI_API_KEY not set, skipping next-call plan")
         return None
 
-    client = OpenAI(api_key=api_key)
-
     # Strip heavy fields from current report — plan doesn't need transcript/key_moments
     compact_current = {
         k: current_quality_report.get(k)
@@ -682,26 +679,19 @@ def plan_next_call(
     }
 
     try:
-        response = client.responses.create(
-            model="gpt-5.4",
-            input=[
-                {"role": "system", "content": PLAN_SYSTEM_PROMPT},
-                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, indent=2)},
-            ],
+        plan = structured_completion(
+            system=PLAN_SYSTEM_PROMPT,
+            user=json.dumps(user_payload, ensure_ascii=False, indent=2),
+            schema=NEXT_CALL_PLAN_SCHEMA["schema"],
+            schema_name=NEXT_CALL_PLAN_SCHEMA["name"],
             max_output_tokens=PLAN_MAX_OUTPUT_TOKENS,
-            prompt_cache_key="sqa-plan",
-            text={
-                "format": {
-                    "type": "json_schema",
-                    "name": NEXT_CALL_PLAN_SCHEMA["name"],
-                    "strict": True,
-                    "schema": NEXT_CALL_PLAN_SCHEMA["schema"],
-                }
-            },
+            cache_key="sqa-plan",
+            model=os.getenv("SQA_LLM_MODEL_PLAN", "gpt-5.4-mini"),
+            api_key=api_key,
         )
-        plan = json.loads(response.output_text)
         logger.info(f"Next-call plan generated with {len(plan.get('goals', []))} goals")
         return plan
+    # План опционален — любой сбой (в т.ч. транзиентный) не должен блокировать пайплайн.
     except Exception:
         logger.exception("Failed to generate next-call plan")
         return None
@@ -1010,61 +1000,6 @@ USER_PROMPT = """## Регламент
 
 Проанализируй разговор и дай оценку."""
 
-# Legacy prompt for fallback
-ASSESSMENT_PROMPT = """Ты — эксперт по оценке качества работы менеджеров в телефонных/видео переговорах.
-
-Проанализируй следующий транскрипт разговора и дай оценку.
-
-## Регламент
-{protocol}
-
-## Транскрипт разговора (с указанием спикеров)
-{transcript}
-
-## Данные по тональности
-{sentiment_summary}
-
-## Задание
-Проанализируй разговор и верни JSON (строго без markdown, только JSON):
-{{
-  "overall_score": <число 0-10>,
-  "criteria": [
-    {{"name": "protocol_adherence", "score": <0-10>, "comment": "<комментарий>"}},
-    {{"name": "politeness", "score": <0-10>, "comment": "<комментарий>"}},
-    {{"name": "listening", "score": <0-10>, "comment": "<комментарий>"}},
-    {{"name": "clarity", "score": <0-10>, "comment": "<комментарий>"}},
-    {{"name": "empathy", "score": <0-10>, "comment": "<комментарий>"}}
-  ],
-  "protocol_adherence": {{
-    "steps_completed": ["список выполненных шагов регламента"],
-    "steps_missed": ["список пропущенных шагов"]
-  }},
-  "communication_quality": {{
-    "score": <число 0-10>,
-    "politeness": <число 0-10>,
-    "listening": <число 0-10>,
-    "clarity": <число 0-10>,
-    "empathy": <число 0-10>
-  }},
-  "conversation_outcome": {{
-    "result": "<sale|appointment|complaint_resolved|escalation|lost|info_provided|other>",
-    "description": "<краткое описание результата>"
-  }},
-  "key_moments": [
-    {{"time": <секунды от начала>, "description": "<описание важного момента>", "type": "<positive|negative|neutral>"}}
-  ],
-  "improvement_suggestions": ["список конкретных рекомендаций для менеджера"],
-  "summary": "<краткое резюме разговора в 2-4 предложениях>",
-  "detailed_summary": "<подробный пересказ по блокам: потребность клиента, предложенные объекты/решения, работа с возражениями, ключевые аргументы, итог и договорённости. 5-15 предложений>",
-  "speaker_roles": {{
-    "<SPEAKER_ID>": {{"role": "<manager|client>", "name": "<имя если упомянуто, иначе null>"}},
-    ...для каждого спикера в транскрипте
-  }}
-}}
-
-{custom_instructions}
-"""
-
 
 def format_transcript_for_llm(transcript: list[dict], max_chars: int = 30000) -> str:
     """Форматирует транскрипт для отправки в LLM. Обрезает по целым сегментам."""
@@ -1168,31 +1103,30 @@ def assess_quality(
     custom_instructions = custom_prompt.strip() if custom_prompt else ""
     criteria_instructions = _build_criteria_instructions(criteria_config)
 
-    client = OpenAI(api_key=api_key)
-
-    # Try structured output first, fallback to legacy
     try:
         result = _assess_with_structured_output(
-            client, transcript_text, sentiment_json, protocol,
+            transcript_text, sentiment_json, protocol,
             custom_instructions, criteria_instructions,
             use_extended_schema=use_extended_schema,
             prior_context=prior_context,
             template_driven=template_driven,
             glossary=glossary,
         )
-    except Exception as e:
-        logger.warning(f"Structured output failed ({e}), falling back to legacy prompt")
-        result = _assess_with_legacy_prompt(
-            client, transcript_text, sentiment_json, protocol, custom_instructions,
-            glossary=glossary,
-        )
+    except (LLMTruncated, LLMBadOutput) as e:
+        # Детерминированная ошибка — ретрай не поможет; честный skip вместо
+        # тихого даунгрейда V4→V2 через legacy-путь (удалён, ревью D-1.3).
+        logger.error(f"Structured quality failed deterministically: {e}")
+        result = {"overall_score": None, "skip_reason": "llm_error",
+                  "error": str(e),
+                  "score_version": 4 if use_extended_schema else 2}
+    # Транзиентные исключения НЕ ловим: всплывают в task-retry пайплайна.
 
     logger.info(f"Quality assessment complete. Overall score: {result.get('overall_score')}")
     return result
 
 
 def _assess_with_structured_output(
-    client, transcript_text, sentiment_json, protocol, custom_instructions,
+    transcript_text, sentiment_json, protocol, custom_instructions,
     criteria_instructions="", use_extended_schema=False,
     prior_context=None, template_driven=False, glossary=None,
 ):
@@ -1237,78 +1171,20 @@ def _assess_with_structured_output(
     user = "\n".join(user_parts)
 
     logger.info(f"Sending transcript to GPT-5.4 for quality assessment (structured output, v{version})...")
-    response = client.responses.create(
-        model="gpt-5.4",
-        input=[
-            {"role": "system", "content": system},
-            {"role": "user", "content": user},
-        ],
+    # cache_key — роутинг-ключ OpenAI prompt caching: system-промпт статичен в
+    # пределах (version, template_driven); адаптер несёт model/потолок/ретраи и
+    # поднимает LLMTruncated/LLMBadOutput на детерминированных сбоях.
+    result = structured_completion(
+        system=system, user=user,
+        schema=schema["schema"], schema_name=schema_name,
         max_output_tokens=QUALITY_MAX_OUTPUT_TOKENS,
-        # Роутинг-ключ OpenAI prompt caching: system-промпт статичен в пределах
-        # (version, template_driven) — cached-вход в 10 раз дешевле; точное
-        # совпадение префикса OpenAI сверяет сам, ключ лишь улучшает роутинг.
-        prompt_cache_key=f"sqa-quality-v{version}" + ("-tpl" if template_driven else ""),
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": schema_name,
-                "strict": True,
-                "schema": schema["schema"],
-            }
-        },
+        cache_key=f"sqa-quality-v{version}" + ("-tpl" if template_driven else ""),
+        model=os.getenv("SQA_LLM_MODEL_QUALITY", "gpt-5.4"),
     )
-    if getattr(response, "status", None) == "incomplete":
-        logger.warning(
-            "Quality LLM output truncated at %s tokens", QUALITY_MAX_OUTPUT_TOKENS)
-
-    response_text = response.output_text
-    result = json.loads(response_text)
 
     # Convert speaker_roles from array to dict for backward compat
     if isinstance(result.get("speaker_roles"), list):
         result["speaker_roles"] = _convert_speaker_roles(result["speaker_roles"])
 
     result["score_version"] = version
-    return result
-
-
-def _assess_with_legacy_prompt(
-    client, transcript_text, sentiment_json, protocol, custom_instructions, glossary=None
-):
-    """Fallback: legacy single-prompt approach via Chat Completions."""
-    prompt = ASSESSMENT_PROMPT.format(
-        protocol=protocol or DEFAULT_PROTOCOL,
-        transcript=transcript_text,
-        sentiment_summary=sentiment_json,
-        custom_instructions=custom_instructions,
-    )
-    if glossary:
-        prompt = glossary + "\n\n" + prompt
-
-    logger.info("Sending transcript to GPT-5.4 for quality assessment (legacy)...")
-    response = client.chat.completions.create(
-        model="gpt-5.4",
-        max_tokens=4096,
-        messages=[{"role": "user", "content": prompt}],
-    )
-
-    response_text = response.choices[0].message.content.strip()
-
-    # Strip markdown if present
-    if response_text.startswith("```"):
-        response_text = response_text.split("\n", 1)[1]
-        if response_text.endswith("```"):
-            response_text = response_text[:-3]
-
-    try:
-        result = json.loads(response_text)
-    except json.JSONDecodeError:
-        logger.error(f"Failed to parse LLM response as JSON: {response_text[:200]}")
-        result = {
-            "overall_score": None,
-            "error": "Failed to parse LLM response",
-            "raw_response": response_text[:1000],
-        }
-
-    result["score_version"] = 2
     return result
