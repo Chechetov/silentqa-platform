@@ -32,6 +32,31 @@
   --transition: 0.2s ease;
 }
 
+/* Тёмная — база (Claude-warm). Светлая — тот же тёплый настрой: кремовые фоны,
+   терракотовый акцент, но тёмный текст и осветлённые поверхности. */
+:root { color-scheme: dark; }
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --bg-primary: #faf9f5;
+  --bg-secondary: #f0eee6;
+  --bg-card: #ffffff;
+  --bg-card-hover: #f5f3ec;
+  --bg-input: #ffffff;
+  --border: #d9d3c8;
+  --border-light: #e8e4da;
+  --text-primary: #1f1e1b;
+  --text-secondary: #5d5648;
+  --text-muted: #8a8171;
+  --accent: #c4623f;
+  --accent-hover: #a94f30;
+  --accent-dim: rgba(196, 98, 63, 0.12);
+  --good: #5f8a47;
+  --danger: #bf3a2f;
+  --warning: #9c6d1f;
+  --info: #3f7396;
+}
+
 body {
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
   background: var(--bg-primary);
@@ -1877,3 +1902,37 @@ mark.transcript-match--current { background: rgba(210,153,34,0.65); box-shadow: 
 .talk-manager { height: 100%; background: var(--accent, #d97757); }
 .talk-legend { margin-top: 8px; font-size: 0.9em; color: var(--text-secondary, #b2a99b); }
 .talk-note { font-size: 0.8em; opacity: 0.7; }
+
+/* ============================================
+   Светлая тема — точечные контраст-правки
+   Только для хардкод-цветов, что рассчитаны на тёмный фон и «слепнут»
+   на кремовом. Токенные цвета (var(--*)) адаптируются сами — их не трогаем.
+   ============================================ */
+
+/* Статус-бейджи: насыщенный светлый текст на бледной подложке нечитаем.
+   Переводим на тёмные семантические токены. */
+:root[data-theme="light"] .badge-processing { color: var(--warning); }
+:root[data-theme="light"] .badge-failed { color: var(--danger); }
+
+/* Бейджи источника: жёлтый/циан/оранжевый почти невидимы на белом —
+   затемняем текст, сохраняя узнаваемый оттенок. */
+:root[data-theme="light"] .badge-source-amocrm { color: #a85d00; }
+:root[data-theme="light"] .badge-source-desktop { color: #8e44ad; }
+:root[data-theme="light"] .badge-source-chrome { color: #2b62c4; }
+:root[data-theme="light"] .badge-source-yandex { color: #8a6d00; }
+:root[data-theme="light"] .badge-source-web { color: #0e7f8f; }
+:root[data-theme="light"] .badge-source-upload { color: #566a74; }
+/* Белая полупрозрачная подложка на светлом фоне не видна → тёмный тинт. */
+:root[data-theme="light"] .badge-source-unknown { background: rgba(0, 0, 0, 0.05); }
+
+/* Метки спикеров в транскрипте — тот же случай светлого текста на тинте. */
+:root[data-theme="light"] .speaker-0 { color: var(--accent-hover); }
+:root[data-theme="light"] .speaker-1 { color: var(--warning); }
+:root[data-theme="light"] .speaker-2 { color: #7d5670; }
+
+/* Ховер строки транскрипта — белый оверлей на белом невидим. */
+:root[data-theme="light"] .transcript-line:hover { background: rgba(0, 0, 0, 0.04); }
+
+/* Кнопка удаления — яркий #f85149 на бледной подложке слишком слаб. */
+:root[data-theme="light"] .btn-danger { color: var(--danger); }
+:root[data-theme="light"] .btn-danger:hover { border-color: var(--danger); }
