@@ -221,6 +221,36 @@ def _send_risk_alert_safe(**kwargs) -> None:
         logger.exception("risk alert failed (continuing)")
 
 
+ALERT_TTL_SEC = 604800  # 7 дней — окно дедупликации risk-алерта на сессию
+
+
+def _alert_redis():
+    """Redis для alert-once: та же идиома и то же подключение, что у tenant_slots."""
+    from tasks import tenant_slots
+    return tenant_slots._get_default_client()
+
+
+def _claim_risk_alert(slug: str | None, session_id: str, *,
+                      upsert_inserted: bool | None) -> bool:
+    """Однократность риск-алерта, РАЗВЯЗАННАЯ от исхода upsert'а.
+
+    Redis жив → атомарный SET NX EX: ключ захвачен = шлём впервые, занят =
+    уже алертили (retry/reprocess/редоставка молчат). Redis упал → фолбэк на
+    прежнюю xmax-семантику успешного upsert'а (inserted). Двойной сбой (и
+    Redis, и upsert — inserted=None) → шлём безусловно (лучше редкий дубль,
+    чем потерянный риск) + WARNING."""
+    key = f"t:{slug}:risk_alerted:{session_id}"
+    try:
+        return bool(_alert_redis().set(key, "1", nx=True, ex=ALERT_TTL_SEC))
+    except Exception:
+        if upsert_inserted is None:
+            logger.warning(
+                f"[{session_id}] risk alert: Redis недоступен и upsert упал — "
+                "шлём безусловно (возможен дубль)")
+            return True
+        return bool(upsert_inserted)
+
+
 def record_quality_result(session_id: str, quality_report: dict | None, *,
                           card: dict | None = None, transcript: list | None = None,
                           sentiment_results: list | None = None,
@@ -230,8 +260,11 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
                           suppress_alert: bool = False) -> list[str]:
     """Единая best-effort точка записи аналитики (пайплайн зовёт только её).
 
-    Алерт шлём только при ПЕРВОЙ вставке строки и при suppress_alert=False:
-    редоставка/reprocess (UPDATE по конфликту) и бэкфилл истории не спамят."""
+    Три РАЗВЯЗАННЫХ блока: (1) подготовка строки из сессии+отчёта, (2) upsert
+    в quality_results (best-effort), (3) риск-алерт. Провал upsert НЕ гасит
+    алерт — однократность держит Redis (alert-once, см. _claim_risk_alert).
+    suppress_alert=True (бэкфилл) — ни алерта, ни Redis-ключа."""
+    # (1) Подготовка: нужна сессия (employee/scenario) — её провал скипает всё.
     try:
         row = _fetch_session_row(session_id)
         if row is None:
@@ -246,8 +279,14 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
         thresholds = (company_config or {}).get("alerts")
         flags = [] if skip_reason else compute_risk_flags(
             report.get("overall_score"), counts, objections, thresholds)
+    except Exception:
+        logger.exception(f"[{session_id}] quality_results: подготовка не удалась (пайплайн продолжает)")
+        return []
 
-        inserted = upsert_quality_result(
+    # (2) Upsert — best-effort и РАЗВЯЗАН от алерта. inserted=None → upsert упал.
+    upsert_inserted: bool | None = None
+    try:
+        upsert_inserted = upsert_quality_result(
             session_id,
             overall_score=report.get("overall_score"),
             version=report.get("score_version") or report.get("version"),
@@ -262,13 +301,16 @@ def record_quality_result(session_id: str, quality_report: dict | None, *,
             sentiment_counts=counts,
             risk_flags=flags,
         )
-        if flags and inserted and not suppress_alert:
-            _send_risk_alert_safe(
-                slug=get_tenant_slug(), session_id=session_id,
-                employee=meta.get("employee"),
-                score=report.get("overall_score"), flags=flags,
-                company_config=company_config)
-        return flags
     except Exception:
-        logger.exception(f"[{session_id}] quality_results запись не удалась (пайплайн продолжает)")
-        return []
+        logger.exception(f"[{session_id}] quality_results upsert не удался (пайплайн продолжает)")
+
+    # (3) Алерт — не зависит от исхода upsert'а; однократность держит Redis.
+    slug = get_tenant_slug()
+    if flags and not suppress_alert and _claim_risk_alert(
+            slug, session_id, upsert_inserted=upsert_inserted):
+        _send_risk_alert_safe(
+            slug=slug, session_id=session_id,
+            employee=meta.get("employee"),
+            score=report.get("overall_score"), flags=flags,
+            company_config=company_config)
+    return flags

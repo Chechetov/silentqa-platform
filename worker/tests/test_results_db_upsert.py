@@ -1,11 +1,38 @@
 """upsert/record: SQL-параметры, best-effort, идемпотентный ON CONFLICT."""
 import json
+import logging
 from datetime import datetime, timezone
 from unittest.mock import MagicMock
 
 import pytest
 
 import tasks.results_db as rdb
+
+
+class FakeRedis:
+    """SET NX EX семантика для alert-once (как FakeRedis в test_tenant_slots)."""
+    def __init__(self):
+        self.store = {}
+
+    def set(self, key, value, nx=False, ex=None):
+        if nx and key in self.store:
+            return None
+        self.store[key] = value
+        return True
+
+
+def _raiser(exc):
+    def _f(*a, **k):
+        raise exc
+    return _f
+
+
+@pytest.fixture(autouse=True)
+def alert_redis(monkeypatch):
+    """Каждому тесту — свой FakeRedis для risk-alert-once: изоляция от боевого Redis."""
+    fake = FakeRedis()
+    monkeypatch.setattr(rdb, "_alert_redis", lambda: fake)
+    return fake
 
 
 class FakeCursor:
@@ -156,18 +183,20 @@ def test_upsert_returns_inserted_flag(monkeypatch):
         risk_flags=[]) is False
 
 
-def test_record_no_alert_on_update(monkeypatch):
-    # редоставка/повтор: строка уже была (INSERT→UPDATE, inserted=False) → без алерта
+def test_record_reprocess_no_double_alert(monkeypatch):
+    # редоставка/reprocess той же сессии: alert-once по Redis-ключу — второй раз молчим.
+    # inserted=False (DB-UPDATE) на первом вызове НЕ мешает алерту — решение за Redis.
     cur = FakeCursor(session_row=SESSION_ROW, inserted=False)
     _wire(monkeypatch, cur)
-    called = {}
-    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: called.update(kw))
-    flags = rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
-    assert "low_score" in flags   # флаги всё равно возвращаются
-    assert not called             # но алерт НЕ зван — это не первая вставка
+    sends = []
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: sends.append(kw))
+    f1 = rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    f2 = rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert "low_score" in f1 and "low_score" in f2   # флаги возвращаются всегда
+    assert len(sends) == 1                            # алерт ровно один
 
 
-def test_record_suppress_alert_even_when_inserted(monkeypatch):
+def test_record_suppress_alert_even_when_inserted(monkeypatch, alert_redis):
     cur = FakeCursor(session_row=SESSION_ROW, inserted=True)
     _wire(monkeypatch, cur)
     called = {}
@@ -176,3 +205,52 @@ def test_record_suppress_alert_even_when_inserted(monkeypatch):
         "sid-1", {"overall_score": 1, "version": 4}, suppress_alert=True)
     assert "low_score" in flags
     assert not called
+    assert alert_redis.store == {}   # suppress → Redis-ключ не ставим
+
+
+def test_record_alerts_even_when_upsert_fails(monkeypatch):
+    # Ядро фикса: upsert падает — риск-алерт всё равно уходит (Redis alert-once).
+    cur = FakeCursor(session_row=SESSION_ROW)
+    _wire(monkeypatch, cur)
+    monkeypatch.setattr(rdb, "upsert_quality_result", _raiser(RuntimeError("upsert down")))
+    sends = []
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: sends.append(kw))
+    flags = rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert "low_score" in flags        # возврат флагов не сломан провалом upsert
+    assert len(sends) == 1 and sends[0]["session_id"] == "sid-1"
+
+
+def test_record_redis_down_alerts_when_inserted(monkeypatch):
+    # Redis недоступен → фолбэк на xmax: первая вставка (inserted=True) → алерт
+    cur = FakeCursor(session_row=SESSION_ROW, inserted=True)
+    _wire(monkeypatch, cur)
+    monkeypatch.setattr(rdb, "_alert_redis", _raiser(RuntimeError("redis down")))
+    sends = []
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: sends.append(kw))
+    rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert len(sends) == 1
+
+
+def test_record_redis_down_no_alert_on_update(monkeypatch):
+    # Redis недоступен → фолбэк на xmax: UPDATE по конфликту (inserted=False) → без алерта
+    cur = FakeCursor(session_row=SESSION_ROW, inserted=False)
+    _wire(monkeypatch, cur)
+    monkeypatch.setattr(rdb, "_alert_redis", _raiser(RuntimeError("redis down")))
+    sends = []
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: sends.append(kw))
+    rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert not sends
+
+
+def test_record_redis_down_and_upsert_down_alerts_with_warning(monkeypatch, caplog):
+    # Двойной сбой: Redis недоступен И upsert упал → алерт безусловно + WARNING
+    cur = FakeCursor(session_row=SESSION_ROW)
+    _wire(monkeypatch, cur)
+    monkeypatch.setattr(rdb, "upsert_quality_result", _raiser(RuntimeError("upsert down")))
+    monkeypatch.setattr(rdb, "_alert_redis", _raiser(RuntimeError("redis down")))
+    sends = []
+    monkeypatch.setattr(rdb, "_send_risk_alert_safe", lambda **kw: sends.append(kw))
+    with caplog.at_level(logging.WARNING, logger="tasks.results_db"):
+        rdb.record_quality_result("sid-1", {"overall_score": 1, "version": 4})
+    assert len(sends) == 1
+    assert any("безусловно" in r.message for r in caplog.records)
