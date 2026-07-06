@@ -51,7 +51,7 @@
   --accent: #c4623f;
   --accent-hover: #a94f30;
   --accent-dim: rgba(196, 98, 63, 0.12);
-  --good: #5f8a47;
+  --good: #4f7739;
   --danger: #bf3a2f;
   --warning: #9c6d1f;
   --info: #3f7396;
@@ -1936,3 +1936,6 @@ mark.transcript-match--current { background: rgba(210,153,34,0.65); box-shadow: 
 /* Кнопка удаления — яркий #f85149 на бледной подложке слишком слаб. */
 :root[data-theme="light"] .btn-danger { color: var(--danger); }
 :root[data-theme="light"] .btn-danger:hover { border-color: var(--danger); }
+
+/* Тумблер темы: нейтральный hover (не красный logout-стиль) */
+:root #themeToggle:hover { border-color: var(--border); color: var(--text-primary); }

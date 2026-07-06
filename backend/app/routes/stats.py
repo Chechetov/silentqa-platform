@@ -91,7 +91,7 @@ async def _objection_rows(db: AsyncSession, scope, start, scenario=None) -> list
                (ARRAY_AGG(o->>'text'))[1:3] AS examples
         FROM quality_results qr
         CROSS JOIN LATERAL jsonb_array_elements(qr.objections) AS o
-        WHERE qr.session_created_at >= :start {_SCOPE_SQL.replace('employee', 'qr.employee')} {_SCENARIO_SQL}
+        WHERE qr.session_created_at >= :start {_SCOPE_SQL.replace('employee', 'qr.employee')} {_SCENARIO_SQL.replace('scenario_id', 'qr.scenario_id')}
         GROUP BY 1 ORDER BY count DESC
     """), {"scope": scope, "scenario": scenario, "start": start})).mappings().all()
     return [{**dict(r),

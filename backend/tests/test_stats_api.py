@@ -124,7 +124,8 @@ def test_scenario_sql_in_all_helpers():
     from app.routes import stats as st
     src = inspect.getsource(st)
     # каждый из 6 хелперов использует единый _SCENARIO_SQL в WHERE
-    assert src.count("{_SCENARIO_SQL}") >= 6
+    # (открывающая скобка без закрывающей: допускает .replace-квалификацию qr.)
+    assert src.count("{_SCENARIO_SQL") >= 6
 
 
 def test_scenario_id_propagated_to_helpers(client, fake_redis, monkeypatch):
