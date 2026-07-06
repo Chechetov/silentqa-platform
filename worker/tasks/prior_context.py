@@ -217,6 +217,9 @@ def load_past_sessions_for_lead(lead_id: int, before_created_at: datetime | str)
     """
     if not _get_sync_db_url() or not lead_id:
         return []
+    # Cap how many past calls we pull. Newest-first here + reverse below so
+    # build_prior_context_dict still receives them oldest-first.
+    max_calls = int(os.getenv("PRIOR_CONTEXT_MAX_CALLS", "8"))
     entries: list[dict] = []
     try:
         conn = tenant_connect()
@@ -229,9 +232,10 @@ def load_past_sessions_for_lead(lead_id: int, before_created_at: datetime | str)
                     WHERE (s.metadata->>'lead_id')::bigint = %s
                       AND s.status = 'completed'
                       AND s.created_at < %s
-                    ORDER BY s.created_at ASC
+                    ORDER BY s.created_at DESC
+                    LIMIT %s
                     """,
-                    (lead_id, before_created_at),
+                    (lead_id, before_created_at, max_calls),
                 )
                 rows = cur.fetchall()
         finally:
@@ -258,6 +262,9 @@ def load_past_sessions_for_lead(lead_id: int, before_created_at: datetime | str)
             "report": report,
             "plan": plan,
         })
+    # Rows came back newest-first (DESC + LIMIT); restore chronological
+    # (oldest-first) order that build_prior_context_dict / merge expect.
+    entries.reverse()
     return entries
 
 
@@ -279,4 +286,15 @@ def build_prior_context_for_session(
         )
     if deal_stage:
         ctx["current_deal_stage"] = deal_stage
+
+    # --- Cap the serialised context so LLM egress stays bounded (D-1.5) ---
+    max_chars = int(os.getenv("PRIOR_CONTEXT_MAX_CHARS", "16000"))
+    max_obj = int(os.getenv("PRIOR_CONTEXT_MAX_OBJECTIONS", "10"))
+    if len(ctx.get("open_objections") or []) > max_obj:
+        ctx["open_objections"] = ctx["open_objections"][-max_obj:]
+    # Токен-бюджет: выкидываем старейшие интеракции, пока не влезем
+    # (client_profile уже агрегирует ВСЮ историю — факты не теряются).
+    while (len(json.dumps(ctx, ensure_ascii=False)) > max_chars
+           and len(ctx.get("interactions_history") or []) > 1):
+        ctx["interactions_history"].pop(0)
     return ctx

@@ -1,5 +1,10 @@
 """Tests for prior_context building: merge logic and structure."""
+import inspect
+import json
+
+import tasks.prior_context as pc
 from tasks.prior_context import merge_client_profiles, summarise_interaction, build_prior_context_dict
+from tasks.prior_context import build_prior_context_for_session, load_past_sessions_for_lead
 
 
 def test_merge_empty_profiles_returns_empty():
@@ -146,3 +151,101 @@ def test_extend_history_with_events_marks_offline_gap():
     assert len(gap_entries) == 1
     assert gap_entries[0]["date"] == "2026-04-10"
     assert gap_entries[0]["has_data"] is False
+
+
+# === D-1.5: cap prior_context (SQL LIMIT + token budget) =========================
+
+
+def test_sql_query_has_order_by_and_limit():
+    """The lead-history SQL must bound its result set: ORDER BY ... DESC LIMIT."""
+    src = inspect.getsource(load_past_sessions_for_lead)
+    assert "ORDER BY" in src
+    assert "LIMIT" in src
+    # newest-first slice, then restore chronological order for build_prior_context_dict
+    assert "DESC" in src
+    assert "revers" in src.lower()
+    assert "PRIOR_CONTEXT_MAX_CALLS" in src
+
+
+def _make_past(n, brief_pad=1500):
+    """n past reports, oldest-first, each with a unique MARKER in brief_summary."""
+    past = []
+    for i in range(n):
+        past.append({
+            "created_at_iso": f"2026-03-{(i % 28) + 1:02d}T10:00:00Z",
+            "duration": 600,
+            "direction": "out",
+            "report": {
+                "brief_summary": f"MARKER{i:03d} " + "x" * brief_pad,
+                "client_info": {},
+                "objections": [],
+            },
+            "plan": None,
+        })
+    return past
+
+
+def test_token_budget_drops_oldest_keeps_newest(monkeypatch):
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_CHARS", "8000")
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_OBJECTIONS", "10")
+    past = _make_past(30)
+    monkeypatch.setattr(pc, "load_past_sessions_for_lead", lambda lead_id, before: past)
+
+    ctx = build_prior_context_for_session(lead_id=123, current_created_at="2026-04-01T10:00:00Z")
+    assert ctx is not None
+
+    serialized = json.dumps(ctx, ensure_ascii=False)
+    assert len(serialized) <= 8000
+
+    joined = " ".join(h.get("brief", "") for h in ctx["interactions_history"])
+    # newest interaction survives, oldest is dropped
+    assert "MARKER029" in joined
+    assert "MARKER000" not in joined
+    # something was actually dropped
+    assert len(ctx["interactions_history"]) < 30
+    # never emptied entirely
+    assert len(ctx["interactions_history"]) >= 1
+
+
+def test_open_objections_capped_to_last_ten(monkeypatch):
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_CHARS", "16000")
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_OBJECTIONS", "10")
+    past = []
+    for i in range(15):
+        past.append({
+            "created_at_iso": f"2026-03-{i + 1:02d}T10:00:00Z",
+            "duration": 600,
+            "direction": "out",
+            "report": {
+                "brief_summary": f"c{i}",
+                "client_info": {},
+                "objections": [{"text": f"OBJ{i:03d}", "resolved": False, "category": "x"}],
+            },
+            "plan": None,
+        })
+    monkeypatch.setattr(pc, "load_past_sessions_for_lead", lambda lead_id, before: past)
+
+    ctx = build_prior_context_for_session(lead_id=1, current_created_at="2026-04-01T10:00:00Z")
+    texts = [o["text"] for o in ctx["open_objections"]]
+    assert len(texts) == 10
+    assert texts == [f"OBJ{i:03d}" for i in range(5, 15)]  # last 10 kept, oldest 5 dropped
+
+
+def test_small_context_untouched(monkeypatch):
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_CHARS", "16000")
+    monkeypatch.setenv("PRIOR_CONTEXT_MAX_OBJECTIONS", "10")
+    past = [
+        {"created_at_iso": "2026-03-01T10:00:00Z", "duration": 600, "direction": "out",
+         "report": {"brief_summary": "a", "client_info": {},
+                    "objections": [{"text": "O1", "resolved": False, "category": "x"}]},
+         "plan": None},
+        {"created_at_iso": "2026-03-05T10:00:00Z", "duration": 600, "direction": "out",
+         "report": {"brief_summary": "b", "client_info": {},
+                    "objections": [{"text": "O2", "resolved": False, "category": "x"}]},
+         "plan": None},
+    ]
+    monkeypatch.setattr(pc, "load_past_sessions_for_lead", lambda lead_id, before: past)
+
+    ctx = build_prior_context_for_session(lead_id=1, current_created_at="2026-04-01T10:00:00Z")
+    assert len(ctx["interactions_history"]) == 2
+    assert len(ctx["open_objections"]) == 2
