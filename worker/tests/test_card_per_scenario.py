@@ -1,46 +1,38 @@
-from tasks import card
+import tasks.card as card
 
 
-class _Resp:
-    def __init__(self, text):
-        self.output_text = text
+_LAST_KWARGS = {}
 
 
-class _Client:
-    last_kwargs = None
-
-    def __init__(self, text):
-        self._text = text
-        self.responses = self
-
-    def create(self, **kw):
-        _Client.last_kwargs = kw
-        return _Resp(self._text)
-
-
-def _patch(monkeypatch, text):
-    monkeypatch.setattr(card, "OpenAI", lambda: _Client(text))
+def _patch(monkeypatch, result):
+    """Мокаем llm.egress-адаптор: фейк отдаёт уже распарсенный dict
+    (адаптор сам парсит JSON) и запоминает kwargs вызова."""
+    def fake_sc(**kwargs):
+        _LAST_KWARGS.clear()
+        _LAST_KWARGS.update(kwargs)
+        return result
+    monkeypatch.setattr(card, "structured_completion", fake_sc)
 
 
 def test_scenario_card_wins(monkeypatch):
-    _patch(monkeypatch, '{"x": 1}')
+    _patch(monkeypatch, {"x": 1})
     cfg = {"card_extraction": {"prompt": "CONFIG", "json_schema": {"type": "object"}}}
     scen = {"id": "s1", "card_extraction": {"prompt": "SCENARIO", "json_schema": {"type": "object"}}}
     out = card.run_card_extraction([{"speaker": "A", "text": "hi"}], cfg, scen)
     assert out == {"x": 1}
-    assert _Client.last_kwargs["input"][0]["content"] == "SCENARIO"
+    assert _LAST_KWARGS["system"] == "SCENARIO"
 
 
 def test_falls_back_to_config(monkeypatch):
-    _patch(monkeypatch, '{"y": 2}')
+    _patch(monkeypatch, {"y": 2})
     cfg = {"card_extraction": {"prompt": "CONFIG", "json_schema": {"type": "object"}}}
     out = card.run_card_extraction([{"speaker": "A", "text": "hi"}], cfg, {"id": "s1"})
     assert out == {"y": 2}
-    assert _Client.last_kwargs["input"][0]["content"] == "CONFIG"
+    assert _LAST_KWARGS["system"] == "CONFIG"
 
 
 def test_scenario_none_uses_config(monkeypatch):
-    _patch(monkeypatch, '{"z": 3}')
+    _patch(monkeypatch, {"z": 3})
     cfg = {"card_extraction": {"prompt": "CONFIG", "json_schema": {"type": "object"}}}
     out = card.run_card_extraction([{"speaker": "A", "text": "hi"}], cfg, None)
     assert out == {"z": 3}
@@ -55,14 +47,14 @@ def test_scenario_explicit_null_opts_out(monkeypatch):
     # Явный card_extraction: null у сценария = отказ от карты, БЕЗ фолбэка на config.
     called = {"n": 0}
 
-    def factory():
+    def fake_sc(**kwargs):
         called["n"] += 1
-        raise RuntimeError("OpenAI не должен вызываться при card_extraction: null")
-    monkeypatch.setattr(card, "OpenAI", factory)
+        raise AssertionError("structured_completion не должен вызываться при card_extraction: null")
+    monkeypatch.setattr(card, "structured_completion", fake_sc)
     cfg = {"card_extraction": {"prompt": "CONFIG", "json_schema": {"type": "object"}}}
     out = card.run_card_extraction([{"speaker": "A", "text": "hi"}], cfg, {"id": "s1", "card_extraction": None})
     assert out is None
-    assert called["n"] == 0   # opt-out: OpenAI не тронут (нет фолбэка на config)
+    assert called["n"] == 0   # opt-out: адаптор не тронут (нет фолбэка на config)
 
 
 def test_has_card_extraction():

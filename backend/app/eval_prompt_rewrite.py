@@ -1,14 +1,16 @@
-"""LLM-переработка eval-промпта из свободных «пожеланий» (gpt-5.4, structured output).
+"""LLM-переработка eval-промпта из свободных «пожеланий» (structured output).
 
 Вызывается синхронно из роута через run_in_executor (редкое интерактивное действие
-админа). Идиома `client.responses.create(... text.format json_schema strict)` — та же,
-что в worker/tasks/quality.py и card.py. openai объявлен в backend/requirements.txt.
+админа). Structured-вызов идёт через единый адаптер `llm.egress.structured_completion`
+(тот же шов, что в worker/tasks/quality.py и card.py); модель — env QUALITY_OPENAI_MODEL.
 """
 from __future__ import annotations
 
 import json
 import logging
 import os
+
+from llm.egress import structured_completion
 
 logger = logging.getLogger(__name__)
 
@@ -58,31 +60,20 @@ def rewrite_eval_prompt(current_prompt: str | None,
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY not set")
-    from openai import OpenAI
-
-    client = OpenAI(api_key=api_key)
     crit_txt = json.dumps(current_criteria or [], ensure_ascii=False, indent=2)
     user = (
         f"Текущий eval-промпт:\n{current_prompt or '(не задан — построй с нуля)'}\n\n"
         f"Текущие критерии:\n{crit_txt}\n\n"
         f"Пожелания пользователя:\n{wishes}"
     )
-    resp = client.responses.create(
-        model=_MODEL,
-        input=[
-            {"role": "system", "content": _SYSTEM},
-            {"role": "user", "content": user},
-        ],
+    return structured_completion(
+        system=_SYSTEM,
+        user=user,
+        schema=_SCHEMA,
+        schema_name="eval_prompt_rewrite",
         max_output_tokens=EVAL_REWRITE_MAX_OUTPUT_TOKENS,
         # Роутинг-ключ OpenAI prompt caching: _SYSTEM статичен, cached-вход в 10 раз дешевле
-        prompt_cache_key="sqa-eval-rewrite",
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "eval_prompt_rewrite",
-                "strict": True,
-                "schema": _SCHEMA,
-            }
-        },
+        cache_key="sqa-eval-rewrite",
+        model=_MODEL,
+        api_key=api_key,
     )
-    return json.loads(resp.output_text)

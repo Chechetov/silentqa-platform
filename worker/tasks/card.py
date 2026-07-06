@@ -1,16 +1,17 @@
 """Generic structured-card extraction (config-driven).
 
 If the tenant's company config has a `card_extraction` block ({label, prompt,
-json_schema}), run one gpt-5.4 strict structured-output call over the transcript
-and return the card dict. Domain-agnostic: the schema/prompt come from config,
+json_schema}), run one strict structured-output call (llm.egress adapter; model from
+SQA_LLM_MODEL_CARD, default gpt-5.4-mini) over the transcript and return the card dict.
+Domain-agnostic: the schema/prompt come from config,
 NOT from a DB template, and there is NO complex matching. Degrades to None on any
 error so it never fails the pipeline. QA scoring is handled separately in quality.py."""
 from __future__ import annotations
 
-import json
 import logging
+import os
 
-from openai import OpenAI
+from llm.egress import structured_completion
 
 logger = logging.getLogger(__name__)
 
@@ -53,17 +54,15 @@ def run_card_extraction(transcript: list[dict], company_config: dict,
     if not flat.strip():
         return None
     try:
-        client = OpenAI()
-        resp = client.responses.create(
-            model="gpt-5.4",
-            input=[{"role": "system", "content": cfg["prompt"]},
-                   {"role": "user", "content": "Транскрипт разговора:\n\n" + flat}],
+        return structured_completion(
+            system=cfg["prompt"],
+            user="Транскрипт разговора:\n\n" + flat,
+            schema=cfg["json_schema"],
+            schema_name="card",
             max_output_tokens=CARD_MAX_OUTPUT_TOKENS,
-            prompt_cache_key="sqa-card",
-            text={"format": {"type": "json_schema", "name": "card",
-                             "strict": True, "schema": cfg["json_schema"]}},
+            cache_key="sqa-card",
+            model=os.getenv("SQA_LLM_MODEL_CARD", "gpt-5.4-mini"),
         )
-        return json.loads(resp.output_text)
     except Exception:
         logger.exception("card extraction failed; skipping card")
         return None
