@@ -992,7 +992,7 @@ async function renderCallDetail(id) {
                   return `
                     <div class="transcript-line" data-start="${seg.start != null ? seg.start : ''}" data-end="${seg.end != null ? seg.end : ''}">
                       ${time ? `<span class="transcript-time">${time}</span>` : ''}
-                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
+                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName(this)" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
                       <span class="transcript-text">${escapeHtml(text)}</span>
                     </div>
                   `;
@@ -1884,7 +1884,8 @@ function _getUniqueSpeakers() {
   return [...speakers].sort();
 }
 
-async function editSpeakerName(speakerId) {
+async function editSpeakerName(el) {
+  const speakerId = el.dataset.speaker;
   if (!_currentCallData) return;
   const current = _getSpeakerMap()[speakerId] || {};
   const allSpeakers = _getUniqueSpeakers().filter(s => s !== speakerId);
@@ -1894,7 +1895,7 @@ async function editSpeakerName(speakerId) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-content">
-      <h3 style="margin:0 0 16px">Настройки спикера: ${speakerId}</h3>
+      <h3 style="margin:0 0 16px">Настройки спикера: ${escapeHtml(speakerId)}</h3>
       <div style="margin-bottom:12px">
         <label style="display:block;margin-bottom:4px;color:var(--text-muted);font-size:13px">Имя</label>
         <input id="modalSpeakerName" type="text" value="${escapeHtml(current.name || '')}" placeholder="Имя спикера" style="width:100%;padding:8px 12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px">

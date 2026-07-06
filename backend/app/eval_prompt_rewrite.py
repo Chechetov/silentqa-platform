@@ -47,6 +47,8 @@ _SCHEMA = {
 }
 
 _MODEL = os.getenv("QUALITY_OPENAI_MODEL", "gpt-5.4")
+# Потолок выхода structured-вызова (D-1.1): схема фиксирует форму, потолок страхует расход.
+EVAL_REWRITE_MAX_OUTPUT_TOKENS = 6_000
 
 
 def rewrite_eval_prompt(current_prompt: str | None,
@@ -71,6 +73,9 @@ def rewrite_eval_prompt(current_prompt: str | None,
             {"role": "system", "content": _SYSTEM},
             {"role": "user", "content": user},
         ],
+        max_output_tokens=EVAL_REWRITE_MAX_OUTPUT_TOKENS,
+        # Роутинг-ключ OpenAI prompt caching: _SYSTEM статичен, cached-вход в 10 раз дешевле
+        prompt_cache_key="sqa-eval-rewrite",
         text={
             "format": {
                 "type": "json_schema",

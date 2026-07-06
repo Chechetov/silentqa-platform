@@ -50,6 +50,10 @@ def test_rewrite_builds_request_and_parses(monkeypatch):
     # пожелания и текущий контекст ушли в user-сообщение
     user_msg = captured["kwargs"]["input"][-1]["content"]
     assert "активное слушание" in user_msg and "старый промпт" in user_msg
+    # D-1.1: потолок выхода + кэш-ключ статичного system-промпта
+    from app.eval_prompt_rewrite import EVAL_REWRITE_MAX_OUTPUT_TOKENS
+    assert captured["kwargs"]["max_output_tokens"] == EVAL_REWRITE_MAX_OUTPUT_TOKENS
+    assert captured["kwargs"]["prompt_cache_key"] == "sqa-eval-rewrite"
 
 
 def test_rewrite_requires_api_key(monkeypatch):
