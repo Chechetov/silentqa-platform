@@ -54,6 +54,12 @@ async def get_card(session_id: uuid.UUID):
     return _read_result_file(session_id, "card.json")
 
 
+@router.get("/{session_id}/coaching", dependencies=[Depends(require_session_access)])
+async def get_coaching(session_id: uuid.UUID):
+    """Коучинг-инсайт (coaching.json, F-5). 404, если не сгенерирован."""
+    return _read_result_file(session_id, "coaching.json")
+
+
 @router.get("/{session_id}/full", dependencies=[Depends(require_session_access)])
 async def get_full_result(session_id: uuid.UUID):
     transcript = _read_result_file(session_id, "transcript.json")
