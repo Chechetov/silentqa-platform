@@ -1,12 +1,15 @@
 """
-Оценка качества разговора менеджера через OpenAI GPT-5.4.
-Анализирует транскрипт на соответствие регламенту,
-качество общения и результат разговора.
+Оценка качества разговора менеджера через OpenAI GPT-5.4
+(Responses API, structured output).
 
-Поддерживает два режима:
+Runtime-режимы:
 - Базовый (v2): стандартная оценка для любых звонков
-- Расширенный (v3): чек-лист скрипта, классификация, возражения,
-  информация от клиента — для сценариев с детальным протоколом
+- Расширенный (v4): чек-лист скрипта, классификация, возражения, playbook
+  назначения встречи — для сценариев с кастомным prompt
+
+V3-промпты/схемы живут в коде только как строительные блоки V4
+(SYSTEM_PROMPT_V4 = V3 + контекст + playbook); как самостоятельная
+версия отчёта V3 не выбирается.
 """
 import json
 import logging
@@ -17,6 +20,13 @@ from openai import OpenAI
 from prompts.sales_playbook import get_meeting_playbook_prompt
 
 logger = logging.getLogger(__name__)
+
+# Потолки выхода structured-вызовов (D-1.1): JSON-схема фиксирует форму
+# ответа, потолок страхует расход — без него платим по максимуму модели.
+# Reasoning-токены GPT-5.4 тоже входят в max_output_tokens, поэтому запас
+# кратен типовому отчёту (2-4K токенов).
+QUALITY_MAX_OUTPUT_TOKENS = 16_000
+PLAN_MAX_OUTPUT_TOKENS = 6_000
 
 DEFAULT_PROTOCOL = """
 Регламент разговора менеджера:
@@ -678,6 +688,8 @@ def plan_next_call(
                 {"role": "system", "content": PLAN_SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False, indent=2)},
             ],
+            max_output_tokens=PLAN_MAX_OUTPUT_TOKENS,
+            prompt_cache_key="sqa-plan",
             text={
                 "format": {
                     "type": "json_schema",
@@ -1231,6 +1243,11 @@ def _assess_with_structured_output(
             {"role": "system", "content": system},
             {"role": "user", "content": user},
         ],
+        max_output_tokens=QUALITY_MAX_OUTPUT_TOKENS,
+        # Роутинг-ключ OpenAI prompt caching: system-промпт статичен в пределах
+        # (version, template_driven) — cached-вход в 10 раз дешевле; точное
+        # совпадение префикса OpenAI сверяет сам, ключ лишь улучшает роутинг.
+        prompt_cache_key=f"sqa-quality-v{version}" + ("-tpl" if template_driven else ""),
         text={
             "format": {
                 "type": "json_schema",
@@ -1240,6 +1257,9 @@ def _assess_with_structured_output(
             }
         },
     )
+    if getattr(response, "status", None) == "incomplete":
+        logger.warning(
+            "Quality LLM output truncated at %s tokens", QUALITY_MAX_OUTPUT_TOKENS)
 
     response_text = response.output_text
     result = json.loads(response_text)

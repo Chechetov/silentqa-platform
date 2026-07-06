@@ -14,6 +14,9 @@ from openai import OpenAI
 
 logger = logging.getLogger(__name__)
 
+# Потолок выхода card-вызова (D-1.1)
+CARD_MAX_OUTPUT_TOKENS = 6_000
+
 
 def _flatten_transcript(transcript: list[dict]) -> str:
     parts = []
@@ -55,6 +58,8 @@ def run_card_extraction(transcript: list[dict], company_config: dict,
             model="gpt-5.4",
             input=[{"role": "system", "content": cfg["prompt"]},
                    {"role": "user", "content": "Транскрипт разговора:\n\n" + flat}],
+            max_output_tokens=CARD_MAX_OUTPUT_TOKENS,
+            prompt_cache_key="sqa-card",
             text={"format": {"type": "json_schema", "name": "card",
                              "strict": True, "schema": cfg["json_schema"]}},
         )

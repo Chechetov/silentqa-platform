@@ -1,9 +1,11 @@
 """
 Транскрипция аудио.
-Движки:
-  - whisper (default): локальный faster-whisper, бесплатно
-  - assemblyai: облачный API, платный, fallback
-Выбор через env ASR_ENGINE=whisper|assemblyai
+Движки — упорядоченная цепочка фолбэков [ASR_ENGINE] + [elevenlabs, assemblyai, whisper]:
+  - elevenlabs: облачный Scribe v2, встроенная диаризация — основной в проде
+  - assemblyai: облачный API, word_boost
+  - whisper: локальный faster-whisper (CPU) — только последний фолбэк,
+    заметно хуже по качеству; фактический прогон через whisper — красный флаг
+Выбор primary — env ASR_ENGINE (код-дефолт whisper обманчив: деплои ставят облачный).
 """
 import logging
 import os

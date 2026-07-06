@@ -1,11 +1,11 @@
 """
 Полный пайплайн обработки аудио:
 1. Склейка чанков → один WAV файл
-2. Транскрипция (faster-whisper)
+2. Транскрипция (облачный ASR: ElevenLabs/AssemblyAI, whisper — последний фолбэк)
 3. Дiarизация (pyannote)
 4. Объединение транскрипта со спикерами
 5. Sentiment analysis (rubert)
-6. Оценка качества (Claude LLM)
+6. Оценка качества (OpenAI GPT-5.4)
 7. Сохранение результатов
 """
 import json

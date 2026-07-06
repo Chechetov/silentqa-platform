@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 MAX_TRANSCRIPT_TOKENS = 500_000  # safety cap; gpt-5.4 context is 1.05M
 RESULTS_PATH = Path(os.getenv("RESULTS_STORAGE_PATH", "./data/results"))
 
+# Потолок выхода extract-вызова (D-1.1)
+EXTRACT_MAX_OUTPUT_TOKENS = 6_000
+
 
 def _approx_tokens(text_str: str) -> int:
     return len(text_str) // 4
@@ -84,6 +87,8 @@ def run_extraction(db: DbSession, session_id, template_id, glossary: str | None 
             {"role": "system", "content": template.prompt},
             {"role": "user", "content": user_content},
         ],
+        max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+        prompt_cache_key=f"sqa-extract-{template_id}",
         text={
             "format": {
                 "type": "json_schema",
