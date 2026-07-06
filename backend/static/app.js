@@ -291,7 +291,7 @@ function formatSource(metadata) {
 // ============================================
 // PAGE: Calls List
 // ============================================
-let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '', employee: '' };
 let callsPhoneDebounce = null;
 let _templatesCache = null;
 
@@ -318,6 +318,7 @@ async function renderCalls(page = 0) {
   if (callsFilters.phone) params.set('phone', callsFilters.phone);
   if (callsFilters.template_id) params.set('template_id', callsFilters.template_id);
   if (callsFilters.kb_tag) params.set('kb_tag', callsFilters.kb_tag);
+  if (callsFilters.employee) params.set('employee', callsFilters.employee);
 
   try {
     const data = await api(`/api/sessions?${params.toString()}`);
@@ -331,7 +332,7 @@ async function renderCalls(page = 0) {
     const tplOptions = templates.map(t =>
       `<option value="${t.id}" ${callsFilters.template_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
     ).join('');
-    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag);
+    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag || callsFilters.employee);
 
     let html = `
       <div class="page-header">
@@ -373,6 +374,7 @@ async function renderCalls(page = 0) {
             </select>
             <input type="search" id="callsPhoneFilter" class="table-filter" placeholder="Телефон…" value="${escapeHtml(callsFilters.phone)}">
             ${callsFilters.kb_tag ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по тегу базы знаний">Тег: ${escapeHtml(callsFilters.kb_tag_label || callsFilters.kb_tag)} <button type="button" id="callsKbTagClear" title="Снять фильтр по тегу" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
+            ${callsFilters.employee ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по менеджеру">Менеджер: ${escapeHtml(callsFilters.employee)} <button type="button" id="callsEmployeeClear" title="Снять фильтр по менеджеру" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
             ${filtersActive ? '<button type="button" id="callsFiltersReset" class="table-filter-reset">Сбросить</button>' : ''}
             <input type="text" class="table-search" placeholder="Поиск на странице…" id="callSearch">
           </div>
@@ -454,7 +456,7 @@ async function renderCalls(page = 0) {
     const resetBtn = $('#callsFiltersReset');
     if (resetBtn) {
       resetBtn.addEventListener('click', () => {
-        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '', employee: '' };
         renderCalls(0);
       });
     }
@@ -463,6 +465,13 @@ async function renderCalls(page = 0) {
       kbTagClear.addEventListener('click', () => {
         callsFilters.kb_tag = '';
         callsFilters.kb_tag_label = '';
+        renderCalls(0);
+      });
+    }
+    const employeeClear = $('#callsEmployeeClear');
+    if (employeeClear) {
+      employeeClear.addEventListener('click', () => {
+        callsFilters.employee = '';
         renderCalls(0);
       });
     }
@@ -485,7 +494,7 @@ async function renderCalls(page = 0) {
 function filterByKbTag(el) {
   // Клик по KB-тегу в карточке звонка → список звонков, отфильтрованный по этому тегу.
   callsFilters = { source: '', phone: '', template_id: '',
-                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '' };
+                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '', employee: '' };
   navigate('calls');
 }
 
@@ -551,6 +560,7 @@ async function renderCallDetail(id) {
       </a>
 
       <div class="export-buttons" style="display:flex;gap:8px;margin-bottom:12px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="copyCallSummary()">Копировать резюме</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
         ${moduleOn('amocrm') ? `<button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>` : ''}
@@ -636,7 +646,9 @@ async function renderCallDetail(id) {
               const cls = s.sentiment === 'positive' ? 'sentiment-positive'
                         : s.sentiment === 'negative' ? 'sentiment-negative'
                         : 'sentiment-neutral';
-              return `<div class="sentiment-segment ${cls}" style="flex:1" title="${s.sentiment}${s.text ? ': ' + escapeHtml(s.text) : ''}"></div>`;
+              const dur = (s.end != null && s.start != null) ? Math.max(0.5, s.end - s.start) : 1;
+              const seek = s.start != null ? ` data-t="${s.start}" style="flex:${dur};cursor:pointer"` : ` style="flex:${dur}"`;
+              return `<div class="sentiment-segment ${cls}"${seek} title="${s.start != null ? formatSeconds(s.start) + ' · ' : ''}${s.sentiment}${s.text ? ': ' + escapeHtml(s.text) : ''}"></div>`;
             }).join('')}
           </div>
         </div>
@@ -931,7 +943,7 @@ async function renderCallDetail(id) {
             const text = typeof m === 'string' ? m : (m.text || m.description || JSON.stringify(m));
             const time = m.time != null ? formatSeconds(m.time) : (m.timestamp ? m.timestamp : null);
             return `
-              <div class="moment-item">
+              <div class="moment-item"${m.time != null ? ` data-t="${m.time}" style="cursor:pointer" title="Перейти к моменту"` : ''}>
                 ${time ? `<div class="moment-time">${time}</div>` : ''}
                 ${escapeHtml(text)}
               </div>
@@ -1055,6 +1067,16 @@ async function renderCallDetail(id) {
       });
     }
 
+    // Клик-seek: сентимент-сегменты и ключевые моменты
+    app.querySelectorAll('.sentiment-segment[data-t], .moment-item[data-t]').forEach(el =>
+      el.addEventListener('click', () => {
+        const player = $('#audioPlayer');
+        if (!player) return;
+        player.currentTime = parseFloat(el.dataset.t);
+        player.play();
+        player.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }));
+
     initTranscriptSearch();
   } catch (err) {
     app.innerHTML = `
@@ -1072,6 +1094,7 @@ async function renderCallDetail(id) {
 // ============================================
 // ---- Дашборд руководителя ----
 let _dashDays = 30;
+let _dashScenario = '';
 
 const OBJECTION_RU = {
   already_contacted: 'Уже общались', no_time: 'Нет времени',
@@ -1094,11 +1117,12 @@ async function renderDashboard() {
   showLoading();
   try {
     const granularity = _dashDays >= 90 ? 'week' : 'day';
+    const scen = _dashScenario ? `&scenario_id=${encodeURIComponent(_dashScenario)}` : '';
     const [ov, managers, objections, risks] = await Promise.all([
-      api(`/api/stats/overview?days=${_dashDays}&granularity=${granularity}`),
-      api(`/api/stats/managers?days=${_dashDays}`),
-      api(`/api/stats/objections?days=${_dashDays}`),
-      api(`/api/stats/risk-calls?days=${_dashDays}&limit=10`),
+      api(`/api/stats/overview?days=${_dashDays}&granularity=${granularity}${scen}`),
+      api(`/api/stats/managers?days=${_dashDays}${scen}`),
+      api(`/api/stats/objections?days=${_dashDays}${scen}`),
+      api(`/api/stats/risk-calls?days=${_dashDays}&limit=10${scen}`),
     ]);
     const k = ov.kpi, p = ov.prev_kpi;
     const hasData = k.calls > 0;
@@ -1130,9 +1154,11 @@ async function renderDashboard() {
     const mgrTable = `
       <div class="card">
         <div class="card-header"><h3>Менеджеры</h3></div>
+        <div style="overflow-x:auto">
         <table class="data-table" id="mgrTable"><thead><tr>
           <th>Менеджер</th><th>Звонки</th><th>Ср. оценка</th><th>Динамика</th><th>Риск</th><th>Речь</th>
         </tr></thead><tbody>${mgrRows || '<tr><td colspan="6">Нет данных</td></tr>'}</tbody></table>
+        </div>
       </div>`;
 
     const maxObj = Math.max(1, ...objections.map(o => o.count));
@@ -1146,9 +1172,11 @@ async function renderDashboard() {
     const objBlock = `
       <div class="card">
         <div class="card-header"><h3>Возражения</h3></div>
+        <div style="overflow-x:auto">
         <table class="data-table"><thead><tr>
           <th>Категория</th><th>Сколько</th><th>Отработано</th><th>Примеры</th>
         </tr></thead><tbody>${objRows || '<tr><td colspan="4">Возражений не зафиксировано</td></tr>'}</tbody></table>
+        </div>
       </div>`;
 
     const riskRows = risks.map(r => `
@@ -1161,20 +1189,33 @@ async function renderDashboard() {
     const riskBlock = `
       <div class="card">
         <div class="card-header"><h3>Рисковые звонки</h3></div>
+        <div style="overflow-x:auto">
         <table class="data-table" id="riskTable"><thead><tr>
           <th>Дата</th><th>Менеджер</th><th>Оценка</th><th>Причина</th>
         </tr></thead><tbody>${riskRows || '<tr><td colspan="4">Рисковых звонков нет 🎉</td></tr>'}</tbody></table>
+        </div>
       </div>`;
+
+    const scenarios = (features && features.scenarios) || [];
+    const scenarioSel = scenarios.length ? `
+      <select id="dashScenario" class="table-filter">
+        <option value="">Все сценарии</option>
+        ${scenarios.map(s => `<option value="${escapeHtml(s.id)}" ${_dashScenario === s.id ? 'selected' : ''}>${escapeHtml(s.name || s.id)}</option>`).join('')}
+      </select>` : '';
 
     app.innerHTML = `
       <div class="page-header">
         <h2>Дашборд</h2>
         <div class="dash-period">
+          ${scenarioSel}
           ${[7, 30, 90].map(d => `<button class="btn btn-sm ${d === _dashDays ? 'btn-primary' : ''}" data-days="${d}">${d} дн</button>`).join('')}
         </div>
       </div>
       ${hasData ? kpiRow + trend + mgrTable + objBlock + riskBlock
         : '<div class="empty-state"><p>Нет данных за период — обработайте звонки или запустите бэкфилл (worker/scripts/backfill_quality_results.py)</p></div>'}`;
+
+    const sel = $('#dashScenario');
+    if (sel) sel.addEventListener('change', () => { _dashScenario = sel.value; renderDashboard(); });
 
     $$('.dash-period button').forEach(b => b.addEventListener('click', () => {
       _dashDays = parseInt(b.dataset.days, 10);
@@ -1183,9 +1224,10 @@ async function renderDashboard() {
     $$('#riskTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
       navigate('#call/' + tr.dataset.sid);
     }));
-    // Точечного роута #managers/<name> в SPA нет — ведём на общий #managers (спек §7).
     $$('#mgrTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
-      navigate('#managers');
+      callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '',
+                       employee: tr.dataset.name || '' };
+      navigate('#calls');
     }));
   } catch (err) {
     app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки дашборда: ${escapeHtml(err.message)}</p></div>`;
@@ -1811,6 +1853,22 @@ async function deleteSession(id) {
   } catch (err) {
     showToast(`Не удалось удалить: ${err.message}`, 'error');
   }
+}
+
+function copyCallSummary() {
+  const a = _currentCallData && _currentCallData.analysis;
+  const s = _currentCallData && _currentCallData.session;
+  if (!a) { showToast('Резюме ещё нет', 'error'); return; }
+  const lines = [
+    `Звонок ${s && s.created_at ? new Date(s.created_at).toLocaleString('ru-RU') : ''}`,
+    a.overall_score != null ? `Оценка: ${a.overall_score}/10` : '',
+    '', a.brief_summary || a.summary || '',
+    '', (a.improvement_suggestions || []).length ? 'Рекомендации:' : '',
+    ...(a.improvement_suggestions || []).map(x => `— ${typeof x === 'string' ? x : (x.text || '')}`),
+  ].filter(Boolean);
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => showToast('Резюме скопировано'))
+    .catch(() => showToast('Не удалось скопировать', 'error'));
 }
 
 function exportCallData(format) {
