@@ -1333,7 +1333,7 @@ async function renderCompanyDetail(id) {
           ${wordBoost.map(w => `
             <span class="tag">
               ${escapeHtml(w)}
-              <span class="tag-remove" onclick="removeWord(this, '${escapeHtml(w)}')">&times;</span>
+              <span class="tag-remove" data-word="${escapeHtml(w)}" onclick="removeWord(this)">&times;</span>
             </span>
           `).join('')}
         </div>
@@ -1415,13 +1415,13 @@ function addWord() {
   const container = $('#wordBoostTags');
   const tag = document.createElement('span');
   tag.className = 'tag';
-  tag.innerHTML = `${escapeHtml(word)}<span class="tag-remove" onclick="removeWord(this, '${escapeHtml(word)}')">&times;</span>`;
+  tag.innerHTML = `${escapeHtml(word)}<span class="tag-remove" data-word="${escapeHtml(word)}" onclick="removeWord(this)">&times;</span>`;
   container.appendChild(tag);
   input.value = '';
   input.focus();
 }
 
-function removeWord(btn, word) {
+function removeWord(btn) {
   btn.parentElement.remove();
 }
 
