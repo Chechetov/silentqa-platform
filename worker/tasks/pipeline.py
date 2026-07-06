@@ -992,6 +992,17 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
         # старую card.json НЕ трогаем, чтобы транзиентная ошибка её не стёрла.
         delete_results(session_id, "card")
 
+    # === 6.9 Коучинг-инсайт (F-5, best-effort, дашборд-only) ===
+    if os.getenv("SQA_COACHING", "1") != "0" and quality_report.get("overall_score") is not None:
+        try:
+            from tasks.coaching import generate_coaching
+            task.update_state(state="PROGRESS", meta={"step": "coaching", "progress": 92})
+            coaching = generate_coaching(transcript_with_speakers, quality_report)
+            if coaching:
+                save_results(session_id, "coaching", coaching)
+        except Exception:
+            logger.exception(f"[{session_id}] coaching failed; skipping (best-effort)")
+
     # === 7. Auto-save speaker roles ===
     speaker_roles = quality_report.get("speaker_roles")
     if speaker_roles:
