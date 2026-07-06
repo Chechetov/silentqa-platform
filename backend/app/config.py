@@ -24,5 +24,15 @@ class Settings(BaseSettings):
     # *.BASE_DOMAIN (local dev: localhost/IP). Empty → platform contour.
     DEFAULT_TENANT: str = ""
 
+    # Лимиты тела запроса, МБ (ревью C-2). Первая линия — глобальный
+    # ASGI-middleware по Content-Length; вторая — пер-роутные капы ингеста
+    # (по фактическим байтам); внешний слой — request_body в Caddy (ранбук).
+    MAX_REQUEST_BODY_MB: int = 600
+    MAX_CHUNK_UPLOAD_MB: int = 32    # один 10-секундный WebM/Opus-чанк
+    MAX_AUDIO_UPLOAD_MB: int = 512   # файл-аплоуд целого звонка
+    # /docs, /redoc, /openapi.json (ревью C-3): по умолчанию выключены,
+    # включать только на стейдже/локали.
+    ENABLE_API_DOCS: bool = False
+
 
 settings = Settings()

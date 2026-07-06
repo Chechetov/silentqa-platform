@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from starlette.concurrency import run_in_threadpool
 
+from app.body_limit import BodySizeLimitMiddleware
 from app.config import settings
 from app.migrate import check as migrate_check
 from app.routes import (
@@ -39,7 +40,19 @@ async def lifespan(app: FastAPI):
     yield
 
 
-app = FastAPI(title="Meeting Recorder", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Meeting Recorder", version="1.0.0", lifespan=lifespan,
+    # C-3: schema-эндпоинты живут вне /api/* и не покрываются контур-гейтом —
+    # наружу их не светим; включаются явным флагом (стейдж/локаль).
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
+)
+
+# Глобальный потолок тела (C-2). Добавлен ДО CORS: последний add_middleware —
+# внешний, т.е. стек tenant → CORS → body-limit, и 413 уходит с CORS-заголовками.
+app.add_middleware(
+    BodySizeLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_MB * 1024 * 1024)
 
 # CORS: список origin'ов из настроек. Дефолт "*" — расширения и десктоп
 # ходят с origin chrome-extension://… / file://; сужать только вместе

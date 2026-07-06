@@ -179,3 +179,15 @@ analyze-прогона даст конкурентный дубль задачи
 в метаданные сессии возможен редкий дубль заметки (только AmoCRM-тенанты).
 При жалобе клиента на дубль — проверять журнал `silentqa-worker-io` на этот
 момент (`journalctl -u silentqa-worker-io`).
+
+## Body-size limit в Caddy (ревью C-2, добавлено 2026-07-06)
+
+Приложение держит потолки само (`MAX_REQUEST_BODY_MB=600` middleware +
+капы ингеста в chunks.py). Внешний слой на проде — Caddy: в блок
+`silentqa.com, *.silentqa.com` добавить
+
+    request_body {
+        max_size 600MB
+    }
+
+и `systemctl reload caddy`. Применяет владелец при ближайшем деплое.

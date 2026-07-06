@@ -38,6 +38,15 @@ def _run_ffmpeg(cmd: list[str]) -> None:
         raise RuntimeError(f"ffmpeg exit {result.returncode}: {stderr_tail}")
 
 
+def _enforce_upload_cap(size_bytes: int | None, max_mb: int, what: str) -> None:
+    """413, если размер известен и превышает потолок. Вторая линия за
+    глобальным middleware — ловит по фактическим байтам клиентов без/с
+    лживым Content-Length."""
+    if size_bytes is not None and size_bytes > max_mb * 1024 * 1024:
+        raise HTTPException(
+            status_code=413, detail=f"{what} exceeds {max_mb} MB limit")
+
+
 @router.post("/{session_id}/chunks", response_model=ChunkResponse, status_code=201,
              dependencies=[Depends(require_ingestion_auth)])
 async def upload_chunk(
@@ -90,6 +99,7 @@ async def upload_chunk(
     # rename wins, matching the last DB upsert's intent.
     tmp_path = file_path.with_suffix(f".webm.tmp.{uuid.uuid4().hex[:8]}")
     content = await file.read()
+    _enforce_upload_cap(len(content), settings.MAX_CHUNK_UPLOAD_MB, "chunk")
     try:
         async with aiofiles.open(tmp_path, "wb") as f:
             await f.write(content)
@@ -214,11 +224,20 @@ async def upload_audio_file(
     session_dir.mkdir(parents=True, exist_ok=True)
     original_path = session_dir / f"original{ext}"
 
-    async with aiofiles.open(original_path, "wb") as f:
-        content = await file.read()
-        await f.write(content)
+    # Starlette уже принял тело в спул (диск после 1 МБ) — размер известен
+    # до чтения в память: отбиваем негабарит и стримим копию без RAM-спайка.
+    upload_size = getattr(file, "size", None)
+    if upload_size is None:
+        file.file.seek(0, os.SEEK_END)
+        upload_size = file.file.tell()
+        file.file.seek(0)
+    _enforce_upload_cap(upload_size, settings.MAX_AUDIO_UPLOAD_MB, "audio file")
 
-    file_size = len(content)
+    async with aiofiles.open(original_path, "wb") as f:
+        while chunk_bytes := await file.read(1024 * 1024):
+            await f.write(chunk_bytes)
+
+    file_size = upload_size
     session.file_size_bytes = file_size
     session.status = SessionStatus.uploading
     if template_id is not None:

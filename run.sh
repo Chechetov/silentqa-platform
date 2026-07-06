@@ -22,6 +22,7 @@ export DATABASE_URL_SYNC="${DATABASE_URL_SYNC:-postgresql+psycopg2://realestate:
 export REDIS_URL="${REDIS_URL:-redis://localhost:6381/0}"
 export AUDIO_STORAGE_PATH="${AUDIO_STORAGE_PATH:-./data/audio}"
 export RESULTS_STORAGE_PATH="${RESULTS_STORAGE_PATH:-./data/results}"
+export ENABLE_API_DOCS="${ENABLE_API_DOCS:-1}"  # локальная разработка — /docs удобен
 
 # Создать директории для данных
 mkdir -p "$AUDIO_STORAGE_PATH" "$RESULTS_STORAGE_PATH"
