@@ -9,6 +9,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-ExecStart=/root/projects/silentqa-dev/scripts/backup_prod.sh
+ExecStart=/root/projects/silentqa/scripts/backup_prod.sh
 Nice=10
 IOSchedulingClass=idle
