@@ -508,7 +508,7 @@ async function renderCallDetail(id) {
     const session = await api(`/api/sessions/${id}`);
     // Независимые куски карточки — параллельно (латентность = max, не сумма)
     const opt = (p) => p.catch(() => null);
-    let [transcript, analysis, sentiment, extraction, kbTags, card, asrVariants] =
+    let [transcript, analysis, sentiment, extraction, kbTags, card, asrVariants, coaching] =
       await Promise.all([
         opt(api(`/api/sessions/${id}/transcript`)),
         opt(api(`/api/sessions/${id}/analysis`)),
@@ -517,6 +517,7 @@ async function renderCallDetail(id) {
         moduleOn('knowledge_base') ? api(`/api/sessions/${id}/tags`).catch(() => []) : [],
         opt(api(`/api/sessions/${id}/card`)),
         isAdmin() ? opt(api(`/api/sessions/${id}/transcript-variants`)) : null,  // ASR-сравнение (админ-тюнинг)
+        opt(api(`/api/sessions/${id}/coaching`)),  // F-5 коучинг-инсайт (404 пока не сгенерирован — opt() глотает)
       ]);
 
     _currentCallData = { session, transcript, analysis, sentiment };
@@ -686,6 +687,34 @@ async function renderCallDetail(id) {
           </h3>
           ${summary ? `<p style="margin-bottom:8px">${escapeHtml(summary)}</p>` : ''}
           ${detailedSummary ? `<details style="margin-top:8px"><summary style="cursor:pointer;font-weight:600;color:var(--text-secondary)">Подробный пересказ</summary><p style="margin-top:8px;color:var(--text-secondary)">${escapeHtml(detailedSummary)}</p></details>` : ''}
+        </div>
+      `;
+    }
+
+    // === Коучинг-инсайт (F-5) — персональный разбор звонка. Самое видное место: сразу после
+    // резюме, до критериев. coaching==null → блок не рендерится (никаких заглушек).
+    if (coaching) {
+      const _strengths = Array.isArray(coaching.strengths) ? coaching.strengths : [];
+      const _growth = Array.isArray(coaching.growth_areas) ? coaching.growth_areas : [];
+      html += `
+        <div class="card">
+          <h3>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            Коучинг
+          </h3>
+          ${coaching.headline ? `<div class="coach-headline">🎯 ${escapeHtml(coaching.headline)}</div>` : ''}
+          ${_strengths.length ? _strengths.map(s => `
+            <div class="coach-strength">✓ ${escapeHtml(s.text)}${s.quote ? ` <span class="coach-quote">«${escapeHtml(s.quote)}»</span>` : ''}</div>
+          `).join('') : ''}
+          ${_growth.length ? _growth.map(g => `
+            <div class="coach-growth">
+              <div class="coach-quote">«${escapeHtml(g.moment_quote)}»</div>
+              ${g.why_it_matters ? `<div class="coach-line"><span class="coach-line-label">Почему важно:</span> ${escapeHtml(g.why_it_matters)}</div>` : ''}
+              ${g.better_version ? `<div class="coach-better"><span class="coach-line-label">Лучше так:</span> ${escapeHtml(g.better_version)}</div>` : ''}
+              ${g.time != null ? `<button class="btn btn-sm coach-seek" data-t="${g.time}">▶ к моменту</button>` : ''}
+            </div>
+          `).join('') : ''}
+          ${coaching.drill ? `<div class="coach-drill">🏋️ Фокус на следующий звонок: ${escapeHtml(coaching.drill)}</div>` : ''}
         </div>
       `;
     }
@@ -1067,8 +1096,8 @@ async function renderCallDetail(id) {
       });
     }
 
-    // Клик-seek: сентимент-сегменты и ключевые моменты
-    app.querySelectorAll('.sentiment-segment[data-t], .moment-item[data-t]').forEach(el =>
+    // Клик-seek: сентимент-сегменты, ключевые моменты и коучинг-моменты
+    app.querySelectorAll('.sentiment-segment[data-t], .moment-item[data-t], .coach-seek[data-t]').forEach(el =>
       el.addEventListener('click', () => {
         const player = $('#audioPlayer');
         if (!player) return;

@@ -776,6 +776,80 @@ tbody td {
   margin-bottom: 4px;
 }
 
+/* ---- Coaching (F-5) ---- */
+
+.coach-headline {
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--text-primary);
+  line-height: 1.4;
+  margin-bottom: 16px;
+}
+
+.coach-strength {
+  font-size: 14px;
+  color: var(--good);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+/* Курсивная цитата в кавычках-ёлочках (используется и в strengths, и в growth-карточках) */
+.coach-quote {
+  font-style: italic;
+  color: var(--text-secondary);
+}
+
+.coach-growth {
+  background: var(--bg-secondary);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  margin-top: 12px;
+}
+
+.coach-growth .coach-quote {
+  display: block;
+  font-size: 13px;
+  color: var(--text-muted);
+  margin-bottom: 8px;
+}
+
+.coach-line {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin-bottom: 6px;
+}
+
+.coach-line-label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.coach-better {
+  font-size: 13px;
+  color: var(--accent);
+  line-height: 1.5;
+  margin-bottom: 8px;
+}
+
+.coach-better .coach-line-label {
+  color: var(--accent);
+}
+
+.coach-seek {
+  margin-top: 4px;
+}
+
+.coach-drill {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+}
+
 /* ---- Forms ---- */
 
 .form-group {
