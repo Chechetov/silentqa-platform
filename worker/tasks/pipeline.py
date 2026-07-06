@@ -952,6 +952,7 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
         transcript=transcript_with_speakers,
         sentiment_results=sentiment_results,
         company_config=company_config,
+        skip_reason=quality_report.get("skip_reason"),
         duration_seconds=_get_audio_duration(audio_path) or None,
     )
     if risk_flags:
@@ -962,7 +963,7 @@ def _analyze_inner(task, session_id: str, audio_path: str, config: dict, company
     classification = (quality_report.get("call_classification") or {}).get("type", "")
     can_plan = (
         use_extended
-        and quality_report.get("skip_reason") != "too_short"
+        and not quality_report.get("skip_reason")  # too_short/llm_error/… — план не по чему строить
         and classification != "brushoff_short"
         and prior_context is not None
     )
