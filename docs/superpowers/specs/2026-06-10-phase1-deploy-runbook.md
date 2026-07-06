@@ -241,7 +241,7 @@ analyze-прогона даст конкурентный дубль задачи
 - БД: `pg_restore -Fc -h localhost -p 5432 -U <user> -d silentqa --clean --if-exists db.dump`
   (или в свежую БД без `--clean`). `db.dump` — custom-format, не SQL-текст.
 - Конфиг: `tar -xzf config.tar.gz -C /root/projects/silentqa` (перезапишет `.env`+`companies/`).
-- Медиа: `rsync -az root@89.207.255.231:/root/backups/silentqa-box/data-mirror/ /root/projects/silentqa/data/`
+- Медиа: `rsync -az -e "ssh -i /root/.ssh/rogov_relay" root@89.207.255.231:/root/backups/silentqa-box/data-mirror/ /root/projects/silentqa/data/`
   (обратное направление; ключ `-i /root/.ssh/rogov_relay`).
 - Redis: обычно не восстанавливается (сессии/кеш/брокер — эфемерны); при нужде
   остановить redis, положить `redis-dump.rdb` в `dir` как `dbfilename`, стартовать.

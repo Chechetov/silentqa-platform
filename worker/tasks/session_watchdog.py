@@ -12,11 +12,15 @@ Recovery rules:
   2. No chunks AND created > CREATED_STALE_MIN ago
      → mark `failed`. Nothing to process.
   3-reenqueue. status=processing AND transcript.json exists AND quality.json does
-     NOT AND processing_started_at > ANALYZE_REENQUEUE_AFTER_MIN ago
+     NOT AND transcript.json mtime > ANALYZE_REENQUEUE_AFTER_MIN ago
      → стадия 1 отработала (транскрипт на диске), но handoff-analyze потерялся.
-     Ре-энкьюим `pipeline.analyze_session` на очередь analysis, а НЕ выбрасываем
-     дорогой транскрипт под нож 3a. Максимум ANALYZE_REENQUEUE_MAX попыток
-     (счётчик в metadata.analyze_reenqueue_count) с паузой ≥ ANALYZE_REENQUEUE_AFTER_MIN
+     Порог меряется от mtime transcript.json — момента, когда стадия 1 закончила
+     и сделала handoff, — а НЕ от processing_started_at (старт стадии 1). Дефолт
+     порога (120 мин) > hard-limit analyze (5400с, celery_app.py): к этому моменту
+     оригинальный analyze точно мёртв, а не просто медленный. Ре-энкьюим
+     `pipeline.analyze_session` на очередь analysis, а НЕ выбрасываем дорогой
+     транскрипт под нож 3a. Максимум ANALYZE_REENQUEUE_MAX попыток (счётчик в
+     metadata.analyze_reenqueue_count) с паузой ≥ ANALYZE_REENQUEUE_AFTER_MIN
      между ними (metadata.analyze_reenqueue_at); дальше правило молкнет и сессию
      добьют 3a/3b. Идёт ДО 3a/3b: пока счётчик не исчерпан, транскрипт спасаем.
      Вход analyze идемпотентен (guard: completed+quality.json → ранний return).
@@ -35,7 +39,9 @@ Recovery rules:
 import json
 import logging
 import os
+import time
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from tenancy.context import (
     get_tenant_schema,
@@ -55,10 +61,15 @@ RESULTS_PATH = os.getenv("RESULTS_STORAGE_PATH", "./data/results")
 
 UPLOADING_STALE_MIN = int(os.getenv("SESSION_UPLOADING_STALE_MIN", "15"))
 CREATED_STALE_MIN = int(os.getenv("SESSION_CREATED_STALE_MIN", "60"))
-# Rule 3-reenqueue: транскрипт готов, но analyze потерян. Через сколько минут
-# «фактического старта» (processing_started_at) ре-энкьюим потерянный analyze,
-# и та же пауза — минимум между повторными ре-энкью.
-ANALYZE_REENQUEUE_AFTER_MIN = int(os.getenv("ANALYZE_REENQUEUE_AFTER_MIN", "30"))
+# Rule 3-reenqueue: транскрипт готов, но analyze потерян. Порог меряется от mtime
+# transcript.json (момент handoff-а стадии 1), и та же пауза — минимум между
+# повторными ре-энкью. Дефолт 120 мин > hard-limit analyze (5400с): к этому моменту
+# оригинальный analyze точно мёртв, а не медленный. Остаточный риск дубль-спенда
+# есть только при бэклоге очереди analysis > 2ч (живой оригинал ещё ждёт слот, а мы
+# шлём дубль): он ограничен счётчиком max 2 и guard-ом completed-редоставки на входе
+# analyze, и это осознанный cost-риск (лишний LLM-прогон), НЕ порча данных —
+# quality.json перезаписывается last-writer-wins.
+ANALYZE_REENQUEUE_AFTER_MIN = int(os.getenv("ANALYZE_REENQUEUE_AFTER_MIN", "120"))
 # Максимум ре-энкью на сессию: дальше правило молчит, добивают 3a/3b (6ч, failed).
 ANALYZE_REENQUEUE_MAX = 2
 # Rule 3a: стадия стартовала (processing_started_at проставлен воркером) и висит
@@ -74,10 +85,21 @@ ENQUEUED_STALE_HOURS = int(os.getenv("SESSION_ENQUEUED_STALE_HOURS", "24"))
 _get_sync_db_url = get_sync_db_url
 
 
-def _transcript_exists(session_id: str) -> bool:
-    """transcript.json со стадии 1 лежит на диске (тенант-контекст выставлен)."""
+def _transcript_path(session_id: str) -> Path:
+    """Путь к transcript.json со стадии 1 (тенант-контекст выставлен)."""
     return (tenant_results_dir(RESULTS_PATH, get_tenant_slug(), session_id)
-            / "transcript.json").exists()
+            / "transcript.json")
+
+
+def _transcript_stale(session_id: str) -> bool:
+    """transcript.json есть И его mtime старше ANALYZE_REENQUEUE_AFTER_MIN.
+    mtime = момент, когда стадия 1 закончила и сделала handoff-analyze; порог
+    старше hard-limit analyze означает, что оригинальный analyze точно мёртв."""
+    try:
+        age = time.time() - _transcript_path(session_id).stat().st_mtime
+    except OSError:
+        return False                     # файла нет / недоступен — спасать нечего
+    return age >= ANALYZE_REENQUEUE_AFTER_MIN * 60
 
 
 def _quality_exists(session_id: str) -> bool:
@@ -188,8 +210,9 @@ def _sweep_for_current_tenant():
 
                 # 3-reenqueue. Транскрипт готов, но handoff-analyze потерян →
                 # ре-энкью на analysis (ДО 3a/3b-фейла), чтобы не выбрасывать
-                # дорогой транскрипт. Кандидаты — по метке старта стадии 1
-                # (processing_started_at), тот же якорь, что у 3a.
+                # дорогой транскрипт. SQL-префильтр по processing_started_at —
+                # грубый (тем же порогом); точный порог меряется в Python от mtime
+                # transcript.json (_transcript_stale), т.е. от момента handoff-а.
                 cur.execute(
                     """
                     SELECT s.id::text, s.metadata
@@ -208,8 +231,13 @@ def _sweep_for_current_tenant():
                         continue                    # исчерпан — молчим, добьют 3a/3b
                     if _reenqueue_is_recent(meta, now):
                         continue                    # прошлый ре-энкью слишком свежий
-                    if not _transcript_exists(sid) or _quality_exists(sid):
-                        continue                    # стадии 1 нет / стадия 2 уже готова
+                    if not _transcript_stale(sid) or _quality_exists(sid):
+                        continue                    # транскрипта нет/свежий / стадия 2 готова
+                    # Восстановить сценарий: finish_session строит config ровно из
+                    # appointment_type (routes/sessions.py:567-578); невалидный id
+                    # безопасно уходит в дефолт (get_scenario→None). {} → дефолт.
+                    appt = (meta or {}).get("appointment_type")
+                    config = {"scenario_id": appt} if appt else {}
                     meta["analyze_reenqueue_count"] = count + 1
                     meta["analyze_reenqueue_at"] = now.isoformat()
                     cur.execute(
@@ -218,7 +246,7 @@ def _sweep_for_current_tenant():
                         (json.dumps(meta, ensure_ascii=False), sid),
                     )
                     if cur.rowcount:
-                        reenqueue.append(sid)
+                        reenqueue.append((sid, config))
 
                 # 3a. Стадия стартовала и висит > N часов → failed
                 cur.execute(
@@ -275,16 +303,16 @@ def _sweep_for_current_tenant():
         logger.warning("[watchdog] failed empty session %s (no chunks)", sid)
 
     # Re-enqueue lost analyze AFTER the DB transaction committed (metadata-счётчик
-    # уже инкрементнут). config={} — company/scenario резолвятся server-side из
-    # тенанта (тот же дефолт, что при исходном browser/upload-прогоне).
-    for sid in reenqueue:
+    # уже инкрементнут). config восстановлен из metadata.appointment_type — тот же
+    # scenario_id, что построил finish_session; {} → дефолтный сценарий тенанта.
+    for sid, config in reenqueue:
         try:
             app.send_task(
                 "pipeline.analyze_session",
                 kwargs={
                     "session_id": sid,
                     "audio_path": _reenqueue_audio_path(sid),
-                    "config": {},
+                    "config": config,
                     "tenant_schema": get_tenant_schema(),
                 },
                 queue="analysis",

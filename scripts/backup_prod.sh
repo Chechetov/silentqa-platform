@@ -38,10 +38,10 @@ set +a
 : "${DATABASE_URL_SYNC:?DATABASE_URL_SYNC отсутствует в $PROD_DIR/.env}"
 
 # --- разбор DATABASE_URL_SYNC (python3/urllib надёжнее sed; секреты в env, не в stdout) ---
-mapfile -t _db < <(python3 - "$DATABASE_URL_SYNC" <<'PY'
-import sys
+mapfile -t _db < <(_PARSE_URL="$DATABASE_URL_SYNC" python3 - <<'PY'
+import os
 from urllib.parse import urlparse, unquote
-u = urlparse(sys.argv[1])
+u = urlparse(os.environ["_PARSE_URL"])
 d = lambda x: unquote(x) if x else ''
 print(d(u.hostname) or 'localhost')
 print(u.port or 5432)
@@ -63,10 +63,10 @@ pg_dumpall --globals-only -h "$PGHOST" -p "$PGPORT" -U "$PGUSER" -l "$PGDATABASE
 # --- 2. Redis: копия dump.rdb (best-effort — основная durability переведена на AOF) ---
 REDIS_STAT="skipped"
 if [ -n "${REDIS_URL:-}" ]; then
-  mapfile -t _rd < <(python3 - "$REDIS_URL" <<'PY'
-import sys
+  mapfile -t _rd < <(_PARSE_URL="$REDIS_URL" python3 - <<'PY'
+import os
 from urllib.parse import urlparse, unquote
-u = urlparse(sys.argv[1])
+u = urlparse(os.environ["_PARSE_URL"])
 print(u.hostname or 'localhost')
 print(u.port or 6379)
 print(unquote(u.password) if u.password else '')
