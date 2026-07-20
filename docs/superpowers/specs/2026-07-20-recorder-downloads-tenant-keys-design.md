@@ -59,7 +59,7 @@ www.silentqa.com {
 - Деградация: если `getDisplayMedia`-аудио недоступно (Safari, отказ пользователя, вкладка без аудио) — предупреждение на странице и запись только микрофона; запись не прерывается.
 - Если пользователь останавливает шаринг вкладки посреди записи — запись продолжается с одним микрофоном, индикатор меняется.
 
-**Отправка:** существующий чанк-протокол без изменений — `POST /api/sessions` (metadata: `source: "web-recorder"`, `employee`, `client_company`/комментарий) → `POST /api/sessions/{id}/chunks` каждые 10 с (ретрай неудавшегося чанка как в realestate) → `POST /api/sessions/{id}/finish`. Авторизация — сессионная кука (same-origin fetch), `require_ingestion_auth` уже принимает валидную сессию. Поле «Сотрудник» префиллится из `GET /api/auth/me` (`employee_name`) и для роли `manager` не редактируется — иначе менеджер потеряет собственный звонок из своей выборки (`employee_scope`).
+**Отправка:** существующий чанк-протокол без изменений — `POST /api/sessions` (metadata: `source: "web-recorder"`, `employee`, `client_company`/комментарий) → `POST /api/sessions/{id}/chunks` каждые 10 с (ретрай неудавшегося чанка как в realestate) → `POST /api/sessions/{id}/finish`. Авторизация — сессионная кука (same-origin fetch), `require_ingestion_auth` уже принимает валидную сессию. Поле «Сотрудник» префиллится из `GET /api/user-auth/me` (`employee_name`) и для роли `manager` не редактируется — иначе менеджер потеряет собственный звонок из своей выборки (`employee_scope`).
 
 **После завершения:** страница показывает статус обработки (поллинг `GET /api/sessions/{id}` как в realestate) и ссылку «Открыть в дашборде».
 
@@ -77,7 +77,7 @@ www.silentqa.com {
 
 **Чтение (резолвер «тенант → env»):**
 
-- Воркер: `worker/tasks/tenant_keys.py` → `api_key(provider: str) -> str | None`: берёт текущий тенант из contextvar, читает `api_credentials` через `tenancy/registry.py` (в выборку реестра добавляется колонка; кэш там уже есть), расшифровывает; если пусто/нет — `os.getenv(ENV_NAME[provider])`. Точки замены: `quality.py:659`, `quality.py:1081`, `coaching.py:216`, `transcribe.py:88` (assemblyai), `transcribe.py:151` (elevenlabs).
+- Воркер: `worker/tasks/tenant_keys.py` → `api_key(provider: str) -> str | None`: берёт текущий тенант из contextvar, читает `api_credentials` из `shared.tenants` через `tenancy.db.shared_connect` (свой TTL-кэш ~60 с — ключи меняются на лету из админки, в отличие от `company_config_id`), расшифровывает; если пусто/нет — `os.getenv(ENV_NAME[provider])`. Точки замены — **все** вызовы `structured_completion` и облачных ASR: `quality.py:659` (план), `quality.py:1081` (оценка — ключ дополнительно прокидывается через `_assess_with_structured_output` до вызова `structured_completion:1177`, сейчас там env-клиент), `coaching.py:216`, `card.py:57` и `extract.py:83` (сейчас молча берут env-клиент — добавить `api_key=`), `transcribe.py:88` (assemblyai), `transcribe.py:151` (elevenlabs).
 - Бэкенд: аналогичный хелпер `backend/app/tenant_keys.py`, читающий `request.state.tenant` (строка реестра; туда добавляется `api_credentials`) — используется в `eval_prompt_rewrite.py:60`.
 - Инвариант: расшифрованный ключ живёт только в локальной переменной вызова; в логи, ответы API и отчёты не попадает.
 
