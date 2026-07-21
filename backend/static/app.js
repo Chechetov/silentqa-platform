@@ -1033,7 +1033,7 @@ async function renderCallDetail(id) {
                   return `
                     <div class="transcript-line" data-start="${seg.start != null ? seg.start : ''}" data-end="${seg.end != null ? seg.end : ''}">
                       ${time ? `<span class="transcript-time">${time}</span>` : ''}
-                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName(this)" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
+                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
                       <span class="transcript-text">${escapeHtml(text)}</span>
                     </div>
                   `;
@@ -1063,10 +1063,17 @@ async function renderCallDetail(id) {
     const audioPlayer = $('#audioPlayer');
     if (transcriptContainer && audioPlayer) {
       transcriptContainer.addEventListener('click', (e) => {
+        // Клик по тегу спикера → переименование. Делегированный обработчик на контейнере,
+        // а НЕ инлайновый onclick на теге: инлайновые обработчики могут не исполняться
+        // (строгий CSP / инжект расширения браузера), а делегированный клик всё равно
+        // доходит до контейнера. Совпадает с инвариантом «никаких inline-onclick».
+        const speakerTag = e.target.closest('.speaker-tag');
+        if (speakerTag) {
+          if (isAdmin()) editSpeakerName(speakerTag);
+          return;
+        }
         const line = e.target.closest('.transcript-line');
         if (!line) return;
-        // Don't seek if clicking on speaker tag (that triggers rename)
-        if (e.target.closest('.speaker-tag')) return;
         const start = parseFloat(line.dataset.start);
         if (!isNaN(start)) {
           audioPlayer.currentTime = start;
@@ -2069,11 +2076,10 @@ async function editSpeakerName(el) {
           body: JSON.stringify({ speaker_map: speakerMap }),
         });
         _currentCallData.session.metadata = { ...meta, speaker_map: speakerMap };
-        $$('.speaker-tag').forEach(tag => {
-          const sid = tag.dataset.speaker;
-          if (sid) tag.textContent = getSpeakerDisplay(sid);
-        });
         showToast('Спикер обновлён');
+        // Перерисовать всю карточку, чтобы новое имя появилось и в «Итогах» наверху,
+        // а не только в тегах транскрипта (иначе итоги оставались старыми до перезагрузки).
+        renderCallDetail(sessionId);
       } catch (err) {
         showToast('Ошибка: ' + err.message, 'error');
       }
@@ -2723,6 +2729,7 @@ function renderCard(card, label) {
   if (!card) return '';
   const isDental = card.dental_status !== undefined ||
     (card.patient && typeof card.patient === 'object');
+  card = _resolveCardSpeakers(card);  // speaker_0 → «Имя (роль)» в участниках и тексте
   return isDental ? renderDentalCard(card, label) : renderGenericCard(card, label);
 }
 
@@ -2759,6 +2766,61 @@ function _cardVal(v) {
   if (typeof v === 'object') return _cardObjInline(v);
   return esc(String(v));
 }
+
+// --- Разрешение спикеров в «Итогах созвона» --------------------------------
+// LLM-карточка пишет сырые id спикеров (speaker_0 / A) и в структурном списке
+// участников, и внутри свободного текста тезисов. Здесь подставляем «Имя (роль)»
+// из той же карты, что и транскрипт (_getSpeakerMap) — правится при отображении,
+// поэтому чинятся и старые звонки, и ручные переименования отражаются сразу.
+const _ROLE_RU = { manager: 'менеджер', client: 'клиент', doctor: 'врач', other: 'другой' };
+function _speakerNum(id) {
+  const m = String(id).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) + 1 : null;
+}
+function resolveSpeakerLabel(id) {
+  const info = _getSpeakerMap()[id] || {};
+  const name = info.name || null;
+  const role = _ROLE_RU[info.role] || null;
+  if (name && role) return `${name} (${role})`;
+  if (name) return name;
+  const num = _speakerNum(id);
+  const base = num ? `Спикер ${num}` : String(id);
+  return role ? `${base} (${role})` : base;
+}
+function _cardSpeakerIds(card) {
+  const ids = new Set(Object.keys(_getSpeakerMap()));
+  if (card && Array.isArray(card.participants)) {
+    card.participants.forEach((p) => { if (p && p.speaker) ids.add(p.speaker); });
+  }
+  // Длинные id заменяем раньше коротких (speaker_10 до speaker_1).
+  return [...ids].sort((a, b) => b.length - a.length);
+}
+function _subSpeakerTokens(text, ids) {
+  let s = String(text);
+  for (const id of ids) {
+    const re = new RegExp('\\b' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
+    s = s.replace(re, resolveSpeakerLabel(id));
+  }
+  return s;
+}
+function _resolveCardSpeakers(card) {
+  if (!card || typeof card !== 'object') return card;
+  const ids = _cardSpeakerIds(card);
+  if (!ids.length) return card;
+  const walk = (v) => {
+    if (typeof v === 'string') return _subSpeakerTokens(v, ids);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') { const o = {}; for (const k in v) o[k] = walk(v[k]); return o; }
+    return v;
+  };
+  const out = walk(card);
+  // Участники → компактный список «Имя (роль)» (развёрнутую роль LLM опускаем).
+  if (Array.isArray(card.participants)) {
+    out.participants = card.participants.map((p) => resolveSpeakerLabel(p && p.speaker));
+  }
+  return out;
+}
+
 function renderGenericCard(card, label) {
   const esc = escapeHtml;
   const rows = Object.entries(card)
