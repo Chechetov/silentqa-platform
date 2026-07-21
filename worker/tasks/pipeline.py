@@ -35,7 +35,7 @@ from tasks.diarize import diarize_audio
 from tasks.sentiment import analyze_sentiment
 from tasks.quality import assess_quality, plan_next_call
 from tasks.prior_context import build_prior_context_for_session
-from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario, get_default_scenario_id, tenant_company_config_id
+from tasks.company_config import load_company_config, get_word_boost, get_protocol, get_custom_prompt, get_asr_engine, get_scenario, get_default_scenario_id, get_classifiable_scenarios, tenant_company_config_id
 from tasks.amocrm_sync import find_lead_by_phone, create_enriched_note, update_note, format_enriched_note, tag_lead, format_next_call_plan, create_plain_note
 from tasks.deal_summary import build_deal_summary, push_deal_summary
 from tasks.lead_lock import lead_lock
@@ -1078,12 +1078,37 @@ def _analyze_session_body(task, session_id: str, audio_path: str, config: dict |
     company_id = config.get("company_id") or tenant_company_config_id()
     scenario_id = config.get("scenario_id")
     company_config = load_company_config(company_id)
-    scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
 
     try:
         transcript_path = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id) / "transcript.json"
         with transcript_path.open(encoding="utf-8") as f:
             transcript_with_speakers = json.load(f)
+
+        # Тип созвона: явный из config (рекордер/override/AmoCRM) уважаем; иначе —
+        # авто-классификация LLM (если в конфиге ≥2 сценариев с classify.hint).
+        # Персистим в метаданные ДО _analyze_inner: record_quality_result
+        # перечитывает метаданные из БД и берёт оттуда scenario_id (иначе для
+        # рекордер-звонков он не долетал бы в quality_results → пустой фильтр/аналитика).
+        classification = None
+        if not scenario_id:
+            from tasks.classify import classify_call_type
+            classification = classify_call_type(
+                transcript_with_speakers, get_classifiable_scenarios(company_config))
+            if classification:
+                scenario_id = classification["type"]
+                logger.info(f"[{session_id}] Авто-тип созвона: {scenario_id} "
+                            f"(conf={classification.get('confidence')})")
+        scenario = get_scenario(company_config, scenario_id or get_default_scenario_id(company_config))
+
+        meta_updates = {}
+        if scenario and scenario.get("id"):
+            meta_updates["scenario_id"] = scenario["id"]
+            meta_updates["call_type"] = scenario.get("name")
+        if classification:
+            meta_updates["call_type_classification"] = classification
+        if meta_updates:
+            _update_session_metadata(session_id, meta_updates)
+            session_meta = {**session_meta, **meta_updates}
 
         # lead_lock здесь, а не в стадии 1: только analyze трогает
         # prior_context/метаданные лида/AmoCRM.

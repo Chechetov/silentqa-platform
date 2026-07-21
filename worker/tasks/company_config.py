@@ -90,6 +90,12 @@ def get_scenarios(company_config: dict) -> list[dict]:
     return company_config.get("scenarios", [])
 
 
+def get_classifiable_scenarios(company_config: dict) -> list[dict]:
+    """Сценарии с подсказкой `classify.hint` — кандидаты для авто-классификации
+    типа созвона. Меньше двух → авто-классификация не запускается."""
+    return [s for s in get_scenarios(company_config) if (s.get("classify") or {}).get("hint")]
+
+
 def get_scenario(company_config: dict, scenario_id: str | None) -> dict | None:
     """Find a specific scenario by ID. Returns None if not found."""
     if not scenario_id:
