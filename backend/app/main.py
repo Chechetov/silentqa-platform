@@ -133,5 +133,15 @@ async def root_page():
     return FileResponse(f"static/{page}")
 
 
-# Static files — must be LAST (after all API routers) so it doesn't intercept API routes
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Static files — must be LAST (after all API routers) so it doesn't intercept API routes.
+# no-cache: у статики нет версионирования (app.js/styles.css без ?v=), поэтому браузеры
+# ловили устаревший JS. no-cache не запрещает кэш, а требует ревалидации по ETag —
+# не изменилось → мгновенный 304, изменилось → свежий файл. Так правки видны сразу.
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", NoCacheStaticFiles(directory="static", html=True), name="static")
