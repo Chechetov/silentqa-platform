@@ -18,10 +18,12 @@ def _companies_root() -> Path:
 
 
 @lru_cache(maxsize=64)
-def _scenario_list_for_config(config_id: str) -> tuple[tuple[str, str], ...]:
-    """Сценарии конфига как кортеж (id, name) — hashable для lru_cache.
+def _scenario_list_for_config(config_id: str) -> tuple[tuple[str, str, bool], ...]:
+    """Сценарии конфига как кортеж (id, name, classify) — hashable для lru_cache.
 
-    name → id, если в конфиге не задан. Толерантен к отсутствию файла / битому JSON → ().
+    classify=True, если у сценария есть `classify.hint` (кандидат для авто-типа
+    созвона; фронт показывает по таким селектор «Тип созвона»). name → id, если
+    не задан. Толерантен к отсутствию файла / битому JSON → ().
     """
     path = _companies_root() / f"{config_id}.json"
     if not path.exists():
@@ -34,13 +36,14 @@ def _scenario_list_for_config(config_id: str) -> tuple[tuple[str, str], ...]:
     for s in data.get("scenarios", []):
         sid = s.get("id")
         if sid:
-            out.append((sid, s.get("name") or sid))
+            classify = bool((s.get("classify") or {}).get("hint"))
+            out.append((sid, s.get("name") or sid, classify))
     return tuple(out)
 
 
 @lru_cache(maxsize=64)
 def _scenarios_for_config(config_id: str) -> frozenset[str]:
-    return frozenset(sid for sid, _ in _scenario_list_for_config(config_id))
+    return frozenset(sid for sid, _name, _classify in _scenario_list_for_config(config_id))
 
 
 @lru_cache(maxsize=64)
@@ -94,7 +97,8 @@ def scenarios_for(config_id: str | None) -> list[dict]:
     Для рендеринга списка типов приёмов/звонков в рекордере (через /features)."""
     if not config_id:
         return []
-    return [{"id": sid, "name": name} for sid, name in _scenario_list_for_config(config_id)]
+    return [{"id": sid, "name": name, "classify": classify}
+            for sid, name, classify in _scenario_list_for_config(config_id)]
 
 
 def valid_scenario(config_id: str | None, scenario_id: str | None) -> str | None:

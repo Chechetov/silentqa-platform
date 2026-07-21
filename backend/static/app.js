@@ -526,6 +526,10 @@ async function renderCallDetail(id) {
     // vs «Итоги созвона»). Фолбэк отдаём рендереру (renderGenericCard → «Итоги»).
     const _currentCardLabel = (features && features.card_label) || null;
     const meta = session.metadata || {};
+    // Тип созвона (партнёрский/клиентский): классифицируемые сценарии из /features.
+    const callTypes = ((features && features.scenarios) || []).filter(s => s.classify);
+    const currentTypeId = meta.scenario_id
+      || (meta.call_type_classification && meta.call_type_classification.type) || null;
     const rawScore = analysis && analysis.overall_score != null ? analysis.overall_score : null;
     const overallScore = rawScore != null ? normalizeScore(rawScore, analysis) : null;
     const detailedSummary = analysis && analysis.detailed_summary ? analysis.detailed_summary : null;
@@ -608,6 +612,13 @@ async function renderCallDetail(id) {
               <div class="meta-label">Компания</div>
               <div class="meta-value">${escapeHtml(meta.company_id || '--')}</div>
             </div>
+            ${callTypes.length >= 2 ? `
+            <div class="meta-item">
+              <div class="meta-label">Тип созвона</div>
+              <div class="meta-value">${isAdmin()
+                ? `<select class="call-type-select" style="padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px">${callTypes.map(s => `<option value="${escapeHtml(s.id)}"${s.id === currentTypeId ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>`
+                : escapeHtml((callTypes.find(s => s.id === currentTypeId) || {}).name || '--')}</div>
+            </div>` : ''}
           </div>
         </div>
       </div>
@@ -1048,6 +1059,13 @@ async function renderCallDetail(id) {
     } // end if (!extraction) — legacy analysis blocks
 
     app.innerHTML = html;
+
+    // Смена типа созвона → переоценка. addEventListener (не inline onchange),
+    // чтобы обработчик не гасился блокировкой инлайн-обработчиков расширениями.
+    const callTypeSelect = document.querySelector('.call-type-select');
+    if (callTypeSelect) {
+      callTypeSelect.addEventListener('change', () => changeCallType(id, callTypeSelect.value));
+    }
 
     // ASR-варианты: переключение вкладок движков
     document.querySelectorAll('.asr-variant-tab').forEach(btn => {
@@ -2737,6 +2755,7 @@ function renderCard(card, label) {
 const _CARD_LABELS = {
   summary: 'Итог', participants: 'Участники', topics: 'Темы', points: 'Тезисы',
   agreements: 'Договорённости', next_steps: 'Следующие шаги', action: 'Действие',
+  tasks: 'Задачи', title: 'Задача', assignee: 'Ответственный',
   owner: 'Ответственный', due: 'Срок', objections: 'Возражения',
   objection: 'Возражение', raised_by: 'Кто высказал', handled: 'Отработано',
   handling: 'Как отработано', improvement: 'Как можно лучше',
@@ -3030,6 +3049,24 @@ async function reprocessScenario(sessionId) {
       body: JSON.stringify(scenarioId ? { scenario_id: scenarioId } : {}),
     });
     showToast('Переоценка запущена — обновите страницу через минуту');
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  }
+}
+
+// Смена типа созвона на карточке → переоценка по критериям выбранного типа.
+async function changeCallType(sessionId, scenarioId) {
+  if (!scenarioId) return;
+  if (!confirm('Сменить тип созвона и переоценить звонок по критериям этого типа?')) {
+    renderCallDetail(sessionId);  // отмена — вернуть селектор к текущему значению
+    return;
+  }
+  try {
+    await api(`/api/sessions/${sessionId}/reprocess`, {
+      method: 'POST',
+      body: JSON.stringify({ scenario_id: scenarioId }),
+    });
+    showToast('Тип изменён — переоценка запущена, обновите страницу через минуту');
   } catch (err) {
     showToast('Ошибка: ' + err.message, 'error');
   }

@@ -75,8 +75,8 @@ def test_features_includes_tenant_scenarios(monkeypatch, fake_redis, tmp_path):
     r = c.get("/api/tenancy/features")
     assert r.status_code == 200
     assert r.json().get("scenarios") == [
-        {"id": "consultation", "name": "Консультация"},
-        {"id": "treatment_plan", "name": "treatment_plan"},
+        {"id": "consultation", "name": "Консультация", "classify": False},
+        {"id": "treatment_plan", "name": "treatment_plan", "classify": False},
     ]
 
 

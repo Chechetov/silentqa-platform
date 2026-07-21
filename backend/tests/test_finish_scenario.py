@@ -43,8 +43,8 @@ def test_valid_scenario_rejects_unknown(companies_dir):
 def test_scenarios_for_returns_id_and_name(companies_dir):
     from app.company_scenarios import scenarios_for
     assert scenarios_for("dental") == [
-        {"id": "consultation", "name": "Консультация"},
-        {"id": "treatment_plan", "name": "treatment_plan"},  # name → id when absent
+        {"id": "consultation", "name": "Консультация", "classify": False},
+        {"id": "treatment_plan", "name": "treatment_plan", "classify": False},  # name → id when absent
     ]
 
 
@@ -74,8 +74,8 @@ def test_clear_scenario_caches_refreshes_both(companies_dir):
     assert valid_scenario("dental", "consultation") == "consultation"
     assert valid_scenario("dental", "followup") is None  # ещё не существует
     assert scenarios_for("dental") == [
-        {"id": "consultation", "name": "Консультация"},
-        {"id": "treatment_plan", "name": "treatment_plan"},
+        {"id": "consultation", "name": "Консультация", "classify": False},
+        {"id": "treatment_plan", "name": "treatment_plan", "classify": False},
     ]
 
     # Мутируем конфиг на диске: добавляем новый сценарий "followup".
@@ -94,7 +94,7 @@ def test_clear_scenario_caches_refreshes_both(companies_dir):
     # Оба источника обязаны видеть новый сценарий.
     assert valid_scenario("dental", "followup") == "followup"  # внешний кеш освежён
     assert scenarios_for("dental") == [                        # внутренний кеш освежён
-        {"id": "consultation", "name": "Консультация"},
-        {"id": "treatment_plan", "name": "treatment_plan"},
-        {"id": "followup", "name": "Повторный приём"},
+        {"id": "consultation", "name": "Консультация", "classify": False},
+        {"id": "treatment_plan", "name": "treatment_plan", "classify": False},
+        {"id": "followup", "name": "Повторный приём", "classify": False},
     ]
