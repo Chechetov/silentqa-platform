@@ -2,6 +2,7 @@ import asyncio
 import logging
 import shutil
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 
 from celery import Celery
@@ -51,6 +52,7 @@ async def list_sessions(
     offset: int = 0,
     source: str | None = None,
     phone: str | None = None,
+    employee: str | None = None,
     template_id: str | None = None,
     kb_tag: uuid.UUID | None = None,
     db: AsyncSession = Depends(get_db),
@@ -61,6 +63,7 @@ async def list_sessions(
     Optional filters:
     - source: exact match on metadata.source (e.g. 'amocrm', 'desktop-app')
     - phone: substring match on metadata.phone (case-insensitive, digits-friendly)
+    - employee: exact match on metadata.employee (attribution filter)
     - template_id: 'none' = sessions without any template (regular broker calls);
                    UUID = sessions with that exact template
     """
@@ -69,6 +72,8 @@ async def list_sessions(
         filters.append(Session.metadata_["source"].astext == source)
     if phone:
         filters.append(Session.metadata_["phone"].astext.ilike(f"%{phone.strip()}%"))
+    if employee:
+        filters.append(Session.metadata_["employee"].astext == employee.strip())
     if template_id:
         if template_id == "none":
             filters.append(Session.metadata_["template_id"].astext.is_(None))
@@ -129,6 +134,9 @@ _SERVER_OWNED_METADATA = (
     # company_id/scenario_id — выбор конфига оценки принадлежит серверу
     # (берётся из shared.tenants.company_config_id), клиент подменить не может.
     "company_id", "scenario_id",
+    # title — кастомное имя звонка задаётся ТОЛЬКО через PATCH /title (admin-only),
+    # не при создании сессии клиентом.
+    "title",
 )
 
 # Seeded by migration 008 — applied by default to desktop-app recordings,
@@ -317,6 +325,9 @@ class ReprocessBody(BaseModel):
     # профилю оценки сценария (см. routes/eval_profiles.py). С шаблоном —
     # как раньше: шаблон переопределяет протокол/критерии.
     template_id: uuid.UUID | None = None
+    # None → дефолтный сценарий тенанта. Иначе — переоценка под выбранный
+    # сценарий company-config (валидируется valid_scenario; невалид → 400).
+    scenario_id: str | None = None
 
 
 @router.post("/{session_id}/reprocess", response_model=SessionResponse,
@@ -346,8 +357,25 @@ async def reprocess_session(
         meta["template_id"] = str(body.template_id)
     else:
         meta.pop("template_id", None)   # plain re-eval → no template override
+
+    config: dict | None = None
+    if body.scenario_id is not None:
+        row = (await db.execute(
+            text("SELECT company_config_id FROM shared.tenants WHERE slug = :slug"),
+            {"slug": require_tenant_slug()},
+        )).first()
+        cfg_id = row[0] if row else None
+        if not valid_scenario(cfg_id, body.scenario_id):
+            raise HTTPException(status_code=400, detail="Unknown scenario")
+        config = {"scenario_id": body.scenario_id}
+
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
+    # Сброс метки старта: воркер проставит NOW() на фактическом старте стадии.
+    # Иначе watchdog 3a убьёт reprocess по прошлой (древней) метке в ожидании слота.
+    sess.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    sess.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(sess)
 
@@ -359,7 +387,7 @@ async def reprocess_session(
         lambda: celery_app.send_task(
             "pipeline.process_session",
             args=[str(session_id)],
-            kwargs={"tenant_schema": tenant_schema},
+            kwargs={"tenant_schema": tenant_schema, "config": config},
             queue="transcription",
         ),
     )
@@ -461,6 +489,10 @@ async def link_lead(
     meta["lead_id"] = new_lead_id
     sess.metadata_ = meta
     sess.status = SessionStatus.processing
+    # Сброс метки старта (см. reprocess): постановка в очередь ≠ старт стадии.
+    sess.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    sess.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(sess)
 
@@ -546,6 +578,11 @@ async def finish_session(session_id: uuid.UUID, db: AsyncSession = Depends(get_d
             config = {"scenario_id": scen}
 
     session.status = SessionStatus.processing
+    # Сброс метки старта (см. reprocess): finish ставит processing ДО send_task,
+    # воркер проставит NOW() на фактическом старте стадии.
+    session.processing_started_at = None
+    # Якорь постановки в обработку: 3b матчит по нему, а не по древнему created_at.
+    session.enqueued_at = datetime.now(timezone.utc)
     await db.commit()
     await db.refresh(session)
 
@@ -582,6 +619,41 @@ async def update_speaker_map(
 
     meta = dict(session.metadata_ or {})
     meta["speaker_map"] = {k: v.model_dump() for k, v in body.speaker_map.items()}
+    session.metadata_ = meta
+    await db.commit()
+    await db.refresh(session)
+
+    chunks_count = await db.scalar(
+        select(func.count()).select_from(Chunk).where(Chunk.session_id == session_id)
+    )
+    return _to_response(session, chunks_count or 0)
+
+
+class TitleUpdate(BaseModel):
+    title: str | None = None
+
+
+_TITLE_MAX_LEN = 200
+
+
+@router.patch("/{session_id}/title", response_model=SessionResponse,
+              dependencies=[Depends(require_admin)])
+async def update_session_title(
+    session_id: uuid.UUID,
+    body: TitleUpdate,
+    db: AsyncSession = Depends(get_db),
+):
+    """Set or clear a human-friendly custom title for a session (metadata.title)."""
+    session = (await db.execute(select(Session).where(Session.id == session_id))).scalar_one_or_none()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    meta = dict(session.metadata_ or {})
+    title = (body.title or "").strip()
+    if title:
+        meta["title"] = title[:_TITLE_MAX_LEN]
+    else:
+        meta.pop("title", None)
     session.metadata_ = meta
     await db.commit()
     await db.refresh(session)

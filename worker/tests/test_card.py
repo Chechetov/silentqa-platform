@@ -1,5 +1,3 @@
-from unittest import mock
-
 import tasks.card as card
 
 
@@ -14,17 +12,19 @@ def test_no_op_without_config():
 
 
 def test_extracts_with_config(monkeypatch):
-    fake_resp = mock.MagicMock()
-    fake_resp.output_text = '{"summary": "сбор анамнеза"}'
-    fake_client = mock.MagicMock()
-    fake_client.responses.create.return_value = fake_resp
-    monkeypatch.setattr(card, "OpenAI", lambda: fake_client)
+    captured = {}
+
+    def fake_sc(**kwargs):
+        captured.update(kwargs)
+        # Адаптор сам парсит JSON → фейк отдаёт уже распарсенный dict.
+        return {"summary": "сбор анамнеза"}
+
+    monkeypatch.setattr(card, "structured_completion", fake_sc)
     out = card.run_card_extraction(TRANSCRIPT, CFG)
     assert out == {"summary": "сбор анамнеза"}
     # schema + prompt from config were used
-    _, kwargs = fake_client.responses.create.call_args
-    assert kwargs["text"]["format"]["schema"] == {"type": "object"}
-    assert kwargs["input"][0]["content"] == "извлеки карту"
+    assert captured["schema"] == {"type": "object"}
+    assert captured["system"] == "извлеки карту"
 
 
 def test_empty_transcript_returns_none():
@@ -32,7 +32,8 @@ def test_empty_transcript_returns_none():
 
 
 def test_llm_error_degrades_to_none(monkeypatch):
-    fake_client = mock.MagicMock()
-    fake_client.responses.create.side_effect = RuntimeError("boom")
-    monkeypatch.setattr(card, "OpenAI", lambda: fake_client)
+    def fake_sc(**kwargs):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(card, "structured_completion", fake_sc)
     assert card.run_card_extraction(TRANSCRIPT, CFG) is None

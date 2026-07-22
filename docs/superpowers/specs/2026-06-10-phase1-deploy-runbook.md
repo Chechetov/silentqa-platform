@@ -116,7 +116,7 @@
   (401/403/201), изоляция сессий и cookie между тенантами, ghost-хост 404.
 
 Обновление платформы: коммит в ветку (worktree /root/projects/meet-mt) →
-`cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1` →
+`cd /root/projects/silentqa && git pull github multi-tenant-core-phase1` (remote прода называется github) →
 `systemctl restart silentqa-backend silentqa-worker` (backend сам гонит
 миграции на старте).
 
@@ -131,7 +131,7 @@ DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
 
 ### Деплой Plan 3b (админка + команда + роль manager)
 
-1. `cd /root/projects/silentqa && git pull origin multi-tenant-core-phase1`
+1. `cd /root/projects/silentqa && git pull github multi-tenant-core-phase1` (remote прода называется github)
 2. `systemctl restart silentqa-backend silentqa-worker` — S003+013 накатятся
    на старте (journalctl: "[migrate] done").
 3. Бутстрап владельца:
@@ -145,3 +145,106 @@ DNS (Cloudflare, зона silentqa.com): `A * → 89.207.255.231` и
 6. Смоук: https://admin.silentqa.com → логин → список клиентов со
    статистикой; impersonate в fulldent (бейдж «режим поддержки»);
    suspend/activate тестом НЕ на живом клиенте; «Команда» у fulldent.
+
+## Деплой после 2026-07: миграции — шаг деплоя, не старта
+
+С коммита «feat(startup): lifespan — check-only …» рестарт юнита сам
+миграции НЕ применяет (старт делает только read-only сверку и CRITICAL-лог).
+Канонический деплой прода:
+
+    /root/projects/silentqa-dev/scripts/deploy_prod.sh
+
+(rollback-SHA в лог → FF-merge origin/multi-tenant-core-phase1 → pip install
+→ python -m app.migrate → systemctl restart silentqa-backend silentqa-worker
+→ curl /health/ready с ретраями до 30с).
+Откат миграции при фейле: старый код продолжает работать; чинить миграцию
+на стейджинге (silentqa-staging-*, :8008) и повторять деплой. Откат кода:
+git reset --hard <SHA из лога деплоя> && systemctl restart silentqa-backend silentqa-worker.
+
+Прим.: прод-remote назван `github`, а не `origin` (проверено 2026-07-02
+`git -C /root/projects/silentqa remote -v` →
+`https://github.com/Chechetov/silentqa-platform.git`). Скрипт по умолчанию
+фетчит `github` (`REMOTE="${REMOTE:-github}"`); при иной раскладке —
+`REMOTE=origin scripts/deploy_prod.sh`.
+
+## io-воркер `analysis`: acks_late и редкий дубль AmoCRM-заметки
+
+У `pipeline.analyze_session` (очередь `analysis`, юнит `silentqa-worker-io`)
+`acks_late=true`: при жёсткой смерти io-воркера задача НЕ теряется, но
+восстаёт ТОЛЬКО по visibility_timeout Redis-брокера (~1 час; рестарт воркера
+unacked-сообщение не восстанавливает — проверено смоуком 2026-07-02). До этого
+сессия висит в processing; страховка — watchdog-правило 3a (6ч). Занижать
+visibility_timeout не надо: опция глобальная, значение ниже длительности
+analyze-прогона даст конкурентный дубль задачи. В узком окне между созданием AmoCRM-заметки и записью `amo_note_id`
+в метаданные сессии возможен редкий дубль заметки (только AmoCRM-тенанты).
+При жалобе клиента на дубль — проверять журнал `silentqa-worker-io` на этот
+момент (`journalctl -u silentqa-worker-io`).
+
+## Body-size limit в Caddy (ревью C-2, добавлено 2026-07-06)
+
+Приложение держит потолки само (`MAX_REQUEST_BODY_MB=600` middleware +
+капы ингеста в chunks.py). Внешний слой на проде — Caddy: в блок
+`silentqa.com, *.silentqa.com` добавить
+
+    request_body {
+        max_size 600MB
+    }
+
+и `systemctl reload caddy`. ✅ **Применено на проде 2026-07-06** (validate + reload,
+все контуры 200) — блок выше оставлен как справка для новых окружений.
+
+## Бэкапы (B-4, 2026-07-06)
+
+Ежедневный off-box бэкап платформы `/root/projects/silentqa` на релей-VPS
+(`root@89.207.255.231`, SSH-ключ `/root/.ssh/rogov_relay`). Скрипт —
+`scripts/backup_prod.sh`; юниты — `ops/systemd/silentqa-backup.{service,timer}`.
+
+**Что бэкапится** (локальный staging `/root/backups/daily/YYYY-MM-DD/`, umask 077):
+
+- `db.dump` — `pg_dump -Fc` БД из `DATABASE_URL_SYNC` (прод `localhost:5432/silentqa`).
+- `globals.sql` — `pg_dumpall --globals-only --no-role-passwords` (роли/tablespaces БЕЗ паролей — non-superuser не читает pg_authid; восстановить ДО pg_restore, пароли ролей задать заново вручную).
+- `redis-dump.rdb` — копия `dump.rdb` (путь из `redis-cli CONFIG GET dir/dbfilename`).
+  **Best-effort**: основная durability Redis переведена на **AOF** (`appendonly yes`,
+  выставлено контроллером в `redis.conf` + `redis-cli CONFIG SET appendonly yes`);
+  если snapshot-а нет — шаг пропускается с WARN, бэкап не падает.
+- `config.tar.gz` (0600) — прод `.env` + `companies/`.
+
+**Куда / ротация**: rsync на релей — (а) дампы дня → `…/silentqa-box/daily/YYYY-MM-DD/`,
+(б) зеркало медиа `data/` → `…/silentqa-box/data-mirror/` (`rsync -az --delete`).
+Держатся последние `BACKUP_KEEP_DAILY=7` daily-каталогов **и локально, и на релее**
+(старше — удаляются по имени-дате). Конфиг скрипта — env с дефолтами
+(`BACKUP_SSH_KEY/BACKUP_REMOTE/BACKUP_REMOTE_DIR/BACKUP_KEEP_DAILY/PROD_DIR`).
+
+**⚠️ Безопасность**: `config.tar.gz` содержит прод-секреты (`.env`) → на релее лежат
+секреты. Каталог `…/silentqa-box` и все дампы создаются с правами 0700/0600; держать
+`/root/backups` на релее только root-доступным.
+
+**Установка (контроллер, один раз)**:
+
+    cp ops/systemd/silentqa-backup.* /etc/systemd/system/
+    systemctl daemon-reload
+    systemctl enable --now silentqa-backup.timer
+
+Таймер: `OnCalendar=*-*-* 03:30:00`, `RandomizedDelaySec=15m`, `Persistent=true`
+(пропущенный из-за простоя запуск догоняется). Первый прогон вручную:
+`systemctl start silentqa-backup.service` → проверить файлы на релее.
+
+**Проверка**:
+
+    systemctl list-timers | grep silentqa-backup     # next/last запуск
+    journalctl -u silentqa-backup -n 50               # лог + итоговая строка [backup] OK …
+    ssh -i /root/.ssh/rogov_relay root@89.207.255.231 'ls -la /root/backups/silentqa-box/daily'
+
+**Восстановление**:
+
+- Роли/tablespaces: `psql -h localhost -p 5432 -U <su> -f globals.sql`.
+- БД: `pg_restore -Fc -h localhost -p 5432 -U <user> -d silentqa --clean --if-exists db.dump`
+  (или в свежую БД без `--clean`). `db.dump` — custom-format, не SQL-текст.
+- Конфиг: `tar -xzf config.tar.gz -C /root/projects/silentqa` (перезапишет `.env`+`companies/`).
+- Медиа: `rsync -az -e "ssh -i /root/.ssh/rogov_relay" root@89.207.255.231:/root/backups/silentqa-box/data-mirror/ /root/projects/silentqa/data/`
+  (обратное направление; ключ `-i /root/.ssh/rogov_relay`).
+- Redis: обычно не восстанавливается (сессии/кеш/брокер — эфемерны); при нужде
+  остановить redis, положить `redis-dump.rdb` в `dir` как `dbfilename`, стартовать.
+
+**Верификация тулинга** (агент, 2026-07-06): `bash -n scripts/backup_prod.sh` — чисто;
+`systemd-analyze verify` обоих юнитов — exit 0; shellcheck на боксе не установлен (не прогнан).

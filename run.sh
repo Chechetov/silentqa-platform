@@ -22,14 +22,21 @@ export DATABASE_URL_SYNC="${DATABASE_URL_SYNC:-postgresql+psycopg2://realestate:
 export REDIS_URL="${REDIS_URL:-redis://localhost:6381/0}"
 export AUDIO_STORAGE_PATH="${AUDIO_STORAGE_PATH:-./data/audio}"
 export RESULTS_STORAGE_PATH="${RESULTS_STORAGE_PATH:-./data/results}"
+export ENABLE_API_DOCS="${ENABLE_API_DOCS:-1}"  # локальная разработка — /docs удобен
 
 # Создать директории для данных
 mkdir -p "$AUDIO_STORAGE_PATH" "$RESULTS_STORAGE_PATH"
+
+run_migrations() {
+    echo "Applying migrations (shared + все тенанты)..."
+    (cd backend && python -m app.migrate)
+}
 
 PIDFILE_BACKEND=".pid.backend"
 PIDFILE_WORKER=".pid.worker"
 
 start_backend() {
+    run_migrations
     echo "Starting backend on :8002..."
     cd backend
     uvicorn app.main:app --host 0.0.0.0 --port 8002 "$@"
@@ -42,12 +49,13 @@ start_worker() {
         --loglevel=info \
         --concurrency="${CELERY_CONCURRENCY:-1}" \
         --max-tasks-per-child=10 \
-        -Q default,transcription "$@"
+        -Q default,transcription,analysis "$@"
 }
 
 start_all() {
     echo "Starting all services..."
     mkdir -p data/audio data/results
+    run_migrations
 
     cd backend
     uvicorn app.main:app --host 0.0.0.0 --port 8002 &
@@ -59,7 +67,7 @@ start_all() {
         --loglevel=info \
         --concurrency="${CELERY_CONCURRENCY:-1}" \
         --max-tasks-per-child=10 \
-        -Q default,transcription &
+        -Q default,transcription,analysis &
     echo $! > "../$PIDFILE_WORKER"
     cd ..
 

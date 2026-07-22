@@ -18,11 +18,8 @@ torchaudio==2.5.1
 transformers==4.47.1
 sentencepiece==0.2.0
 
-# --- LLM: Anthropic Claude API ---
-anthropic>=0.49.0
-
 # --- LLM: OpenAI (quality scoring + card extraction) ---
-openai>=2.26.0
+openai>=2.44.0
 
 # --- Audio processing ---
 soundfile==0.12.1

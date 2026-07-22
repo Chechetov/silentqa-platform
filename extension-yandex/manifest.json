@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
-  "name": "Rogov Recorder",
-  "version": "1.3.0",
-  "description": "Record calls (Zoom, Meet, etc.) for speech analytics",
+  "name": "SilentQA Recorder",
+  "version": "2.0.0",
+  "description": "Запись звонков (Zoom, Meet и др.) для речевой аналитики SilentQA",
   "permissions": [
     "tabCapture",
     "offscreen",
@@ -10,7 +10,7 @@
     "activeTab"
   ],
   "host_permissions": [
-    "https://rogov.automate-it.fun/*"
+    "https://*.silentqa.com/*"
   ],
   "action": {
     "default_popup": "popup.html",

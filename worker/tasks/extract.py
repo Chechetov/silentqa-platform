@@ -12,10 +12,10 @@ import os
 import uuid
 from pathlib import Path
 
-from openai import OpenAI
 from sqlalchemy import text
 from sqlalchemy.orm import Session as DbSession
 
+from llm.egress import structured_completion
 from tenancy.context import require_tenant_slug
 from tenancy.paths import tenant_results_dir
 
@@ -25,6 +25,9 @@ logger = logging.getLogger(__name__)
 
 MAX_TRANSCRIPT_TOKENS = 500_000  # safety cap; gpt-5.4 context is 1.05M
 RESULTS_PATH = Path(os.getenv("RESULTS_STORAGE_PATH", "./data/results"))
+
+# Потолок выхода extract-вызова (D-1.1)
+EXTRACT_MAX_OUTPUT_TOKENS = 6_000
 
 
 def _approx_tokens(text_str: str) -> int:
@@ -75,25 +78,17 @@ def run_extraction(db: DbSession, session_id, template_id, glossary: str | None 
             "looks corrupted"
         )
 
-    client = OpenAI()
     logger.info("Running extraction with template '%s' for session %s", template.name, session_id)
     user_content = (glossary + "\n\n" if glossary else "") + f"Транскрипт:\n\n{flat}"
-    resp = client.responses.create(
-        model="gpt-5.4",
-        input=[
-            {"role": "system", "content": template.prompt},
-            {"role": "user", "content": user_content},
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": "extraction",
-                "strict": True,
-                "schema": template.json_schema,
-            }
-        },
+    extracted = structured_completion(
+        system=template.prompt,
+        user=user_content,
+        schema=template.json_schema,
+        schema_name="extraction",
+        max_output_tokens=EXTRACT_MAX_OUTPUT_TOKENS,
+        cache_key=f"sqa-extract-{template_id}",
+        model=os.getenv("SQA_LLM_MODEL_EXTRACT", "gpt-5.4"),
     )
-    extracted = json.loads(resp.output_text)
 
     out_dir = tenant_results_dir(RESULTS_PATH, require_tenant_slug(), session_id)
     out_dir.mkdir(parents=True, exist_ok=True)

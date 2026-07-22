@@ -4,6 +4,8 @@ __pycache__/
 venv/
 *.egg-info/
 .env
+.env.staging
+.superpowers/
 # Deployment secrets — API keys / admin passwords (per-tenant), MUST never enter git
 .deploy-secrets
 *.deploy-secrets
@@ -31,4 +33,5 @@ screenshots/
 # Celery beat scheduler state file (binary, regenerated at startup)
 worker/celerybeat-schedule
 data/
+data-staging/
 backend/static/download/dl/

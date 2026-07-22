@@ -16,7 +16,7 @@ let currentUser = null; // {email, role} после логина
 let features = {}; // module-флаги из /api/tenancy/features
 const isAdmin = () => currentUser && currentUser.role === 'admin';
 const moduleOn = (name) => features[name] !== false; // default-on, пока явно не false
-const amoBase = () => features.amocrm_subdomain || 'rogovestate.amocrm.ru'; // из company-config через /features (фолбэк — дефолт realestate)
+const amoBase = () => features.amocrm_subdomain || null; // из company-config через /features; без субдомена ссылку не рендерим
 
 // ---- Router ----
 function navigate(hash) {
@@ -41,7 +41,9 @@ async function router() {
   currentRoute = route;
   updateNav(route);
 
-  if (route === 'calls') {
+  if (route === 'dashboard') {
+    await renderDashboard();
+  } else if (route === 'calls') {
     await renderCalls();
   } else if (route.startsWith('call/')) {
     const id = route.slice(5);
@@ -257,15 +259,18 @@ function scoreColor(score) {
 
 function barColor(score, max = 10) {
   const pct = score / max;
-  if (pct >= 0.7) return 'var(--accent)';
+  if (pct >= 0.7) return 'var(--good)';
   if (pct >= 0.4) return 'var(--warning)';
   return 'var(--danger)';
 }
 
 function escapeHtml(str) {
-  const div = document.createElement('div');
-  div.textContent = str;
-  return div.innerHTML;
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 const SOURCE_LABELS = {
@@ -286,7 +291,7 @@ function formatSource(metadata) {
 // ============================================
 // PAGE: Calls List
 // ============================================
-let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+let callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '', employee: '' };
 let callsPhoneDebounce = null;
 let _templatesCache = null;
 
@@ -313,6 +318,7 @@ async function renderCalls(page = 0) {
   if (callsFilters.phone) params.set('phone', callsFilters.phone);
   if (callsFilters.template_id) params.set('template_id', callsFilters.template_id);
   if (callsFilters.kb_tag) params.set('kb_tag', callsFilters.kb_tag);
+  if (callsFilters.employee) params.set('employee', callsFilters.employee);
 
   try {
     const data = await api(`/api/sessions?${params.toString()}`);
@@ -326,7 +332,7 @@ async function renderCalls(page = 0) {
     const tplOptions = templates.map(t =>
       `<option value="${t.id}" ${callsFilters.template_id === t.id ? 'selected' : ''}>${escapeHtml(t.name)}</option>`
     ).join('');
-    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag);
+    const filtersActive = !!(callsFilters.source || callsFilters.phone || callsFilters.template_id || callsFilters.kb_tag || callsFilters.employee);
 
     let html = `
       <div class="page-header">
@@ -368,6 +374,7 @@ async function renderCalls(page = 0) {
             </select>
             <input type="search" id="callsPhoneFilter" class="table-filter" placeholder="Телефон…" value="${escapeHtml(callsFilters.phone)}">
             ${callsFilters.kb_tag ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по тегу базы знаний">Тег: ${escapeHtml(callsFilters.kb_tag_label || callsFilters.kb_tag)} <button type="button" id="callsKbTagClear" title="Снять фильтр по тегу" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
+            ${callsFilters.employee ? `<span class="kb-tag-filter-chip table-filter" title="Активен фильтр по менеджеру">Менеджер: ${escapeHtml(callsFilters.employee)} <button type="button" id="callsEmployeeClear" title="Снять фильтр по менеджеру" style="margin-left:4px;cursor:pointer">×</button></span>` : ''}
             ${filtersActive ? '<button type="button" id="callsFiltersReset" class="table-filter-reset">Сбросить</button>' : ''}
             <input type="text" class="table-search" placeholder="Поиск на странице…" id="callSearch">
           </div>
@@ -376,6 +383,7 @@ async function renderCalls(page = 0) {
           <thead>
             <tr>
               <th>Дата</th>
+              <th>Название</th>
               <th>Источник</th>
               <th>Шаблон</th>
               <th>Телефон</th>
@@ -387,10 +395,11 @@ async function renderCalls(page = 0) {
           </thead>
           <tbody id="callsBody">
             ${items.length === 0
-              ? '<tr><td colspan="8" style="text-align:center;color:var(--text-muted);padding:40px;">Нет данных</td></tr>'
+              ? '<tr><td colspan="9" style="text-align:center;color:var(--text-muted);padding:40px;">Нет данных</td></tr>'
               : items.map(s => `
                 <tr data-id="${s.id}" onclick="navigate('call/${s.id}')">
                   <td>${formatDate(s.created_at)}</td>
+                  <td class="call-name-cell">${escapeHtml((s.metadata && s.metadata.title) || '--')}</td>
                   <td>${formatSource(s.metadata)}</td>
                   <td>${formatTemplate(s.metadata)}</td>
                   <td>${escapeHtml((s.metadata && s.metadata.phone) || '--')}</td>
@@ -447,7 +456,7 @@ async function renderCalls(page = 0) {
     const resetBtn = $('#callsFiltersReset');
     if (resetBtn) {
       resetBtn.addEventListener('click', () => {
-        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '' };
+        callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '', employee: '' };
         renderCalls(0);
       });
     }
@@ -456,6 +465,13 @@ async function renderCalls(page = 0) {
       kbTagClear.addEventListener('click', () => {
         callsFilters.kb_tag = '';
         callsFilters.kb_tag_label = '';
+        renderCalls(0);
+      });
+    }
+    const employeeClear = $('#callsEmployeeClear');
+    if (employeeClear) {
+      employeeClear.addEventListener('click', () => {
+        callsFilters.employee = '';
         renderCalls(0);
       });
     }
@@ -478,7 +494,7 @@ async function renderCalls(page = 0) {
 function filterByKbTag(el) {
   // Клик по KB-тегу в карточке звонка → список звонков, отфильтрованный по этому тегу.
   callsFilters = { source: '', phone: '', template_id: '',
-                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '' };
+                   kb_tag: el.dataset.entry || '', kb_tag_label: el.dataset.term || '', employee: '' };
   navigate('calls');
 }
 
@@ -490,26 +506,30 @@ async function renderCallDetail(id) {
 
   try {
     const session = await api(`/api/sessions/${id}`);
-    let transcript = null;
-    let analysis = null;
-
-    try { transcript = await api(`/api/sessions/${id}/transcript`); } catch {}
-    try { analysis = await api(`/api/sessions/${id}/analysis`); } catch {}
-    let sentiment = null;
-    try { sentiment = await api(`/api/sessions/${id}/sentiment`); } catch {}
-    let extraction = null;
-    if (moduleOn('complexes')) { try { extraction = await api(`/api/sessions/${id}/extraction`); } catch {} }
-    let kbTags = [];
-    if (moduleOn('knowledge_base')) { try { kbTags = await api(`/api/sessions/${id}/tags`); } catch {} }
-    let card = null;
-    try { card = await api(`/api/sessions/${id}/card`); } catch {}
-    let asrVariants = null;  // ASR-сравнение (админ-тюнинг)
-    if (isAdmin()) { try { asrVariants = await api(`/api/sessions/${id}/transcript-variants`); } catch {} }
+    // Независимые куски карточки — параллельно (латентность = max, не сумма)
+    const opt = (p) => p.catch(() => null);
+    let [transcript, analysis, sentiment, extraction, kbTags, card, asrVariants, coaching] =
+      await Promise.all([
+        opt(api(`/api/sessions/${id}/transcript`)),
+        opt(api(`/api/sessions/${id}/analysis`)),
+        opt(api(`/api/sessions/${id}/sentiment`)),
+        moduleOn('complexes') ? opt(api(`/api/sessions/${id}/extraction`)) : null,
+        moduleOn('knowledge_base') ? api(`/api/sessions/${id}/tags`).catch(() => []) : [],
+        opt(api(`/api/sessions/${id}/card`)),
+        isAdmin() ? opt(api(`/api/sessions/${id}/transcript-variants`)) : null,  // ASR-сравнение (админ-тюнинг)
+        opt(api(`/api/sessions/${id}/coaching`)),  // F-5 коучинг-инсайт (404 пока не сгенерирован — opt() глотает)
+      ]);
 
     _currentCallData = { session, transcript, analysis, sentiment };
 
-    const _currentCardLabel = 'Карта приёма';
+    // Заголовок карточки — из company-config через /features (дентал «Карта приёма»
+    // vs «Итоги созвона»). Фолбэк отдаём рендереру (renderGenericCard → «Итоги»).
+    const _currentCardLabel = (features && features.card_label) || null;
     const meta = session.metadata || {};
+    // Тип созвона (партнёрский/клиентский): классифицируемые сценарии из /features.
+    const callTypes = ((features && features.scenarios) || []).filter(s => s.classify);
+    const currentTypeId = meta.scenario_id
+      || (meta.call_type_classification && meta.call_type_classification.type) || null;
     const rawScore = analysis && analysis.overall_score != null ? analysis.overall_score : null;
     const overallScore = rawScore != null ? normalizeScore(rawScore, analysis) : null;
     const detailedSummary = analysis && analysis.detailed_summary ? analysis.detailed_summary : null;
@@ -545,10 +565,13 @@ async function renderCallDetail(id) {
       </a>
 
       <div class="export-buttons" style="display:flex;gap:8px;margin-bottom:12px;justify-content:flex-end">
+        <button class="btn btn-secondary btn-sm" onclick="copyCallSummary()">Копировать резюме</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('json')">Export JSON</button>
         <button class="btn btn-secondary btn-sm" onclick="exportCallData('csv')">Export CSV</button>
         ${moduleOn('amocrm') ? `<button class="btn btn-secondary btn-sm" onclick="linkLeadModal('${id}')">${session.metadata && session.metadata.lead_id ? 'Сменить лид AmoCRM…' : 'Привязать к лиду AmoCRM…'}</button>` : ''}
-        ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>` : ''}
+        ${isAdmin() ? (moduleOn('complexes')
+          ? `<button class="btn btn-secondary btn-sm" onclick="reprocessSession('${id}')">Переоценить с другим шаблоном…</button>`
+          : `<button class="btn btn-secondary btn-sm" onclick="reprocessScenario('${id}')">Переоценить</button>`) : ''}
         ${isAdmin() ? `<button class="btn btn-secondary btn-sm" onclick="compareEnginesModal('${id}')">Сравнить движки ASR…</button>` : ''}
         ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="deleteSession('${id}')">Удалить сессию</button>` : ''}
       </div>
@@ -560,7 +583,10 @@ async function renderCallDetail(id) {
           <div class="score-label">/ 10</div>
         </div>` : ''}
         <div class="call-detail-meta">
-          <h1>Сессия звонка</h1>
+          <h1 class="call-title">
+            <span id="callTitleText" data-title="${escapeHtml((meta.title || '').trim())}">${escapeHtml((meta.title || '').trim() || 'Сессия звонка')}</span>
+            ${isAdmin() ? `<button type="button" class="btn-icon" id="callTitleEdit" title="Переименовать" onclick="editCallTitle('${id}')">✎</button>` : ''}
+          </h1>
           <div class="meta-grid">
             <div class="meta-item">
               <div class="meta-label">Дата</div>
@@ -586,6 +612,13 @@ async function renderCallDetail(id) {
               <div class="meta-label">Компания</div>
               <div class="meta-value">${escapeHtml(meta.company_id || '--')}</div>
             </div>
+            ${callTypes.length >= 2 ? `
+            <div class="meta-item">
+              <div class="meta-label">Тип созвона</div>
+              <div class="meta-value">${isAdmin()
+                ? `<select class="call-type-select" style="padding:4px 8px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px">${callTypes.map(s => `<option value="${escapeHtml(s.id)}"${s.id === currentTypeId ? ' selected' : ''}>${escapeHtml(s.name)}</option>`).join('')}</select>`
+                : escapeHtml((callTypes.find(s => s.id === currentTypeId) || {}).name || '--')}</div>
+            </div>` : ''}
           </div>
         </div>
       </div>
@@ -606,7 +639,7 @@ async function renderCallDetail(id) {
 
     if (kbTags.length) {
       html += `<div class="kb-tags-section" style="margin-bottom:16px"><h2>Теги базы знаний</h2>` +
-        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term).replace(/"/g, '&quot;')}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
+        kbTags.map(t => `<span class="badge kb-tag-badge" style="margin-right:6px;cursor:pointer" data-entry="${escapeHtml(t.entry_id)}" data-term="${escapeHtml(t.term)}" onclick="filterByKbTag(this)" title="Показать звонки с этим тегом">${escapeHtml(t.term)} · ${escapeHtml(t.category)} (${t.count})</span>`).join('') +
         `</div>`;
     }
 
@@ -625,12 +658,35 @@ async function renderCallDetail(id) {
               const cls = s.sentiment === 'positive' ? 'sentiment-positive'
                         : s.sentiment === 'negative' ? 'sentiment-negative'
                         : 'sentiment-neutral';
-              return `<div class="sentiment-segment ${cls}" style="flex:1" title="${s.sentiment}${s.text ? ': ' + escapeHtml(s.text) : ''}"></div>`;
+              const dur = (s.end != null && s.start != null) ? Math.max(0.5, s.end - s.start) : 1;
+              const seek = s.start != null ? ` data-t="${s.start}" style="flex:${dur};cursor:pointer"` : ` style="flex:${dur}"`;
+              return `<div class="sentiment-segment ${cls}"${seek} title="${s.start != null ? formatSeconds(s.start) + ' · ' : ''}${s.sentiment}${s.text ? ': ' + escapeHtml(s.text) : ''}"></div>`;
             }).join('')}
           </div>
         </div>
       `;
     }
+
+    // Кто говорил (клиентский расчёт из транскрипта; паритет с worker-метриками)
+    const _talkSegs = Array.isArray(transcript) ? transcript : (transcript && (transcript.segments || transcript.utterances)) || [];
+    const _tm = (typeof computeTalkMetrics === 'function' && Array.isArray(_talkSegs))
+      ? computeTalkMetrics(_talkSegs, _getSpeakerMap()) : null;
+    const talkBlock = _tm ? `
+      <div class="card">
+        <div class="card-header"><h3>Кто говорил</h3></div>
+        <div class="talk-split">
+          <div class="talk-bar">
+            <div class="talk-manager" style="width:${Math.round((_tm.talk_ratio || 0) * 100)}%"></div>
+          </div>
+          <div class="talk-legend">
+            Менеджер${_tm.unattributed ? '*' : ''}: ${Math.round((_tm.talk_ratio || 0) * 100)}% ·
+            Клиент: ${Math.round((1 - (_tm.talk_ratio || 0)) * 100)}% ·
+            Длиннейший монолог: ${Math.round(_tm.longest_monologue_sec)}с
+            ${_tm.unattributed ? '<div class="talk-note">* роли определены эвристикой (кто говорил больше)</div>' : ''}
+          </div>
+        </div>
+      </div>` : '';
+    html += talkBlock;
 
     // Summary
     if (summary || detailedSummary) {
@@ -646,6 +702,34 @@ async function renderCallDetail(id) {
       `;
     }
 
+    // === Коучинг-инсайт (F-5) — персональный разбор звонка. Самое видное место: сразу после
+    // резюме, до критериев. coaching==null → блок не рендерится (никаких заглушек).
+    if (coaching) {
+      const _strengths = Array.isArray(coaching.strengths) ? coaching.strengths : [];
+      const _growth = Array.isArray(coaching.growth_areas) ? coaching.growth_areas : [];
+      html += `
+        <div class="card">
+          <h3>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+            Коучинг
+          </h3>
+          ${coaching.headline ? `<div class="coach-headline">🎯 ${escapeHtml(coaching.headline)}</div>` : ''}
+          ${_strengths.length ? _strengths.map(s => `
+            <div class="coach-strength">✓ ${escapeHtml(s.text)}${s.quote ? ` <span class="coach-quote">«${escapeHtml(s.quote)}»</span>` : ''}</div>
+          `).join('') : ''}
+          ${_growth.length ? _growth.map(g => `
+            <div class="coach-growth">
+              <div class="coach-quote">«${escapeHtml(g.moment_quote)}»</div>
+              ${g.why_it_matters ? `<div class="coach-line"><span class="coach-line-label">Почему важно:</span> ${escapeHtml(g.why_it_matters)}</div>` : ''}
+              ${g.better_version ? `<div class="coach-better"><span class="coach-line-label">Лучше так:</span> ${escapeHtml(g.better_version)}</div>` : ''}
+              ${g.time != null ? `<button class="btn btn-sm btn-secondary coach-seek" data-t="${g.time}">▶ к моменту</button>` : ''}
+            </div>
+          `).join('') : ''}
+          ${coaching.drill ? `<div class="coach-drill">🏋️ Фокус на следующий звонок: ${escapeHtml(coaching.drill)}</div>` : ''}
+        </div>
+      `;
+    }
+
     // === V3 Extended blocks ===
 
     // Call classification
@@ -653,7 +737,7 @@ async function renderCallDetail(id) {
     if (callClassification) {
       const classColors = {
         brushoff_short: '#f85149', brushoff_with_attempt: '#d29922',
-        partial: '#58a6ff', productive: '#4CAF50', meeting_scheduled: '#238636'
+        partial: '#7ea7c4', productive: '#84a86c', meeting_scheduled: '#d97757'
       };
       const classLabels = {
         brushoff_short: 'Brush-off (короткий)', brushoff_with_attempt: 'Brush-off (с попыткой)',
@@ -681,7 +765,7 @@ async function renderCallDetail(id) {
     const followThrough = analysis && analysis.previous_recommendations_follow_through;
     if (followThrough && followThrough.total_recommendations > 0) {
       const icons = {yes: '✅', partial: '~', no: '❌'};
-      const colors = {yes: '#4CAF50', partial: '#d29922', no: '#f85149'};
+      const colors = {yes: '#84a86c', partial: '#d29922', no: '#f85149'};
       const items = (followThrough.items || []).map(it => {
         const icon = icons[it.executed] || '—';
         const color = colors[it.executed] || 'var(--text-muted)';
@@ -760,7 +844,7 @@ async function renderCallDetail(id) {
     const protocolChecklist = analysis && analysis.protocol_checklist;
     if (protocolChecklist && protocolChecklist.length > 0) {
       const statusIcons = {completed: '✓', attempted: '~', not_applicable: '—', not_reached: '✗'};
-      const statusColors = {completed: '#4CAF50', attempted: '#d29922', not_applicable: 'var(--text-muted)', not_reached: '#f85149'};
+      const statusColors = {completed: '#84a86c', attempted: '#d29922', not_applicable: 'var(--text-muted)', not_reached: '#f85149'};
       const statusLabels = {completed: 'Выполнено', attempted: 'Попытка', not_applicable: 'Не применимо', not_reached: 'Не дошли'};
 
       // Calculate progress
@@ -814,11 +898,11 @@ async function renderCallDetail(id) {
             Возражения клиента (${objections.length})
           </h3>
           ${objections.map(obj => `
-            <div style="border-left:3px solid ${obj.resolved ? '#4CAF50' : '#f85149'};padding:8px 12px;margin-bottom:8px;background:var(--bg-secondary);border-radius:0 6px 6px 0">
+            <div style="border-left:3px solid ${obj.resolved ? '#84a86c' : '#f85149'};padding:8px 12px;margin-bottom:8px;background:var(--bg-secondary);border-radius:0 6px 6px 0">
               <div style="font-weight:500;margin-bottom:4px">"${escapeHtml(obj.text)}"</div>
               <div style="font-size:13px;color:var(--text-secondary);margin-bottom:4px">
                 <span class="badge" style="font-size:11px;padding:2px 6px">${escapeHtml(obj.category)}</span>
-                ${obj.resolved ? '<span style="color:#4CAF50;margin-left:8px">Снято</span>' : '<span style="color:#f85149;margin-left:8px">Не снято</span>'}
+                ${obj.resolved ? '<span style="color:#84a86c;margin-left:8px">Снято</span>' : '<span style="color:#f85149;margin-left:8px">Не снято</span>'}
                 <span style="margin-left:8px">Отработка: ${obj.handling_quality}/10</span>
               </div>
               <div style="font-size:13px;color:var(--text-muted)">${escapeHtml(obj.broker_response)}</div>
@@ -842,7 +926,7 @@ async function renderCallDetail(id) {
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px 16px">
             ${generalChecks.map(check => `
               <div style="display:flex;align-items:center;gap:6px;padding:3px 0;font-size:13px">
-                <span style="color:${check.met ? '#4CAF50' : '#f85149'};font-weight:700">${check.met ? '✓' : '✗'}</span>
+                <span style="color:${check.met ? '#84a86c' : '#f85149'};font-weight:700">${check.met ? '✓' : '✗'}</span>
                 <span>${escapeHtml(check.name)}</span>
                 ${check.count != null ? `<span style="color:var(--text-muted);font-size:11px">(${check.count})</span>` : ''}
               </div>
@@ -899,7 +983,7 @@ async function renderCallDetail(id) {
             const text = typeof m === 'string' ? m : (m.text || m.description || JSON.stringify(m));
             const time = m.time != null ? formatSeconds(m.time) : (m.timestamp ? m.timestamp : null);
             return `
-              <div class="moment-item">
+              <div class="moment-item"${m.time != null ? ` data-t="${m.time}" style="cursor:pointer" title="Перейти к моменту"` : ''}>
                 ${time ? `<div class="moment-time">${time}</div>` : ''}
                 ${escapeHtml(text)}
               </div>
@@ -940,6 +1024,13 @@ async function renderCallDetail(id) {
                  src="/api/sessions/${id}/audio"
                  style="width:100%; margin-bottom:16px; border-radius:8px;">
           </audio>
+          ${segments.length === 0 ? '' : `
+          <div class="transcript-search-box">
+            <input type="text" id="transcriptSearch" placeholder="Поиск по диалогу…" autocomplete="off">
+            <span class="transcript-search-count" id="transcriptSearchCount"></span>
+            <button type="button" class="btn-icon" id="transcriptSearchPrev" title="Предыдущее">↑</button>
+            <button type="button" class="btn-icon" id="transcriptSearchNext" title="Следующее">↓</button>
+          </div>`}
           <div class="transcript-container" id="transcriptContainer">
             ${segments.length === 0
               ? '<p style="color:var(--text-muted)">Транскрипт пуст</p>'
@@ -953,7 +1044,7 @@ async function renderCallDetail(id) {
                   return `
                     <div class="transcript-line" data-start="${seg.start != null ? seg.start : ''}" data-end="${seg.end != null ? seg.end : ''}">
                       ${time ? `<span class="transcript-time">${time}</span>` : ''}
-                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` onclick="event.stopPropagation(); editSpeakerName('${escapeHtml(speaker)}')" style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
+                      <span class="speaker-tag ${cls}" data-speaker="${escapeHtml(speaker)}"${isAdmin() ? ` style="cursor:pointer" title="Нажмите чтобы переименовать"` : ''}>${escapeHtml(displayName)}</span>
                       <span class="transcript-text">${escapeHtml(text)}</span>
                     </div>
                   `;
@@ -969,6 +1060,13 @@ async function renderCallDetail(id) {
 
     app.innerHTML = html;
 
+    // Смена типа созвона → переоценка. addEventListener (не inline onchange),
+    // чтобы обработчик не гасился блокировкой инлайн-обработчиков расширениями.
+    const callTypeSelect = document.querySelector('.call-type-select');
+    if (callTypeSelect) {
+      callTypeSelect.addEventListener('change', () => changeCallType(id, callTypeSelect.value));
+    }
+
     // ASR-варианты: переключение вкладок движков
     document.querySelectorAll('.asr-variant-tab').forEach(btn => {
       btn.addEventListener('click', () => {
@@ -983,10 +1081,17 @@ async function renderCallDetail(id) {
     const audioPlayer = $('#audioPlayer');
     if (transcriptContainer && audioPlayer) {
       transcriptContainer.addEventListener('click', (e) => {
+        // Клик по тегу спикера → переименование. Делегированный обработчик на контейнере,
+        // а НЕ инлайновый onclick на теге: инлайновые обработчики могут не исполняться
+        // (строгий CSP / инжект расширения браузера), а делегированный клик всё равно
+        // доходит до контейнера. Совпадает с инвариантом «никаких inline-onclick».
+        const speakerTag = e.target.closest('.speaker-tag');
+        if (speakerTag) {
+          if (isAdmin()) editSpeakerName(speakerTag);
+          return;
+        }
         const line = e.target.closest('.transcript-line');
         if (!line) return;
-        // Don't seek if clicking on speaker tag (that triggers rename)
-        if (e.target.closest('.speaker-tag')) return;
         const start = parseFloat(line.dataset.start);
         if (!isNaN(start)) {
           audioPlayer.currentTime = start;
@@ -1015,6 +1120,18 @@ async function renderCallDetail(id) {
         }
       });
     }
+
+    // Клик-seek: сентимент-сегменты, ключевые моменты и коучинг-моменты
+    app.querySelectorAll('.sentiment-segment[data-t], .moment-item[data-t], .coach-seek[data-t]').forEach(el =>
+      el.addEventListener('click', () => {
+        const player = $('#audioPlayer');
+        if (!player) return;
+        player.currentTime = parseFloat(el.dataset.t);
+        player.play();
+        player.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }));
+
+    initTranscriptSearch();
   } catch (err) {
     app.innerHTML = `
       <a href="#calls" class="back-link">
@@ -1029,10 +1146,154 @@ async function renderCallDetail(id) {
 // ============================================
 // PAGE: Managers
 // ============================================
+// ---- Дашборд руководителя ----
+let _dashDays = 30;
+let _dashScenario = '';
+
+const OBJECTION_RU = {
+  already_contacted: 'Уже общались', no_time: 'Нет времени',
+  not_interested: 'Не интересно', too_expensive: 'Дорого',
+  has_broker: 'Есть свой брокер', just_looking: 'Просто смотрю',
+  send_info: 'Пришлите информацию', other: 'Другое',
+};
+
+function _delta(cur, prev, invert = false, neutral = false) {
+  if (cur == null || prev == null || prev === 0) return '';
+  const d = cur - prev;
+  if (Math.abs(d) < 1e-9) return '';
+  const up = d > 0;
+  // neutral: полярность неоднозначна (talk-ratio) — показываем дельту без good/bad-окраски
+  const cls = neutral ? 'delta-neutral' : ((invert ? !up : up) ? 'delta-good' : 'delta-bad');
+  return `<span class="kpi-delta ${cls}">${up ? '↑' : '↓'} ${Math.abs(Math.round(d * 100) / 100)}</span>`;
+}
+
+async function renderDashboard() {
+  showLoading();
+  try {
+    const granularity = _dashDays >= 90 ? 'week' : 'day';
+    const scen = _dashScenario ? `&scenario_id=${encodeURIComponent(_dashScenario)}` : '';
+    const [ov, managers, objections, risks] = await Promise.all([
+      api(`/api/stats/overview?days=${_dashDays}&granularity=${granularity}${scen}`),
+      api(`/api/stats/managers?days=${_dashDays}${scen}`),
+      api(`/api/stats/objections?days=${_dashDays}${scen}`),
+      api(`/api/stats/risk-calls?days=${_dashDays}&limit=10${scen}`),
+    ]);
+    const k = ov.kpi, p = ov.prev_kpi;
+    const hasData = k.calls > 0;
+
+    const kpiRow = `
+      <div class="stats-row">
+        <div class="stat-card"><div class="stat-value">${k.calls}${_delta(k.calls, p.calls)}</div><div class="stat-label">Звонков за период</div></div>
+        <div class="stat-card"><div class="stat-value">${k.avg_score != null ? k.avg_score : '--'}${_delta(k.avg_score, p.avg_score)}</div><div class="stat-label">Средняя оценка</div></div>
+        <div class="stat-card"><div class="stat-value">${k.risk_calls}${_delta(k.risk_calls, p.risk_calls, true)}</div><div class="stat-label">Рисковых звонков</div></div>
+        <div class="stat-card"><div class="stat-value">${k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) + '%' : '--'}${_delta(k.avg_talk_ratio != null ? Math.round(k.avg_talk_ratio * 100) : null, p.avg_talk_ratio != null ? Math.round(p.avg_talk_ratio * 100) : null, false, true)}</div><div class="stat-label">Доля речи менеджера</div></div>
+      </div>`;
+
+    const series = (ov.series || []).map(b => ({ label: b.bucket, value: b.avg_score }));
+    const trend = `
+      <div class="card">
+        <div class="card-header"><h3>Тренд средней оценки</h3></div>
+        ${svgLineChart(series, { yMax: 10 })}
+      </div>`;
+
+    const mgrRows = managers.map(m => `
+      <tr class="clickable" data-name="${escapeHtml(m.name)}">
+        <td>${escapeHtml(m.name)}</td>
+        <td>${m.calls}</td>
+        <td>${m.avg_score != null ? `<span style="color:${m.avg_score >= 7 ? 'var(--good)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
+        <td>${svgSparkline(m.spark)}</td>
+        <td>${m.risk_calls || 0}</td>
+        <td>${m.avg_talk_ratio != null ? Math.round(m.avg_talk_ratio * 100) + '%' : '--'}</td>
+      </tr>`).join('');
+    const mgrTable = `
+      <div class="card">
+        <div class="card-header"><h3>Менеджеры</h3></div>
+        <div style="overflow-x:auto">
+        <table class="data-table" id="mgrTable"><thead><tr>
+          <th>Менеджер</th><th>Звонки</th><th>Ср. оценка</th><th>Динамика</th><th>Риск</th><th>Речь</th>
+        </tr></thead><tbody>${mgrRows || '<tr><td colspan="6">Нет данных</td></tr>'}</tbody></table>
+        </div>
+      </div>`;
+
+    const maxObj = Math.max(1, ...objections.map(o => o.count));
+    const objRows = objections.map(o => `
+      <tr>
+        <td>${escapeHtml(OBJECTION_RU[o.category] || o.category)}</td>
+        <td>${o.count} ${svgBarRow(o.count, maxObj)}</td>
+        <td>${o.resolved_rate != null ? Math.round(o.resolved_rate * 100) + '%' : '--'}</td>
+        <td class="obj-examples">${(o.examples || []).map(e => escapeHtml(e)).join(' · ')}</td>
+      </tr>`).join('');
+    const objBlock = `
+      <div class="card">
+        <div class="card-header"><h3>Возражения</h3></div>
+        <div style="overflow-x:auto">
+        <table class="data-table"><thead><tr>
+          <th>Категория</th><th>Сколько</th><th>Отработано</th><th>Примеры</th>
+        </tr></thead><tbody>${objRows || '<tr><td colspan="4">Возражений не зафиксировано</td></tr>'}</tbody></table>
+        </div>
+      </div>`;
+
+    const riskRows = risks.map(r => `
+      <tr class="clickable" data-sid="${escapeHtml(r.session_id)}">
+        <td>${new Date(r.created_at).toLocaleDateString('ru-RU')}</td>
+        <td>${escapeHtml(r.employee || '—')}</td>
+        <td>${r.score != null ? r.score + '/10' : '--'}</td>
+        <td>${(r.risk_flags || []).map(f => escapeHtml({low_score: 'низкая оценка', negative_sentiment: 'негатив', unresolved_objections: 'возражения'}[f] || f)).join(', ')}</td>
+      </tr>`).join('');
+    const riskBlock = `
+      <div class="card">
+        <div class="card-header"><h3>Рисковые звонки</h3></div>
+        <div style="overflow-x:auto">
+        <table class="data-table" id="riskTable"><thead><tr>
+          <th>Дата</th><th>Менеджер</th><th>Оценка</th><th>Причина</th>
+        </tr></thead><tbody>${riskRows || '<tr><td colspan="4">Рисковых звонков нет 🎉</td></tr>'}</tbody></table>
+        </div>
+      </div>`;
+
+    const scenarios = (features && features.scenarios) || [];
+    const scenarioSel = scenarios.length ? `
+      <select id="dashScenario" class="table-filter">
+        <option value="">Все сценарии</option>
+        ${scenarios.map(s => `<option value="${escapeHtml(s.id)}" ${_dashScenario === s.id ? 'selected' : ''}>${escapeHtml(s.name || s.id)}</option>`).join('')}
+      </select>` : '';
+
+    app.innerHTML = `
+      <div class="page-header">
+        <h2>Дашборд</h2>
+        <div class="dash-period">
+          ${scenarioSel}
+          ${[7, 30, 90].map(d => `<button class="btn btn-sm ${d === _dashDays ? 'btn-primary' : ''}" data-days="${d}">${d} дн</button>`).join('')}
+        </div>
+      </div>
+      ${hasData ? kpiRow + trend + mgrTable + objBlock + riskBlock
+        : '<div class="empty-state"><p>Нет данных за период — обработайте звонки или запустите бэкфилл (worker/scripts/backfill_quality_results.py)</p></div>'}`;
+
+    const sel = $('#dashScenario');
+    if (sel) sel.addEventListener('change', () => { _dashScenario = sel.value; renderDashboard(); });
+
+    $$('.dash-period button').forEach(b => b.addEventListener('click', () => {
+      _dashDays = parseInt(b.dataset.days, 10);
+      renderDashboard();
+    }));
+    $$('#riskTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
+      navigate('#call/' + tr.dataset.sid);
+    }));
+    $$('#mgrTable tr.clickable').forEach(tr => tr.addEventListener('click', () => {
+      callsFilters = { source: '', phone: '', template_id: '', kb_tag: '', kb_tag_label: '',
+                       employee: tr.dataset.name || '' };
+      navigate('#calls');
+    }));
+  } catch (err) {
+    app.innerHTML = `<div class="empty-state"><p>Ошибка загрузки дашборда: ${escapeHtml(err.message)}</p></div>`;
+  }
+}
+
 async function renderManagers() {
   showLoading();
   try {
     const managers = await api('/api/managers');
+    const _totCalls = managers.reduce((s, m) => s + (m.total_calls || 0), 0);
+    const _wAvg = _totCalls ? managers.reduce((s, m) => s + (m.avg_score || 0) * (m.total_calls || 0), 0) / _totCalls : null;
 
     app.innerHTML = `
       <div class="page-header">
@@ -1050,7 +1311,7 @@ async function renderManagers() {
         </div>
         <div class="stat-card">
           <div class="stat-label">Средний балл</div>
-          <div class="stat-value">${managers.length ? (managers.reduce((s, m) => s + m.avg_score, 0) / managers.length).toFixed(1) : '--'}</div>
+          <div class="stat-value">${_wAvg != null && _wAvg > 0 ? _wAvg.toFixed(1) : '--'}</div>
         </div>
       </div>
       <div class="table-container">
@@ -1077,7 +1338,7 @@ async function renderManagers() {
                 <tr>
                   <td><strong>${escapeHtml(m.name)}</strong></td>
                   <td>${m.total_calls}</td>
-                  <td>${m.avg_score ? `<span style="color:${m.avg_score >= 7 ? 'var(--accent)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
+                  <td>${m.avg_score ? `<span style="color:${m.avg_score >= 7 ? 'var(--good)' : m.avg_score >= 4 ? 'var(--warning)' : 'var(--danger)'};font-weight:600">${m.avg_score}</span>` : '--'}</td>
                   <td>${formatDate(m.last_call_date)}</td>
                 </tr>
               `).join('')}
@@ -1168,7 +1429,7 @@ async function renderCompanyDetail(id) {
           ${wordBoost.map(w => `
             <span class="tag">
               ${escapeHtml(w)}
-              <span class="tag-remove" onclick="removeWord(this, '${escapeHtml(w)}')">&times;</span>
+              <span class="tag-remove" data-word="${escapeHtml(w)}" onclick="removeWord(this)">&times;</span>
             </span>
           `).join('')}
         </div>
@@ -1250,13 +1511,13 @@ function addWord() {
   const container = $('#wordBoostTags');
   const tag = document.createElement('span');
   tag.className = 'tag';
-  tag.innerHTML = `${escapeHtml(word)}<span class="tag-remove" onclick="removeWord(this, '${escapeHtml(word)}')">&times;</span>`;
+  tag.innerHTML = `${escapeHtml(word)}<span class="tag-remove" data-word="${escapeHtml(word)}" onclick="removeWord(this)">&times;</span>`;
   container.appendChild(tag);
   input.value = '';
   input.focus();
 }
 
-function removeWord(btn, word) {
+function removeWord(btn) {
   btn.parentElement.remove();
 }
 
@@ -1300,8 +1561,8 @@ function renderScenarioCard(scenario, index) {
   const s = scenario;
   const criteria = s.criteria || [];
   const typeBadge = s.type === 'in_person'
-    ? '<span class="badge" style="background:rgba(163,113,247,0.15);color:#a371f7;font-size:10px">Очно</span>'
-    : '<span class="badge" style="background:rgba(88,166,255,0.15);color:#58a6ff;font-size:10px">Звонок</span>';
+    ? '<span class="badge" style="background:rgba(181,138,166,0.15);color:#b58aa6;font-size:10px">Очно</span>'
+    : '<span class="badge" style="background:rgba(126,167,196,0.15);color:#7ea7c4;font-size:10px">Звонок</span>';
 
   return `
     <div class="scenario-card" data-scenario-index="${index}">
@@ -1487,7 +1748,7 @@ async function renderUpload() {
         ${moduleOn('complexes') ? '<p style="font-size:12px;color:var(--text-muted);margin-top:4px">Выбери «Презентация ЖК» для извлечения структуры из записи презентации</p>' : ''}
       </div>
       <div class="form-group">
-        <label>Сотрудник / врач</label>
+        <label>Сотрудник</label>
         <input type="text" id="uploadEmployee" placeholder="Имя сотрудника">
       </div>
       <div class="form-group">
@@ -1648,6 +1909,22 @@ async function deleteSession(id) {
   }
 }
 
+function copyCallSummary() {
+  const a = _currentCallData && _currentCallData.analysis;
+  const s = _currentCallData && _currentCallData.session;
+  if (!a) { showToast('Резюме ещё нет', 'error'); return; }
+  const sugg = (a.improvement_suggestions || []).map(x => `— ${typeof x === 'string' ? x : (x.text || '')}`);
+  const lines = [
+    `Звонок ${s && s.created_at ? new Date(s.created_at).toLocaleString('ru-RU') : ''}`,
+    ...(a.overall_score != null ? [`Оценка: ${a.overall_score}/10`] : []),
+    ...((a.brief_summary || a.summary) ? ['', a.brief_summary || a.summary] : []),
+    ...(sugg.length ? ['', 'Рекомендации:', ...sugg] : []),
+  ];
+  navigator.clipboard.writeText(lines.join('\n'))
+    .then(() => showToast('Резюме скопировано'))
+    .catch(() => showToast('Не удалось скопировать', 'error'));
+}
+
 function exportCallData(format) {
   if (!_currentCallData) {
     showToast('Нет данных для экспорта', 'error');
@@ -1719,7 +1996,8 @@ function _getUniqueSpeakers() {
   return [...speakers].sort();
 }
 
-async function editSpeakerName(speakerId) {
+async function editSpeakerName(el) {
+  const speakerId = el.dataset.speaker;
   if (!_currentCallData) return;
   const current = _getSpeakerMap()[speakerId] || {};
   const allSpeakers = _getUniqueSpeakers().filter(s => s !== speakerId);
@@ -1729,7 +2007,7 @@ async function editSpeakerName(speakerId) {
   overlay.className = 'modal-overlay';
   overlay.innerHTML = `
     <div class="modal-content">
-      <h3 style="margin:0 0 16px">Настройки спикера: ${speakerId}</h3>
+      <h3 style="margin:0 0 16px">Настройки спикера: ${escapeHtml(speakerId)}</h3>
       <div style="margin-bottom:12px">
         <label style="display:block;margin-bottom:4px;color:var(--text-muted);font-size:13px">Имя</label>
         <input id="modalSpeakerName" type="text" value="${escapeHtml(current.name || '')}" placeholder="Имя спикера" style="width:100%;padding:8px 12px;background:var(--bg-primary);border:1px solid var(--border);border-radius:6px;color:var(--text-primary);font-size:14px">
@@ -1816,11 +2094,10 @@ async function editSpeakerName(speakerId) {
           body: JSON.stringify({ speaker_map: speakerMap }),
         });
         _currentCallData.session.metadata = { ...meta, speaker_map: speakerMap };
-        $$('.speaker-tag').forEach(tag => {
-          const sid = tag.dataset.speaker;
-          if (sid) tag.textContent = getSpeakerDisplay(sid);
-        });
         showToast('Спикер обновлён');
+        // Перерисовать всю карточку, чтобы новое имя появилось и в «Итогах» наверху,
+        // а не только в тегах транскрипта (иначе итоги оставались старыми до перезагрузки).
+        renderCallDetail(sessionId);
       } catch (err) {
         showToast('Ошибка: ' + err.message, 'error');
       }
@@ -1876,8 +2153,8 @@ async function renderReprocess() {
         return `<div style="margin-top:8px"><strong style="color:${color}">${title} (${items.length}):</strong><ul>${listItems}</ul></div>`;
       };
       resultEl.innerHTML =
-        rows('В очередь поставлено', data.queued, '#4CAF50') +
-        rows('Уже были обработаны', data.already_processed, '#58a6ff') +
+        rows('В очередь поставлено', data.queued, '#84a86c') +
+        rows('Уже были обработаны', data.already_processed, '#7ea7c4') +
         rows('Без записи (скипнуто)', data.missing_recording, '#d29922');
     } catch (err) {
       resultEl.innerHTML = `<div style="color:#f85149">Сбой: ${escapeHtml(err.message)}</div>`;
@@ -1925,7 +2202,7 @@ function kbCategoryCard(cat) {
     <div class="card" style="margin-bottom:16px">
       <div style="display:flex;justify-content:space-between;align-items:center;gap:8px">
         <h3 style="margin:0">${escapeHtml(cat.name)} <span class="muted" style="font-weight:400">(${escapeHtml(cat.slug)})</span></h3>
-        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" onclick="kbDeleteCategory('${cat.id}', ${JSON.stringify(cat.name)})">✕</button>` : ''}
+        ${isAdmin() ? `<button class="btn btn-danger btn-sm" title="Удалить категорию" data-id="${cat.id}" data-name="${escapeHtml(cat.name)}" onclick="kbDeleteCategory(this)">✕</button>` : ''}
       </div>
       <div style="display:flex;gap:8px;margin:8px 0;flex-wrap:wrap">
         ${kbFlagBadge(cat, 'feeds_asr', 'ASR')}
@@ -1942,8 +2219,8 @@ function kbCategoryCard(cat) {
               <td>${escapeHtml((e.aliases || []).join(', '))}</td>
               <td>${escapeHtml(e.description || '')}</td>
               <td style="white-space:nowrap;text-align:right">
-                <button class="btn btn-secondary btn-sm" onclick="kbShowMentions('${e.id}', ${JSON.stringify(e.term)})">Упоминания</button>
-                ${isAdmin() ? `<button class="btn btn-danger btn-sm" onclick="kbDeleteEntry('${e.id}', ${JSON.stringify(e.term)})">✕</button>` : ''}
+                <button class="btn btn-secondary btn-sm" data-id="${e.id}" data-term="${escapeHtml(e.term)}" onclick="kbShowMentions(this)">Упоминания</button>
+                ${isAdmin() ? `<button class="btn btn-danger btn-sm" data-id="${e.id}" data-term="${escapeHtml(e.term)}" onclick="kbDeleteEntry(this)">✕</button>` : ''}
               </td>
             </tr>`).join('') : `<tr><td colspan="4" class="muted">Записей пока нет</td></tr>`}
         </tbody>
@@ -1995,7 +2272,8 @@ async function kbToggleFlag(catId, key, value) {
   }
 }
 
-async function kbDeleteCategory(catId, name) {
+async function kbDeleteCategory(btn) {
+  const { id: catId, name } = btn.dataset;
   if (!confirm(`Удалить категорию "${name}" со всеми записями?`)) return;
   try {
     await api(`/api/knowledge/categories/${catId}`, { method: 'DELETE' });
@@ -2024,7 +2302,8 @@ async function kbAddEntry(catId, form) {
   }
 }
 
-async function kbDeleteEntry(entryId, term) {
+async function kbDeleteEntry(btn) {
+  const { id: entryId, term } = btn.dataset;
   if (!confirm(`Удалить запись "${term}"?`)) return;
   try {
     await api(`/api/knowledge/entries/${entryId}`, { method: 'DELETE' });
@@ -2056,7 +2335,8 @@ async function kbImport(catId, form) {
   }
 }
 
-async function kbShowMentions(entryId, term) {
+async function kbShowMentions(btn) {
+  const { id: entryId, term } = btn.dataset;
   try {
     const rows = await api(`/api/knowledge/entries/${entryId}/mentions`);
     if (!rows.length) { showToast(`«${term}»: упоминаний нет`); return; }
@@ -2094,7 +2374,7 @@ async function renderTemplates() {
             <a class="tpl-card" href="#template/${t.id}">
               <div class="tpl-card-head">
                 <span class="tpl-kind tpl-kind-${escapeHtml(t.kind)}">${escapeHtml(_kindLabel(t.kind))}</span>
-                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" onclick="event.preventDefault();event.stopPropagation();deleteTemplate('${t.id}', ${JSON.stringify(t.name)})">
+                ${isAdmin() ? `<button class="icon-btn icon-btn--danger tpl-card-del" title="Удалить шаблон" aria-label="Удалить" data-id="${t.id}" data-name="${escapeHtml(t.name)}" onclick="event.preventDefault();event.stopPropagation();deleteTemplate(this)">
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>
                 </button>` : ''}
               </div>
@@ -2215,7 +2495,8 @@ function validateSchemaInline() {
   }
 }
 
-async function deleteTemplate(id, name) {
+async function deleteTemplate(btn) {
+  const { id, name } = btn.dataset;
   if (!confirm(`Удалить шаблон "${name}"?`)) return;
   try {
     await api(`/api/templates/${id}`, {
@@ -2466,6 +2747,7 @@ function renderCard(card, label) {
   if (!card) return '';
   const isDental = card.dental_status !== undefined ||
     (card.patient && typeof card.patient === 'object');
+  card = _resolveCardSpeakers(card);  // speaker_0 → «Имя (роль)» в участниках и тексте
   return isDental ? renderDentalCard(card, label) : renderGenericCard(card, label);
 }
 
@@ -2473,6 +2755,7 @@ function renderCard(card, label) {
 const _CARD_LABELS = {
   summary: 'Итог', participants: 'Участники', topics: 'Темы', points: 'Тезисы',
   agreements: 'Договорённости', next_steps: 'Следующие шаги', action: 'Действие',
+  tasks: 'Задачи', title: 'Задача', assignee: 'Ответственный',
   owner: 'Ответственный', due: 'Срок', objections: 'Возражения',
   objection: 'Возражение', raised_by: 'Кто высказал', handled: 'Отработано',
   handling: 'Как отработано', improvement: 'Как можно лучше',
@@ -2502,6 +2785,61 @@ function _cardVal(v) {
   if (typeof v === 'object') return _cardObjInline(v);
   return esc(String(v));
 }
+
+// --- Разрешение спикеров в «Итогах созвона» --------------------------------
+// LLM-карточка пишет сырые id спикеров (speaker_0 / A) и в структурном списке
+// участников, и внутри свободного текста тезисов. Здесь подставляем «Имя (роль)»
+// из той же карты, что и транскрипт (_getSpeakerMap) — правится при отображении,
+// поэтому чинятся и старые звонки, и ручные переименования отражаются сразу.
+const _ROLE_RU = { manager: 'менеджер', client: 'клиент', doctor: 'врач', other: 'другой' };
+function _speakerNum(id) {
+  const m = String(id).match(/(\d+)/);
+  return m ? parseInt(m[1], 10) + 1 : null;
+}
+function resolveSpeakerLabel(id) {
+  const info = _getSpeakerMap()[id] || {};
+  const name = info.name || null;
+  const role = _ROLE_RU[info.role] || null;
+  if (name && role) return `${name} (${role})`;
+  if (name) return name;
+  const num = _speakerNum(id);
+  const base = num ? `Спикер ${num}` : String(id);
+  return role ? `${base} (${role})` : base;
+}
+function _cardSpeakerIds(card) {
+  const ids = new Set(Object.keys(_getSpeakerMap()));
+  if (card && Array.isArray(card.participants)) {
+    card.participants.forEach((p) => { if (p && p.speaker) ids.add(p.speaker); });
+  }
+  // Длинные id заменяем раньше коротких (speaker_10 до speaker_1).
+  return [...ids].sort((a, b) => b.length - a.length);
+}
+function _subSpeakerTokens(text, ids) {
+  let s = String(text);
+  for (const id of ids) {
+    const re = new RegExp('\\b' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b', 'g');
+    s = s.replace(re, resolveSpeakerLabel(id));
+  }
+  return s;
+}
+function _resolveCardSpeakers(card) {
+  if (!card || typeof card !== 'object') return card;
+  const ids = _cardSpeakerIds(card);
+  if (!ids.length) return card;
+  const walk = (v) => {
+    if (typeof v === 'string') return _subSpeakerTokens(v, ids);
+    if (Array.isArray(v)) return v.map(walk);
+    if (v && typeof v === 'object') { const o = {}; for (const k in v) o[k] = walk(v[k]); return o; }
+    return v;
+  };
+  const out = walk(card);
+  // Участники → компактный список «Имя (роль)» (развёрнутую роль LLM опускаем).
+  if (Array.isArray(card.participants)) {
+    out.participants = card.participants.map((p) => resolveSpeakerLabel(p && p.speaker));
+  }
+  return out;
+}
+
 function renderGenericCard(card, label) {
   const esc = escapeHtml;
   const rows = Object.entries(card)
@@ -2553,6 +2891,124 @@ function renderDentalCard(card, label) {
     </div>`;
 }
 
+function initTranscriptSearch() {
+  const container = document.getElementById('transcriptContainer');
+  const input = document.getElementById('transcriptSearch');
+  const countEl = document.getElementById('transcriptSearchCount');
+  const prevBtn = document.getElementById('transcriptSearchPrev');
+  const nextBtn = document.getElementById('transcriptSearchNext');
+  if (!container || !input) return;
+
+  const texts = $$('.transcript-text', container);
+  texts.forEach((el) => { el.dataset.raw = el.textContent; });  // эагерный снимок исходника
+
+  let matches = [];
+  let cur = -1;
+  let timer = null;
+
+  const clearMarks = () => {
+    texts.forEach((el) => { el.textContent = el.dataset.raw; });  // textContent, НЕ innerHTML
+    matches = []; cur = -1;
+  };
+
+  const focusMatch = () => {
+    matches.forEach((m) => m.classList.remove('transcript-match--current'));
+    if (cur < 0 || cur >= matches.length) return;
+    const m = matches[cur];
+    m.classList.add('transcript-match--current');
+    m.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+
+  const run = (q) => {
+    clearMarks();
+    const needle = (q || '').trim().toLowerCase();
+    if (!needle) { countEl.textContent = ''; return; }
+    texts.forEach((el) => {
+      const raw = el.dataset.raw;
+      const low = raw.toLowerCase();
+      let i = low.indexOf(needle);
+      if (i === -1) return;
+      let out = '';
+      let pos = 0;
+      while (i !== -1) {
+        out += escapeHtml(raw.slice(pos, i));
+        out += '<mark class="transcript-match">' + escapeHtml(raw.slice(i, i + needle.length)) + '</mark>';
+        pos = i + needle.length;
+        i = low.indexOf(needle, pos);
+      }
+      out += escapeHtml(raw.slice(pos));
+      el.innerHTML = out;
+    });
+    matches = $$('.transcript-match', container);
+    countEl.textContent = matches.length ? `${matches.length} совпадений` : 'нет совпадений';
+    if (matches.length) { cur = 0; focusMatch(); }
+  };
+
+  const step = (delta) => {
+    if (!matches.length) return;
+    cur = (cur + delta + matches.length) % matches.length;
+    focusMatch();
+  };
+
+  input.addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(() => run(input.value), 200);
+  });
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); step(e.shiftKey ? -1 : 1); }
+  });
+  if (prevBtn) prevBtn.addEventListener('click', () => step(-1));
+  if (nextBtn) nextBtn.addEventListener('click', () => step(1));
+}
+
+function editCallTitle(sessionId) {
+  const span = document.getElementById('callTitleText');
+  if (!span || span.dataset.editing) return;
+  const editBtn = document.getElementById('callTitleEdit');
+  const current = span.dataset.title || '';   // реальный title (не отображаемый sentinel)
+  span.dataset.editing = '1';
+  if (editBtn) editBtn.style.display = 'none';
+
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.maxLength = 200;
+  input.value = current;
+  input.className = 'call-title-input';
+  span.replaceWith(input);
+  input.focus();
+
+  let done = false;
+  const restore = (text) => {
+    const s = document.createElement('span');
+    s.id = 'callTitleText';
+    const t = (text || '').trim();
+    s.dataset.title = t;
+    s.textContent = t || 'Сессия звонка';
+    input.replaceWith(s);
+    if (editBtn) editBtn.style.display = '';
+  };
+  const save = async () => {
+    if (done) return;
+    done = true;
+    const value = input.value.trim();
+    try {
+      await api(`/api/sessions/${sessionId}/title`, {
+        method: 'PATCH',
+        body: JSON.stringify({ title: value }),
+      });
+      restore(value);
+    } catch (err) {
+      showToast('Не удалось переименовать: ' + err.message, 'error');
+      restore(current);
+    }
+  };
+  input.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    else if (e.key === 'Escape') { done = true; restore(current); }
+  });
+  input.addEventListener('blur', save);
+}
+
 async function reprocessSession(sessionId) {
   let templates = [];
   try { templates = await api('/api/templates'); } catch (e) { return showToast('Не удалось загрузить шаблоны', 'error'); }
@@ -2569,6 +3025,48 @@ async function reprocessSession(sessionId) {
       body: JSON.stringify({ template_id: tpl.id }),
     });
     showToast('Переоценка запущена — обновите страницу через минуту');
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  }
+}
+
+async function reprocessScenario(sessionId) {
+  const scenarios = (features && features.scenarios) || [];
+  let scenarioId = null;
+  if (scenarios.length >= 2) {
+    const pick = await pickTemplateModal(scenarios.map(s => ({ name: s.name, id: s.id })), {
+      title: 'Перепрогнать под сценарий',
+      hint: 'Выберите сценарий — звонок будет переоценён по его критериям.',
+      confirmLabel: 'Запустить',
+    });
+    if (!pick) return;
+    scenarioId = pick.id;
+  }
+  // 0 или 1 сценарий → простой перепрогон (дефолтный сценарий).
+  try {
+    await api(`/api/sessions/${sessionId}/reprocess`, {
+      method: 'POST',
+      body: JSON.stringify(scenarioId ? { scenario_id: scenarioId } : {}),
+    });
+    showToast('Переоценка запущена — обновите страницу через минуту');
+  } catch (err) {
+    showToast('Ошибка: ' + err.message, 'error');
+  }
+}
+
+// Смена типа созвона на карточке → переоценка по критериям выбранного типа.
+async function changeCallType(sessionId, scenarioId) {
+  if (!scenarioId) return;
+  if (!confirm('Сменить тип созвона и переоценить звонок по критериям этого типа?')) {
+    renderCallDetail(sessionId);  // отмена — вернуть селектор к текущему значению
+    return;
+  }
+  try {
+    await api(`/api/sessions/${sessionId}/reprocess`, {
+      method: 'POST',
+      body: JSON.stringify({ scenario_id: scenarioId }),
+    });
+    showToast('Тип изменён — переоценка запущена, обновите страницу через минуту');
   } catch (err) {
     showToast('Ошибка: ' + err.message, 'error');
   }
@@ -2674,7 +3172,7 @@ function _evalHistory(history) {
   return history.map(v => `
     <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;padding:8px 0;border-bottom:1px solid var(--border,#eee)">
       <div><b>v${v.version}</b> · ${escapeHtml(v.source)} · ${escapeHtml(formatDate(v.created_at))}
-        ${v.is_active ? '<span style="background:#2e7d32;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
+        ${v.is_active ? '<span style="background:#5f7d4c;color:#fff;padding:2px 6px;border-radius:4px;font-size:11px">активна</span>' : ''}</div>
       <div style="display:flex;gap:6px">
         ${v.is_active ? '' : `<button class="btn btn-secondary btn-sm" onclick="evalActivate('${v.id}')">Активировать</button>`}
         ${v.is_active ? '' : `<button class="btn btn-danger btn-sm" onclick="evalDeleteVersion('${v.id}')">Удалить</button>`}
@@ -2829,7 +3327,7 @@ async function linkLeadModal(sessionId) {
           <p class="modal-hint">Вставьте ссылку на сделку (https://…amocrm.ru/leads/detail/12345) или ищите по имени / телефону / email. После привязки оценка будет пересчитана с учётом истории по клиенту, а в карточку сделки уйдут заметки со ссылкой, выжимкой и планом.</p>
           ${currentLeadId ? `
             <div class="link-current">
-              Текущая привязка: ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
+              Текущая привязка: ${moduleOn('amocrm') && amoBase() ? `<a href="https://${amoBase()}/leads/detail/${currentLeadId}" target="_blank" rel="noopener">сделка #${currentLeadId}</a>` : `сделка #${currentLeadId}`}
               <button type="button" id="leadUnlink" class="link-action">Отвязать</button>
             </div>
           ` : ''}
@@ -2876,7 +3374,7 @@ async function linkLeadModal(sessionId) {
           </div>
           <div class="lead-result-sub">
             <span>Открыть в AmoCRM:&nbsp;</span>
-            ${moduleOn('amocrm') ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
+            ${moduleOn('amocrm') && amoBase() ? `<a href="https://${amoBase()}/leads/detail/${leadId}" target="_blank" rel="noopener" onclick="event.stopPropagation()">https://${amoBase()}/leads/detail/${leadId}</a>` : `#${leadId}`}
           </div>
         </button>`;
       results.querySelector('.lead-result').addEventListener('click', () => linkAndClose(leadId, `сделке #${leadId}`));
@@ -3134,8 +3632,8 @@ async function renderComplexDetail(id) {
       </div>
       ${isAdmin() ? `
       <div style="margin-bottom:16px;display:flex;gap:8px">
-        <button class="btn btn-secondary btn-sm" onclick="renameComplex('${c.id}', ${JSON.stringify(c.name)})">Переименовать</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteComplex('${c.id}', ${JSON.stringify(c.name)})">Удалить профиль</button>
+        <button class="btn btn-secondary btn-sm" data-id="${c.id}" data-name="${escapeHtml(c.name)}" onclick="renameComplex(this)">Переименовать</button>
+        <button class="btn btn-danger btn-sm" data-id="${c.id}" data-name="${escapeHtml(c.name)}" onclick="deleteComplex(this)">Удалить профиль</button>
       </div>` : ''}
       <div class="cx-profile">
         ${renderComplexProfile(c.aggregated_data)}
@@ -3150,7 +3648,8 @@ async function renderComplexDetail(id) {
   }
 }
 
-async function renameComplex(id, currentName) {
+async function renameComplex(btn) {
+  const { id, name: currentName } = btn.dataset;
   const newName = prompt('Новое имя ЖК:', currentName);
   if (!newName || newName === currentName) return;
   try {
@@ -3165,7 +3664,8 @@ async function renameComplex(id, currentName) {
   }
 }
 
-async function deleteComplex(id, name) {
+async function deleteComplex(btn) {
+  const { id, name } = btn.dataset;
   if (!confirm(`Удалить профиль "${name}"? Сами записи останутся, но будут отвязаны.`)) return;
   try {
     await api(`/api/complexes/${id}`, { method: 'DELETE' });

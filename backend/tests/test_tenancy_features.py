@@ -75,8 +75,8 @@ def test_features_includes_tenant_scenarios(monkeypatch, fake_redis, tmp_path):
     r = c.get("/api/tenancy/features")
     assert r.status_code == 200
     assert r.json().get("scenarios") == [
-        {"id": "consultation", "name": "Консультация"},
-        {"id": "treatment_plan", "name": "treatment_plan"},
+        {"id": "consultation", "name": "Консультация", "classify": False},
+        {"id": "treatment_plan", "name": "treatment_plan", "classify": False},
     ]
 
 
@@ -142,6 +142,74 @@ def test_features_omits_amocrm_subdomain_when_module_off(monkeypatch, fake_redis
     r = c.get("/api/tenancy/features")
     assert r.status_code == 200
     assert "amocrm_subdomain" not in r.json()
+
+
+def test_card_label_helper_reads_config(monkeypatch, tmp_path):
+    # card-label берётся из company-config (card_extraction.label) — домен-специфика
+    # → конфиг тенанта, не хардкод во фронте.
+    (tmp_path / "chechetov.json").write_text(json.dumps({
+        "id": "chechetov", "card_extraction": {"label": "Итоги созвона"},
+    }), encoding="utf-8")
+    (tmp_path / "nocard.json").write_text(json.dumps({"id": "nocard"}), encoding="utf-8")
+    (tmp_path / "emptylabel.json").write_text(json.dumps({
+        "id": "emptylabel", "card_extraction": {"label": "  "},
+    }), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+    assert cs.card_label_for("chechetov") == "Итоги созвона"
+    assert cs.card_label_for("nocard") is None
+    assert cs.card_label_for("emptylabel") is None   # пустой label → None
+    assert cs.card_label_for(None) is None
+    assert cs.card_label_for("missing") is None
+
+
+def test_features_includes_card_label(monkeypatch, fake_redis, tmp_path):
+    # company_config_id тенанта → card_extraction.label → features.card_label
+    (tmp_path / "chechetov.json").write_text(json.dumps({
+        "id": "chechetov", "card_extraction": {"label": "Итоги созвона"},
+    }), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+
+    from app.tenancy_http import TenantRegistry
+    rows = [{"slug": "chechetov", "schema_name": "t_chechetov", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {}, "company_config_id": "chechetov"}]
+
+    async def fake_all(self):
+        return rows
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app
+    c = TestClient(app, base_url="https://chechetov.silentqa.com")
+    r = c.get("/api/tenancy/features")
+    assert r.status_code == 200
+    assert r.json().get("card_label") == "Итоги созвона"
+
+
+def test_features_omits_card_label_when_absent(monkeypatch, fake_redis, tmp_path):
+    # конфиг без card_extraction → ключ card_label отсутствует (фронт упадёт на дефолт)
+    (tmp_path / "nocard.json").write_text(json.dumps({"id": "nocard"}), encoding="utf-8")
+    monkeypatch.setenv("COMPANIES_PATH", str(tmp_path))
+    import app.company_scenarios as cs
+    cs.clear_scenario_caches()
+
+    from app.tenancy_http import TenantRegistry
+    rows = [{"slug": "acme", "schema_name": "t_acme", "status": "active",
+             "custom_domains": [], "api_key_hash": None, "api_key_required": True,
+             "modules": {}, "company_config_id": "nocard"}]
+
+    async def fake_all(self):
+        return rows
+
+    monkeypatch.setattr(TenantRegistry, "all_tenants", fake_all)
+    from app.main import app
+    c = TestClient(app, base_url="https://acme.silentqa.com")
+    r = c.get("/api/tenancy/features")
+    assert r.status_code == 200
+    assert "card_label" not in r.json()
 
 
 def test_features_no_scenarios_when_no_config(monkeypatch, fake_redis, tmp_path):

@@ -1,4 +1,4 @@
-import subprocess
+import logging
 import sys
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -7,12 +7,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # repo root → te
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.concurrency import run_in_threadpool
 
+from app.body_limit import BodySizeLimitMiddleware
 from app.config import settings
+from app.migrate import check as migrate_check
 from app.routes import (
-    chunks, sessions, companies, transcripts, analysis, managers,
+    chunks, sessions, companies, transcripts, analysis, managers, stats,
     amocrm, templates, complexes, knowledge, auth, user_auth, tenancy_check, platform_auth,
     platform_tenants, users, eval_profiles,
 )
@@ -20,27 +23,44 @@ from app.routes import (
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Run the two-track migration runner (shared registry first, then the
-    # tenant track per active schema). Fresh process: env.py's asyncio.run
-    # would clash with the already-running loop here, hence subprocess.
-    result = subprocess.run(
-        [sys.executable, "-m", "app.migrate"],
-        capture_output=True, text=True,
-    )
-    if result.returncode != 0:
-        import logging
-        logging.getLogger(__name__).error(f"Alembic migration failed:\nstdout: {result.stdout}\nstderr: {result.stderr}")
-        raise RuntimeError(f"Alembic migration failed: {result.stderr}")
+    # Миграции применяются на ДЕПЛОЕ (scripts/deploy_prod.sh, run.sh,
+    # staging ExecStartPre), не на старте: упавшая миграция одного тенанта
+    # не должна ронять бэкенд для всех. Здесь — только быстрая read-only
+    # сверка head'ов с CRITICAL-логом.
+    try:
+        mismatched = await run_in_threadpool(migrate_check)
+    except Exception:
+        logging.getLogger(__name__).critical(
+            "migrate check failed (БД недоступна?)", exc_info=True)
+    else:
+        if mismatched:
+            logging.getLogger(__name__).critical(
+                "Alembic heads расходятся: %s — запусти `python -m app.migrate`",
+                ", ".join(mismatched))
     yield
 
 
-app = FastAPI(title="Meeting Recorder", version="1.0.0", lifespan=lifespan)
+app = FastAPI(
+    title="Meeting Recorder", version="1.0.0", lifespan=lifespan,
+    # C-3: schema-эндпоинты живут вне /api/* и не покрываются контур-гейтом —
+    # наружу их не светим; включаются явным флагом (стейдж/локаль).
+    docs_url="/docs" if settings.ENABLE_API_DOCS else None,
+    redoc_url="/redoc" if settings.ENABLE_API_DOCS else None,
+    openapi_url="/openapi.json" if settings.ENABLE_API_DOCS else None,
+)
 
-# CORS
+# Глобальный потолок тела (C-2). Добавлен ДО CORS: последний add_middleware —
+# внешний, т.е. стек tenant → CORS → body-limit, и 413 уходит с CORS-заголовками.
+app.add_middleware(
+    BodySizeLimitMiddleware, max_bytes=settings.MAX_REQUEST_BODY_MB * 1024 * 1024)
+
+# CORS: список origin'ов из настроек. Дефолт "*" — расширения и десктоп
+# ходят с origin chrome-extension://… / file://; сужать только вместе
+# с ревизией клиентов записи (план 2/3).
 origins = [o.strip() for o in settings.ALLOWED_ORIGINS.split(",")]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=origins,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -62,6 +82,7 @@ app.include_router(transcripts.router)
 app.include_router(companies.router)
 app.include_router(analysis.router)
 app.include_router(managers.router)
+app.include_router(stats.router)
 app.include_router(amocrm.router)
 app.include_router(templates.router)
 app.include_router(complexes.router)
@@ -80,6 +101,28 @@ async def health():
     return {"status": "ok"}
 
 
+from sqlalchemy import text
+
+from app.database import engine
+
+
+async def _db_ping() -> None:
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
+
+
+@app.get("/health/ready")
+async def health_ready():
+    # Readiness для deploy_prod.sh: процесс жив И БД доступна.
+    # /health остаётся статическим liveness.
+    try:
+        await _db_ping()
+    except Exception:
+        logging.getLogger(__name__).warning("readiness: БД недоступна", exc_info=True)
+        return JSONResponse({"status": "degraded", "db": "unreachable"}, status_code=503)
+    return {"status": "ready"}
+
+
 from tenancy.context import get_tenant_slug as _get_tenant_slug
 
 
@@ -90,5 +133,15 @@ async def root_page():
     return FileResponse(f"static/{page}")
 
 
-# Static files — must be LAST (after all API routers) so it doesn't intercept API routes
-app.mount("/", StaticFiles(directory="static", html=True), name="static")
+# Static files — must be LAST (after all API routers) so it doesn't intercept API routes.
+# no-cache: у статики нет версионирования (app.js/styles.css без ?v=), поэтому браузеры
+# ловили устаревший JS. no-cache не запрещает кэш, а требует ревалидации по ETag —
+# не изменилось → мгновенный 304, изменилось → свежий файл. Так правки видны сразу.
+class NoCacheStaticFiles(StaticFiles):
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
+
+app.mount("/", NoCacheStaticFiles(directory="static", html=True), name="static")

@@ -14,6 +14,13 @@ from sqlalchemy.orm import Session as DbSession
 
 from tasks.complex_match import match_or_create_complex
 
+# Интеграционные тесты: нужен живой Postgres (DATABASE_URL_SYNC).
+# Без него — скип, не ошибка: юнит-сьют и CI живой БД не имеют.
+pytestmark = pytest.mark.skipif(
+    "DATABASE_URL_SYNC" not in os.environ,
+    reason="требуется живой Postgres (DATABASE_URL_SYNC не задан)",
+)
+
 
 @pytest.fixture
 def db():
